@@ -1,6 +1,8 @@
 data/
 **/*.csv
 .DS_Store
+**/AutogluonModels
+**/AutoML_*/*
 
 # Byte-compiled / optimized / DLL files
 __pycache__/
