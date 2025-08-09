@@ -1,3 +1,4 @@
-competition_name:     playground-series-s5e6
+competition_name:     playground-series-s5e8
 data_path:            ./data
 submission_file:      submission.csv
+target_column:        y
