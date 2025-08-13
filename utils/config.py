@@ -11,14 +11,24 @@ class Config(BaseModel):
     Attributes:
         competition_name (str): Name of the Kaggle competition.
         data_path (Path): Path to the directory containing data files.
-        submission_file (str): Name of the submission file.
         target_column (str): Name of the target column in the dataset.
+        X_train_file (str): Name of the training feature set file.
+        y_train_file (str): Name of the training target set file.
+        X_val_file (str): Name of the validation feature set file.
+        y_val_file (str): Name of the validation target set file.
+        X_test_file (str): Name of the test feature set file.
+        test_ids (str): Name of the file containing test IDs.
     """
 
     competition_name: str
     data_path: Path
-    submission_file: str
     target_column: str
+    X_train_file: str
+    y_train_file: str
+    X_val_file: str
+    y_val_file: str
+    X_test_file: str
+    test_ids: str
 
 
 def _convert_paths(data: dict) -> dict:
