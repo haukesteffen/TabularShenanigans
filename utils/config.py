@@ -28,7 +28,6 @@ class Config(BaseModel):
     X_val_file: str
     y_val_file: str
     X_test_file: str
-    test_ids: str
 
 
 def _convert_paths(data: dict) -> dict:

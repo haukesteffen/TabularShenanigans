@@ -6,4 +6,3 @@ y_train_file:         y_train.csv
 X_val_file:           X_val.csv
 y_val_file:           y_val.csv
 X_test_file:          X_test.csv
-test_ids:             test_ids.csv
