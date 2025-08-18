@@ -1,4 +1,4 @@
 competition_name:     playground-series-s5e8
+db:                   data.db
 id_column:            id
 target_column:        y
-db_uri:               sqlite:///./db/data.db

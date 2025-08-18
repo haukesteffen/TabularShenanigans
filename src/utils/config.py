@@ -10,15 +10,15 @@ class Config(BaseModel):
 
     Attributes:
         competition_name (str): The name of the Kaggle competition.
+        db (str): The database file.
         id_column (str): The column name for the unique identifier in the dataset.
         target_column (str): The column name for the target variable in the dataset.
-        db_uri (str): The URI of the database to connect to.
     """
 
     competition_name: str
+    db: str
     id_column: str
     target_column: str
-    db_uri: str
 
 
 def _convert_paths(data: dict) -> dict:
