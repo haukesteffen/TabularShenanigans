@@ -14,6 +14,7 @@ dependencies = [
     "python-dotenv>=1.1.0",
     "pyyaml>=6.0.2",
     "scikit-learn>=1.7.0",
+    "sqlalchemy>=2.0.43",
     "torch>=2.7.1",
     "xgboost>=3.0.4",
 ]

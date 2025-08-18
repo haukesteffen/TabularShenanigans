@@ -1,8 +1,4 @@
 competition_name:     playground-series-s5e8
-data_path:            ./data
+id_column:            id
 target_column:        y
-X_train_file:         X_train.csv
-y_train_file:         y_train.csv
-X_val_file:           X_val.csv
-y_val_file:           y_val.csv
-X_test_file:          X_test.csv
+db_uri:               sqlite:///./db/data.db

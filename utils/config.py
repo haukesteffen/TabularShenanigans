@@ -9,25 +9,16 @@ class Config(BaseModel):
     """General parameters.
 
     Attributes:
-        competition_name (str): Name of the Kaggle competition.
-        data_path (Path): Path to the directory containing data files.
-        target_column (str): Name of the target column in the dataset.
-        X_train_file (str): Name of the training feature set file.
-        y_train_file (str): Name of the training target set file.
-        X_val_file (str): Name of the validation feature set file.
-        y_val_file (str): Name of the validation target set file.
-        X_test_file (str): Name of the test feature set file.
-        test_ids (str): Name of the file containing test IDs.
+        competition_name (str): The name of the Kaggle competition.
+        id_column (str): The column name for the unique identifier in the dataset.
+        target_column (str): The column name for the target variable in the dataset.
+        db_uri (str): The URI of the database to connect to.
     """
 
     competition_name: str
-    data_path: Path
+    id_column: str
     target_column: str
-    X_train_file: str
-    y_train_file: str
-    X_val_file: str
-    y_val_file: str
-    X_test_file: str
+    db_uri: str
 
 
 def _convert_paths(data: dict) -> dict:
