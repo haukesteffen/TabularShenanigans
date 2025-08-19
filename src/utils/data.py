@@ -4,21 +4,19 @@ import zipfile
 
 import kaggle
 import pandas as pd
-from config import Config
 from sqlalchemy import create_engine, inspect, text
+
+from .config import Config
 
 
 def initialize_project(config: Config) -> None:
-    # check if cwd is the root of the project
-    assert pathlib.Path.cwd().name == "TabularShenanigans", (
-        "Please run this script from the root of the project."
-    )
-
     competition_name = config.competition_name
-    db_uri = f"sqlite:///./data/{config.db}"
+    root = pathlib.Path(__file__).parent.parent.parent
+    db_uri = f"sqlite:///{root / 'db' / config.db}"
     _initialize_competition_table(competition_name, db_uri)
     _initialize_dataset_table(competition_name, db_uri)
     _download_competition_data(competition_name, db_uri)
+    return db_uri
 
 
 def _download_competition_data(
