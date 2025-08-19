@@ -9,13 +9,14 @@ from sqlalchemy import create_engine, inspect, text
 from .config import Config
 
 
-def initialize_project(config: Config) -> None:
+def initialize_project(config: Config, init_db: bool = False) -> None:
     competition_name = config.competition_name
     root = pathlib.Path(__file__).parent.parent.parent
     db_uri = f"sqlite:///{root / 'db' / config.db}"
-    _initialize_competition_table(competition_name, db_uri)
-    _initialize_dataset_table(competition_name, db_uri)
-    _download_competition_data(competition_name, db_uri)
+    if init_db:
+        _initialize_competition_table(competition_name, db_uri)
+        _initialize_dataset_table(competition_name, db_uri)
+        _download_competition_data(competition_name, db_uri)
     return db_uri
 
 

@@ -9,6 +9,7 @@ dependencies = [
     "ipykernel>=6.29.5",
     "kaggle>=1.7.4.5",
     "matplotlib>=3.10.3",
+    "optuna>=4.5.0",
     "pandas>=2.3.0",
     "pydantic>=2.11.5",
     "python-dotenv>=1.1.0",
