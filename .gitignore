@@ -5,6 +5,8 @@ data/
 **/AutoML_*
 **/.ruff_cache
 **/*.db
+**/mlruns/
+**/studies/
 
 # Byte-compiled / optimized / DLL files
 __pycache__/

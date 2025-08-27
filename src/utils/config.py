@@ -41,5 +41,5 @@ def load_config(path: Union[str, Path]) -> Config:
 
     # Instantiate Config class
     config = Config(**config)
-    print(f"Config loaded from {path}.")
+    print(f"Config loaded from {path}")
     return config
