@@ -20,3 +20,8 @@ dependencies = [
     "torch>=2.7.1",
     "xgboost>=3.0.4",
 ]
+
+[dependency-groups]
+dev = [
+    "pytest>=8.4.1",
+]
