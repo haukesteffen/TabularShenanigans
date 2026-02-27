@@ -1,0 +1,5 @@
+{
+  "status": "stub",
+  "message": "Training pipeline not implemented yet.",
+  "model_family": "lightgbm"
+}

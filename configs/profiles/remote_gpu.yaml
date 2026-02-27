@@ -1,0 +1,10 @@
+runtime:
+  name: remote_gpu
+  device: gpu
+  accelerator: cuda
+  mixed_precision: true
+
+training:
+  batch_size: 4096
+  n_estimators: 2000
+  early_stopping_rounds: 200

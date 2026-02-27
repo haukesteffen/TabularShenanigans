@@ -1,0 +1,49 @@
+[project]
+name = "tabular-shenanigans"
+version = "0.1.0"
+description = "Reusable Kaggle tabular workflow scaffold"
+readme = "README.md"
+requires-python = ">=3.11"
+dependencies = [
+  "numpy>=1.26",
+  "pandas>=2.2",
+  "pyyaml>=6.0",
+  "scikit-learn>=1.4",
+  "typer>=0.12",
+]
+
+[project.optional-dependencies]
+train = [
+  "lightgbm>=4.5",
+  "catboost>=1.2",
+  "xgboost>=2.1",
+  "optuna>=3.6",
+]
+kaggle = [
+  "kaggle>=1.6",
+]
+notebook = [
+  "ipykernel>=6.29",
+  "jupyterlab>=4.3",
+  "matplotlib>=3.10",
+  "seaborn>=0.13",
+]
+
+[project.scripts]
+ts = "tabular_shenanigans.cli.main:app"
+
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools]
+package-dir = {"" = "src"}
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.ruff]
+line-length = 100
+
+[tool.pytest.ini_options]
+pythonpath = ["src"]

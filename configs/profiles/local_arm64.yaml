@@ -1,0 +1,10 @@
+runtime:
+  name: local_arm64
+  device: auto
+  accelerator: mps_or_cpu
+  mixed_precision: false
+
+training:
+  batch_size: 1024
+  n_estimators: 500
+  early_stopping_rounds: 50

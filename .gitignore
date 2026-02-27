@@ -1,7 +1,12 @@
 .DS_Store
 .vscode/**
 .venv/**
-data/
+/data/
+/artifacts/
+/reports/
+/experiments/
+catboost_info/
+.uv-cache/
 **/*.csv
 **/*.parquet
 **/*.zip
@@ -137,6 +142,9 @@ celerybeat.pid
 
 # Environments
 .env
+.env.*
+!.env.example
+kaggle.json
 .venv
 env/
 venv/

@@ -1,0 +1,19 @@
+competition:
+  name: titanic
+  kaggle_slug: titanic
+
+schema:
+  target: Survived
+  id_column: PassengerId
+
+evaluation:
+  metric: accuracy
+  direction: maximize
+
+submission:
+  id_column: PassengerId
+  target_column: Survived
+  prediction_type: label
+  classification_threshold: 0.5
+  positive_label: 1
+  negative_label: 0
