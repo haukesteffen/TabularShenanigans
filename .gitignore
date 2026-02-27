@@ -1,6 +1,8 @@
 .DS_Store
 data/
 **/*.csv
+**/*.parquet
+**/*.zip
 **/AutogluonModels
 **/AutoML_*
 **/.ruff_cache
