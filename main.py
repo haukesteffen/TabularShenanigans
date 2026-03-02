@@ -1,5 +1,9 @@
-def main():
-    print("Hello from tabularshenanigans!")
+from tabular_shenanigans.config import load_config
+
+
+def main() -> None:
+    config = load_config()
+    print(f"Config loaded: {config.competition_slug}")
 
 
 if __name__ == "__main__":
