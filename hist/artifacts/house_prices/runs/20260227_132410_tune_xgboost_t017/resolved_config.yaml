@@ -1,0 +1,67 @@
+seed: 42
+paths:
+  data_dir: data
+  artifacts_dir: artifacts
+  reports_dir: reports
+runtime:
+  device: auto
+  num_workers: 4
+  name: local_arm64
+  accelerator: mps_or_cpu
+  mixed_precision: false
+schema:
+  train_file: train.csv
+  test_file: test.csv
+  task_type: regression
+  target: SalePrice
+  id_column: Id
+training:
+  model_family: xgboost
+  cv_folds: 5
+  model_params:
+    n_estimators: 600
+    max_depth: 9
+    learning_rate: 0.14726329120893958
+    subsample: 0.7597602020561589
+    colsample_bytree: 0.6877283036629134
+  tune:
+    n_trials: 10
+    search_space:
+      n_estimators:
+        type: int
+        low: 200
+        high: 1000
+        step: 100
+      max_depth:
+        type: int
+        low: 3
+        high: 10
+      learning_rate:
+        type: float
+        low: 0.01
+        high: 0.2
+        log: true
+      subsample:
+        type: float
+        low: 0.6
+        high: 1.0
+      colsample_bytree:
+        type: float
+        low: 0.6
+        high: 1.0
+  batch_size: 1024
+  n_estimators: 500
+  early_stopping_rounds: 50
+evaluation:
+  metric: rmse
+  direction: minimize
+submission:
+  id_column: Id
+  target_column: SalePrice
+  prediction_type: raw
+  classification_threshold: 0.5
+  positive_label: 1
+  negative_label: 0
+competition:
+  name: house_prices
+  kaggle_slug: house-prices-advanced-regression-techniques

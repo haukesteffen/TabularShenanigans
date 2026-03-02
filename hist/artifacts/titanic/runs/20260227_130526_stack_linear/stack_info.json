@@ -1,0 +1,18 @@
+{
+  "status": "ok",
+  "stack_method": "linear",
+  "base_run_ids": [
+    "20260227_125845_xgboost",
+    "20260227_114617_xgboost"
+  ],
+  "task_type": "classification",
+  "meta": {
+    "method": "linear",
+    "model": "logistic_regression",
+    "intercept": -1.6595500087707304,
+    "coefficients": {
+      "20260227_125845_xgboost": 1.4145202182827636,
+      "20260227_114617_xgboost": 1.4145202182827636
+    }
+  }
+}

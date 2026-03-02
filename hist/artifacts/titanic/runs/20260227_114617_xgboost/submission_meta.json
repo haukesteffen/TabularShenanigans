@@ -1,0 +1,7 @@
+{
+  "timestamp_utc": "2026-02-27T11:46:27.563967+00:00",
+  "competition_slug": "titanic",
+  "submission_path": "/Users/hs/dev/TabularShenanigans/artifacts/titanic/runs/20260227_114617_xgboost/submission.csv",
+  "message": "fresh rerun after clean",
+  "stdout": "Successfully submitted to Titanic - Machine Learning from Disaster"
+}

@@ -1,0 +1,26 @@
+{
+  "status": "ok",
+  "stack_method": "linear",
+  "base_run_ids": [
+    "20260227_143123_tune_stage_cat_catboost_t015",
+    "20260227_135700_tune_lgbm_lightgbm_t002",
+    "20260227_141422_tune_stage_xgb_xgboost_t007"
+  ],
+  "task_type": "regression",
+  "metric": "rmse",
+  "metric_direction": "minimize",
+  "cv_score": 27034.605208733075,
+  "meta": {
+    "method": "linear",
+    "model": "ridge",
+    "params": {
+      "alpha": 0.36063902208625165
+    },
+    "intercept": -1280.973310475878,
+    "coefficients": {
+      "20260227_143123_tune_stage_cat_catboost_t015": 0.6579500503556022,
+      "20260227_135700_tune_lgbm_lightgbm_t002": 0.07812404616693022,
+      "20260227_141422_tune_stage_xgb_xgboost_t007": 0.27117300157652413
+    }
+  }
+}

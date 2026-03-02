@@ -1,0 +1,48 @@
+{
+  "timestamp_utc": "2026-02-27T13:39:36.747984+00:00",
+  "git_commit": "be65c20ddcac90677ab66dfa732828d51fbdeb01",
+  "competition": "house_prices",
+  "profile": "local_arm64",
+  "run_id": "20260227_133936_stack_linear_tuned",
+  "run_dir": "/Users/hs/dev/TabularShenanigans/artifacts/house_prices/runs/20260227_133936_stack_linear_tuned",
+  "latest_dir": "/Users/hs/dev/TabularShenanigans/artifacts/house_prices/latest",
+  "resolved_config_path": "/Users/hs/dev/TabularShenanigans/artifacts/house_prices/runs/20260227_133936_stack_linear_tuned/resolved_config.yaml",
+  "device": "mps",
+  "results": {
+    "status": "ok",
+    "task_type": "regression",
+    "metric": "stack",
+    "metric_direction": "maximize",
+    "cv_score": null,
+    "model_family": "stack_linear",
+    "n_folds": 0,
+    "target_column": "SalePrice",
+    "id_column": "Id",
+    "metrics": {},
+    "fold_metrics": {}
+  },
+  "stack": {
+    "status": "ok",
+    "stack_method": "linear",
+    "base_run_ids": [
+      "20260227_133859_tune_xgb_xgboost_t001",
+      "20260227_133903_tune_lgbm_lightgbm_t001"
+    ],
+    "task_type": "regression",
+    "meta": {
+      "method": "linear",
+      "model": "ridge",
+      "intercept": 2101.5735615637386,
+      "coefficients": {
+        "20260227_133859_tune_xgb_xgboost_t001": 1.0618661297466307,
+        "20260227_133903_tune_lgbm_lightgbm_t001": -0.07581900110666591
+      }
+    }
+  },
+  "tuning": {
+    "base_best_run_ids": [
+      "20260227_133859_tune_xgb_xgboost_t001",
+      "20260227_133903_tune_lgbm_lightgbm_t001"
+    ]
+  }
+}

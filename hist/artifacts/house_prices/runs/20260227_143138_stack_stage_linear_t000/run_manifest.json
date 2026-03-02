@@ -1,0 +1,53 @@
+{
+  "timestamp_utc": "2026-02-27T14:31:38.340547+00:00",
+  "git_commit": "be65c20ddcac90677ab66dfa732828d51fbdeb01",
+  "competition": "house_prices",
+  "profile": "local_arm64",
+  "run_id": "20260227_143138_stack_stage_linear_t000",
+  "run_dir": "/Users/hs/dev/TabularShenanigans/artifacts/house_prices/runs/20260227_143138_stack_stage_linear_t000",
+  "latest_dir": "/Users/hs/dev/TabularShenanigans/artifacts/house_prices/latest",
+  "resolved_config_path": "/Users/hs/dev/TabularShenanigans/artifacts/house_prices/runs/20260227_143138_stack_stage_linear_t000/resolved_config.yaml",
+  "device": "mps",
+  "results": {
+    "status": "ok",
+    "task_type": "regression",
+    "metric": "rmse",
+    "metric_direction": "minimize",
+    "cv_score": 27034.605208733075,
+    "model_family": "stack_linear",
+    "n_folds": 0,
+    "metrics": {
+      "rmse": 27034.605208733075
+    },
+    "fold_metrics": {}
+  },
+  "stack": {
+    "status": "ok",
+    "stack_method": "linear",
+    "base_run_ids": [
+      "20260227_143123_tune_stage_cat_catboost_t015",
+      "20260227_135700_tune_lgbm_lightgbm_t002",
+      "20260227_141422_tune_stage_xgb_xgboost_t007"
+    ],
+    "task_type": "regression",
+    "metric": "rmse",
+    "metric_direction": "minimize",
+    "cv_score": 27034.605208733075,
+    "meta": {
+      "method": "linear",
+      "model": "ridge",
+      "params": {
+        "alpha": 0.013694476473309805
+      },
+      "intercept": -1280.9733104750921,
+      "coefficients": {
+        "20260227_143123_tune_stage_cat_catboost_t015": 0.6579500503566594,
+        "20260227_135700_tune_lgbm_lightgbm_t002": 0.07812404616592511,
+        "20260227_141422_tune_stage_xgb_xgboost_t007": 0.2711730015764697
+      }
+    }
+  },
+  "meta_params": {
+    "alpha": 0.013694476473309805
+  }
+}

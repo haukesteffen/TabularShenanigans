@@ -1,0 +1,68 @@
+{
+  "timestamp_utc": "2026-02-27T13:23:26.716222+00:00",
+  "git_commit": "be65c20ddcac90677ab66dfa732828d51fbdeb01",
+  "competition": "house_prices",
+  "profile": "local_arm64",
+  "run_id": "20260227_132319_tune_xgboost_t009",
+  "run_dir": "/Users/hs/dev/TabularShenanigans/artifacts/house_prices/runs/20260227_132319_tune_xgboost_t009",
+  "latest_dir": "/Users/hs/dev/TabularShenanigans/artifacts/house_prices/latest",
+  "resolved_config_path": "/Users/hs/dev/TabularShenanigans/artifacts/house_prices/runs/20260227_132319_tune_xgboost_t009/resolved_config.yaml",
+  "device": "mps",
+  "results": {
+    "status": "ok",
+    "task_type": "regression",
+    "metric": "rmse",
+    "metric_direction": "minimize",
+    "cv_score": 30554.615166161337,
+    "fold_scores": [
+      24405.760631457484,
+      28324.885454313844,
+      47173.2561521886,
+      25526.592252002618,
+      19825.72551005385
+    ],
+    "metrics": {
+      "rmse": 30554.615166161337,
+      "mae": 15702.281627247432
+    },
+    "fold_metrics": {
+      "rmse": [
+        24405.760631457484,
+        28324.885454313844,
+        47173.2561521886,
+        25526.592252002618,
+        19825.72551005385
+      ],
+      "mae": [
+        15172.6064453125,
+        15751.3798828125,
+        18100.048828125,
+        16033.58203125,
+        13453.791015625
+      ]
+    },
+    "model_family": "xgboost",
+    "n_folds": 5,
+    "target_column": "SalePrice",
+    "id_column": "Id"
+  },
+  "tuning": {
+    "trial_index": 9,
+    "sampled_params": {
+      "n_estimators": 700,
+      "max_depth": 6,
+      "learning_rate": 0.08254087967109364,
+      "subsample": 0.6183297534622648,
+      "colsample_bytree": 0.6911593102606187
+    },
+    "merged_model_params": {
+      "n_estimators": 700,
+      "max_depth": 6,
+      "learning_rate": 0.08254087967109364,
+      "subsample": 0.6183297534622648,
+      "colsample_bytree": 0.6911593102606187
+    },
+    "sampler_seed": 42,
+    "total_trials": 20
+  }
+}

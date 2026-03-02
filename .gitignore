@@ -10,6 +10,7 @@ catboost_info/
 **/*.csv
 **/*.parquet
 **/*.zip
+**/*.joblib
 **/AutogluonModels
 **/AutoML_*
 **/.ruff_cache

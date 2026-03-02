@@ -1,0 +1,40 @@
+seed: 42
+paths:
+  data_dir: data
+  artifacts_dir: artifacts
+  reports_dir: reports
+runtime:
+  device: auto
+  num_workers: 4
+  name: local_arm64
+  accelerator: mps_or_cpu
+  mixed_precision: false
+schema:
+  train_file: train.csv
+  test_file: test.csv
+  task_type: auto
+  target: Survived
+  id_column: PassengerId
+training:
+  model_family: xgboost
+  cv_folds: 5
+  model_params:
+    n_estimators: 500
+    max_depth: 6
+    learning_rate: 0.05
+  batch_size: 1024
+  n_estimators: 500
+  early_stopping_rounds: 50
+evaluation:
+  metric: accuracy
+  direction: maximize
+submission:
+  id_column: PassengerId
+  target_column: Survived
+  prediction_type: label
+  classification_threshold: 0.5
+  positive_label: 1
+  negative_label: 0
+competition:
+  name: titanic
+  kaggle_slug: titanic

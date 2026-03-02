@@ -1,0 +1,42 @@
+{
+  "timestamp_utc": "2026-02-27T13:05:26.180484+00:00",
+  "git_commit": "be65c20ddcac90677ab66dfa732828d51fbdeb01",
+  "competition": "titanic",
+  "profile": "local_arm64",
+  "run_id": "20260227_130526_stack_linear",
+  "run_dir": "/Users/hs/dev/TabularShenanigans/artifacts/titanic/runs/20260227_130526_stack_linear",
+  "latest_dir": "/Users/hs/dev/TabularShenanigans/artifacts/titanic/latest",
+  "resolved_config_path": "/Users/hs/dev/TabularShenanigans/artifacts/titanic/runs/20260227_130526_stack_linear/resolved_config.yaml",
+  "device": "mps",
+  "results": {
+    "status": "ok",
+    "task_type": "classification",
+    "metric": "stack",
+    "metric_direction": "maximize",
+    "cv_score": null,
+    "model_family": "stack_linear",
+    "n_folds": 0,
+    "target_column": "Survived",
+    "id_column": "PassengerId",
+    "metrics": {},
+    "fold_metrics": {}
+  },
+  "stack": {
+    "status": "ok",
+    "stack_method": "linear",
+    "base_run_ids": [
+      "20260227_125845_xgboost",
+      "20260227_114617_xgboost"
+    ],
+    "task_type": "classification",
+    "meta": {
+      "method": "linear",
+      "model": "logistic_regression",
+      "intercept": -1.6595500087707304,
+      "coefficients": {
+        "20260227_125845_xgboost": 1.4145202182827636,
+        "20260227_114617_xgboost": 1.4145202182827636
+      }
+    }
+  }
+}

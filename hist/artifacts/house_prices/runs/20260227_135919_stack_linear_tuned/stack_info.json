@@ -1,0 +1,18 @@
+{
+  "status": "ok",
+  "stack_method": "linear",
+  "base_run_ids": [
+    "20260227_135533_tune_xgb_xgboost_t001",
+    "20260227_135700_tune_lgbm_lightgbm_t002"
+  ],
+  "task_type": "regression",
+  "meta": {
+    "method": "linear",
+    "model": "ridge",
+    "intercept": -1156.5324978618592,
+    "coefficients": {
+      "20260227_135533_tune_xgb_xgboost_t001": 0.3578229835226317,
+      "20260227_135700_tune_lgbm_lightgbm_t002": 0.647767459760081
+    }
+  }
+}

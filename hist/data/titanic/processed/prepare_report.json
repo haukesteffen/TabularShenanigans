@@ -1,0 +1,24 @@
+{
+  "task_type": "classification",
+  "target_column": "Survived",
+  "id_column": "PassengerId",
+  "train_rows": 891,
+  "test_rows": 418,
+  "feature_columns_train": 10,
+  "feature_columns_test": 10,
+  "train_only_columns": [],
+  "test_only_columns": [],
+  "dtype_mismatches": [],
+  "constant_columns_train": [],
+  "target_present_in_test": false,
+  "missing_values_train": {
+    "Age": 177,
+    "Cabin": 687,
+    "Embarked": 2
+  },
+  "missing_values_test": {
+    "Age": 86,
+    "Fare": 1,
+    "Cabin": 327
+  }
+}

@@ -1,0 +1,50 @@
+{
+  "timestamp_utc": "2026-02-27T14:26:57.566919+00:00",
+  "git_commit": "be65c20ddcac90677ab66dfa732828d51fbdeb01",
+  "competition": "house_prices",
+  "profile": "local_arm64",
+  "run_id": "20260227_142601_tune_stage_cat_catboost_t001",
+  "run_dir": "/Users/hs/dev/TabularShenanigans/artifacts/house_prices/runs/20260227_142601_tune_stage_cat_catboost_t001",
+  "latest_dir": "/Users/hs/dev/TabularShenanigans/artifacts/house_prices/latest",
+  "resolved_config_path": "/Users/hs/dev/TabularShenanigans/artifacts/house_prices/runs/20260227_142601_tune_stage_cat_catboost_t001/resolved_config.yaml",
+  "device": "mps",
+  "results": {
+    "status": "ok",
+    "task_type": "regression",
+    "metric": "rmse",
+    "metric_direction": "minimize",
+    "cv_score": 28284.636459027086,
+    "fold_scores": [
+      28696.142222882514,
+      25800.29057373475,
+      36044.75210431771,
+      28283.990846773115,
+      20292.15201622324
+    ],
+    "metrics": {
+      "rmse": 28284.636459027086,
+      "mae": 15083.700547336282
+    },
+    "fold_metrics": {
+      "rmse": [
+        28696.142222882514,
+        25800.29057373475,
+        36044.75210431771,
+        28283.990846773115,
+        20292.15201622324
+      ],
+      "mae": [
+        15905.188210951534,
+        14302.383992595667,
+        16315.340347368914,
+        15950.16669078468,
+        12945.4234949806
+      ]
+    },
+    "model_family": "catboost",
+    "n_folds": 5,
+    "split_version": "v1",
+    "target_column": "SalePrice",
+    "id_column": "Id"
+  }
+}

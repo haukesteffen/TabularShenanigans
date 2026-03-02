@@ -1,0 +1,16 @@
+{
+  "status": "ok",
+  "stack_method": "mean",
+  "base_run_ids": [
+    "20260227_143123_tune_stage_cat_catboost_t015",
+    "20260227_135700_tune_lgbm_lightgbm_t002",
+    "20260227_141422_tune_stage_xgb_xgboost_t007"
+  ],
+  "task_type": "regression",
+  "metric": "rmse",
+  "metric_direction": "minimize",
+  "cv_score": 27271.286032204203,
+  "meta": {
+    "method": "mean"
+  }
+}

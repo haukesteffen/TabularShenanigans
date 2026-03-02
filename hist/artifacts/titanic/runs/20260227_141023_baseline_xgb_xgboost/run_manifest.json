@@ -1,0 +1,66 @@
+{
+  "timestamp_utc": "2026-02-27T14:10:28.905904+00:00",
+  "git_commit": "be65c20ddcac90677ab66dfa732828d51fbdeb01",
+  "competition": "titanic",
+  "profile": "local_arm64",
+  "run_id": "20260227_141023_baseline_xgb_xgboost",
+  "run_dir": "/Users/hs/dev/TabularShenanigans/artifacts/titanic/runs/20260227_141023_baseline_xgb_xgboost",
+  "latest_dir": "/Users/hs/dev/TabularShenanigans/artifacts/titanic/latest",
+  "resolved_config_path": "/Users/hs/dev/TabularShenanigans/artifacts/titanic/runs/20260227_141023_baseline_xgb_xgboost/resolved_config.yaml",
+  "device": "mps",
+  "results": {
+    "status": "ok",
+    "task_type": "classification",
+    "metric": "accuracy",
+    "metric_direction": "maximize",
+    "cv_score": 0.8260381593714927,
+    "fold_scores": [
+      0.8603351955307262,
+      0.8426966292134831,
+      0.7640449438202247,
+      0.8089887640449438,
+      0.8539325842696629
+    ],
+    "metrics": {
+      "accuracy": 0.8260381593714927,
+      "f1": 0.7690014903129657,
+      "roc_auc": 0.8750279615249417,
+      "logloss": 0.4626561893920327
+    },
+    "fold_metrics": {
+      "accuracy": [
+        0.8603351955307262,
+        0.8426966292134831,
+        0.7640449438202247,
+        0.8089887640449438,
+        0.8539325842696629
+      ],
+      "f1": [
+        0.8120300751879699,
+        0.8,
+        0.6865671641791045,
+        0.746268656716418,
+        0.8
+      ],
+      "roc_auc": [
+        0.9104743083003953,
+        0.8985294117647059,
+        0.8318850267379679,
+        0.8604278074866311,
+        0.8749501396090945
+      ],
+      "logloss": [
+        0.3741982498614165,
+        0.411898805195008,
+        0.5596482533908393,
+        0.5202400516891258,
+        0.4477925416380887
+      ]
+    },
+    "model_family": "xgboost",
+    "n_folds": 5,
+    "split_version": "v1",
+    "target_column": "Survived",
+    "id_column": "PassengerId"
+  }
+}

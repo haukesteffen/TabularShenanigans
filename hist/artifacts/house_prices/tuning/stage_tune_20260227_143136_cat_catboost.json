@@ -1,0 +1,233 @@
+{
+  "competition": "house_prices",
+  "profile": "local_arm64",
+  "stage": "tune",
+  "model_family": "catboost",
+  "name": "cat",
+  "metric": "rmse",
+  "metric_direction": "minimize",
+  "best_run_id": "20260227_143123_tune_stage_cat_catboost_t015",
+  "best_score": 27330.69766935973,
+  "trials": [
+    {
+      "trial": 0,
+      "run_id": "20260227_142534_tune_stage_cat_catboost_t000",
+      "score": 28154.92850408515,
+      "sampled_params": {
+        "iterations": 1300,
+        "depth": 8,
+        "learning_rate": 0.01236263942533909,
+        "l2_leaf_reg": 6.600225346913817
+      }
+    },
+    {
+      "trial": 1,
+      "run_id": "20260227_142601_tune_stage_cat_catboost_t001",
+      "score": 28284.636459027086,
+      "sampled_params": {
+        "iterations": 1300,
+        "depth": 9,
+        "learning_rate": 0.029914174577302076,
+        "l2_leaf_reg": 1.6166619170226977
+      }
+    },
+    {
+      "trial": 2,
+      "run_id": "20260227_142657_tune_stage_cat_catboost_t002",
+      "score": 28142.1415457292,
+      "sampled_params": {
+        "iterations": 1000,
+        "depth": 7,
+        "learning_rate": 0.025238383077147142,
+        "l2_leaf_reg": 9.2932908613631
+      }
+    },
+    {
+      "trial": 3,
+      "run_id": "20260227_142710_tune_stage_cat_catboost_t003",
+      "score": 29428.52575173741,
+      "sampled_params": {
+        "iterations": 900,
+        "depth": 4,
+        "learning_rate": 0.1560919561483602,
+        "l2_leaf_reg": 9.571310018723057
+      }
+    },
+    {
+      "trial": 4,
+      "run_id": "20260227_142713_tune_stage_cat_catboost_t004",
+      "score": 27864.264490158912,
+      "sampled_params": {
+        "iterations": 800,
+        "depth": 10,
+        "learning_rate": 0.08986176527228004,
+        "l2_leaf_reg": 8.021359125570964
+      }
+    },
+    {
+      "trial": 5,
+      "run_id": "20260227_142803_tune_stage_cat_catboost_t005",
+      "score": 28769.532335338725,
+      "sampled_params": {
+        "iterations": 1300,
+        "depth": 7,
+        "learning_rate": 0.1507187342537779,
+        "l2_leaf_reg": 7.95731778921413
+      }
+    },
+    {
+      "trial": 6,
+      "run_id": "20260227_142821_tune_stage_cat_catboost_t006",
+      "score": 28652.5713425264,
+      "sampled_params": {
+        "iterations": 400,
+        "depth": 7,
+        "learning_rate": 0.07193468182688416,
+        "l2_leaf_reg": 1.6294828452765615
+      }
+    },
+    {
+      "trial": 7,
+      "run_id": "20260227_142827_tune_stage_cat_catboost_t007",
+      "score": 28113.1192393592,
+      "sampled_params": {
+        "iterations": 700,
+        "depth": 7,
+        "learning_rate": 0.1603853098411034,
+        "l2_leaf_reg": 5.406293235133865
+      }
+    },
+    {
+      "trial": 8,
+      "run_id": "20260227_142837_tune_stage_cat_catboost_t008",
+      "score": 28040.95938382499,
+      "sampled_params": {
+        "iterations": 1200,
+        "depth": 7,
+        "learning_rate": 0.025417624100246554,
+        "l2_leaf_reg": 9.708133762788615
+      }
+    },
+    {
+      "trial": 9,
+      "run_id": "20260227_142853_tune_stage_cat_catboost_t009",
+      "score": 28582.691058483884,
+      "sampled_params": {
+        "iterations": 400,
+        "depth": 5,
+        "learning_rate": 0.03740997181098621,
+        "l2_leaf_reg": 8.527547995051584
+      }
+    },
+    {
+      "trial": 10,
+      "run_id": "20260227_142855_tune_stage_cat_catboost_t010",
+      "score": 28337.980226526546,
+      "sampled_params": {
+        "iterations": 700,
+        "depth": 10,
+        "learning_rate": 0.07457164660631792,
+        "l2_leaf_reg": 4.402919233362932
+      }
+    },
+    {
+      "trial": 11,
+      "run_id": "20260227_142940_tune_stage_cat_catboost_t011",
+      "score": 28413.33432228832,
+      "sampled_params": {
+        "iterations": 1000,
+        "depth": 10,
+        "learning_rate": 0.016997187715334476,
+        "l2_leaf_reg": 7.3913157853390175
+      }
+    },
+    {
+      "trial": 12,
+      "run_id": "20260227_143041_tune_stage_cat_catboost_t012",
+      "score": 28802.344083214368,
+      "sampled_params": {
+        "iterations": 1100,
+        "depth": 5,
+        "learning_rate": 0.06598241491315235,
+        "l2_leaf_reg": 9.93658883978469
+      }
+    },
+    {
+      "trial": 13,
+      "run_id": "20260227_143048_tune_stage_cat_catboost_t013",
+      "score": 28291.361720190966,
+      "sampled_params": {
+        "iterations": 700,
+        "depth": 9,
+        "learning_rate": 0.054361788123171044,
+        "l2_leaf_reg": 6.25496910296021
+      }
+    },
+    {
+      "trial": 14,
+      "run_id": "20260227_143118_tune_stage_cat_catboost_t014",
+      "score": 27628.428481998268,
+      "sampled_params": {
+        "iterations": 600,
+        "depth": 6,
+        "learning_rate": 0.10103553205596426,
+        "l2_leaf_reg": 3.629070300914833
+      }
+    },
+    {
+      "trial": 15,
+      "run_id": "20260227_143123_tune_stage_cat_catboost_t015",
+      "score": 27330.69766935973,
+      "sampled_params": {
+        "iterations": 500,
+        "depth": 5,
+        "learning_rate": 0.10511315770831449,
+        "l2_leaf_reg": 3.456363877471831
+      }
+    },
+    {
+      "trial": 16,
+      "run_id": "20260227_143126_tune_stage_cat_catboost_t016",
+      "score": 27551.33214720618,
+      "sampled_params": {
+        "iterations": 500,
+        "depth": 5,
+        "learning_rate": 0.10144860878994173,
+        "l2_leaf_reg": 3.059941867595275
+      }
+    },
+    {
+      "trial": 17,
+      "run_id": "20260227_143129_tune_stage_cat_catboost_t017",
+      "score": 29325.98580941584,
+      "sampled_params": {
+        "iterations": 300,
+        "depth": 4,
+        "learning_rate": 0.11328519799402771,
+        "l2_leaf_reg": 3.1999710946284714
+      }
+    },
+    {
+      "trial": 18,
+      "run_id": "20260227_143131_tune_stage_cat_catboost_t018",
+      "score": 28418.873476444398,
+      "sampled_params": {
+        "iterations": 500,
+        "depth": 5,
+        "learning_rate": 0.04930660540666345,
+        "l2_leaf_reg": 2.6633938590646036
+      }
+    },
+    {
+      "trial": 19,
+      "run_id": "20260227_143134_tune_stage_cat_catboost_t019",
+      "score": 28667.433433786064,
+      "sampled_params": {
+        "iterations": 300,
+        "depth": 6,
+        "learning_rate": 0.19948063648934272,
+        "l2_leaf_reg": 4.8615243245088
+      }
+    }
+  ]
+}

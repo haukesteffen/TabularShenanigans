@@ -1,0 +1,69 @@
+{
+  "timestamp_utc": "2026-02-27T13:58:09.528159+00:00",
+  "git_commit": "be65c20ddcac90677ab66dfa732828d51fbdeb01",
+  "competition": "house_prices",
+  "profile": "local_arm64",
+  "run_id": "20260227_135738_tune_lgbm_lightgbm_t004",
+  "run_dir": "/Users/hs/dev/TabularShenanigans/artifacts/house_prices/runs/20260227_135738_tune_lgbm_lightgbm_t004",
+  "latest_dir": "/Users/hs/dev/TabularShenanigans/artifacts/house_prices/latest",
+  "resolved_config_path": "/Users/hs/dev/TabularShenanigans/artifacts/house_prices/runs/20260227_135738_tune_lgbm_lightgbm_t004/resolved_config.yaml",
+  "device": "mps",
+  "results": {
+    "status": "ok",
+    "task_type": "regression",
+    "metric": "rmse",
+    "metric_direction": "minimize",
+    "cv_score": 31351.961271804244,
+    "fold_scores": [
+      28680.594036951516,
+      27611.081009560017,
+      45034.76006738639,
+      28769.844284424264,
+      21770.29064200986
+    ],
+    "metrics": {
+      "rmse": 31351.961271804244,
+      "mae": 16612.811632683246
+    },
+    "fold_metrics": {
+      "rmse": [
+        28680.594036951516,
+        27611.081009560017,
+        45034.76006738639,
+        28769.844284424264,
+        21770.29064200986
+      ],
+      "mae": [
+        16643.696900407227,
+        16620.434639345764,
+        18618.238819478946,
+        17106.106601294272,
+        14075.581202890022
+      ]
+    },
+    "model_family": "lightgbm",
+    "n_folds": 5,
+    "target_column": "SalePrice",
+    "id_column": "Id"
+  },
+  "tuning": {
+    "trial_index": 4,
+    "sampled_params": {
+      "n_estimators": 900,
+      "num_leaves": 182,
+      "learning_rate": 0.03364954942713282,
+      "feature_fraction": 0.8765238513649517,
+      "bagging_fraction": 0.7304479490467439
+    },
+    "merged_model_params": {
+      "n_estimators": 900,
+      "num_leaves": 182,
+      "learning_rate": 0.03364954942713282,
+      "feature_fraction": 0.8765238513649517,
+      "bagging_fraction": 0.7304479490467439
+    },
+    "sampler_seed": 44,
+    "total_trials": 8,
+    "model_family": "lightgbm"
+  }
+}

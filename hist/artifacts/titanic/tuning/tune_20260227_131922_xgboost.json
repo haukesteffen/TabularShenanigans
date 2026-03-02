@@ -1,0 +1,51 @@
+{
+  "competition": "titanic",
+  "profile": "local_arm64",
+  "model_family": "xgboost",
+  "sampler_seed": 42,
+  "n_trials": 2,
+  "best_trial": {
+    "trial_index": 2,
+    "run_id": "20260227_131919_tune_xgboost_t002",
+    "score": 0.8406285072951739,
+    "metric": "accuracy",
+    "metric_direction": "maximize",
+    "sampled_params": {
+      "n_estimators": 300,
+      "max_depth": 4,
+      "learning_rate": 0.058647360500318345,
+      "subsample": 0.6127130717927134,
+      "colsample_bytree": 0.637478095944637
+    }
+  },
+  "trials": [
+    {
+      "trial_index": 1,
+      "run_id": "20260227_131917_tune_xgboost_t001",
+      "score": 0.8282828282828283,
+      "metric": "accuracy",
+      "metric_direction": "maximize",
+      "sampled_params": {
+        "n_estimators": 300,
+        "max_depth": 3,
+        "learning_rate": 0.09221030180784595,
+        "subsample": 0.6979567415213905,
+        "colsample_bytree": 0.6558151714100575
+      }
+    },
+    {
+      "trial_index": 2,
+      "run_id": "20260227_131919_tune_xgboost_t002",
+      "score": 0.8406285072951739,
+      "metric": "accuracy",
+      "metric_direction": "maximize",
+      "sampled_params": {
+        "n_estimators": 300,
+        "max_depth": 4,
+        "learning_rate": 0.058647360500318345,
+        "subsample": 0.6127130717927134,
+        "colsample_bytree": 0.637478095944637
+      }
+    }
+  ]
+}

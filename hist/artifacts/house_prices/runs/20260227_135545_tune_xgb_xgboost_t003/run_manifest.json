@@ -1,0 +1,69 @@
+{
+  "timestamp_utc": "2026-02-27T13:55:58.422150+00:00",
+  "git_commit": "be65c20ddcac90677ab66dfa732828d51fbdeb01",
+  "competition": "house_prices",
+  "profile": "local_arm64",
+  "run_id": "20260227_135545_tune_xgb_xgboost_t003",
+  "run_dir": "/Users/hs/dev/TabularShenanigans/artifacts/house_prices/runs/20260227_135545_tune_xgb_xgboost_t003",
+  "latest_dir": "/Users/hs/dev/TabularShenanigans/artifacts/house_prices/latest",
+  "resolved_config_path": "/Users/hs/dev/TabularShenanigans/artifacts/house_prices/runs/20260227_135545_tune_xgb_xgboost_t003/resolved_config.yaml",
+  "device": "mps",
+  "results": {
+    "status": "ok",
+    "task_type": "regression",
+    "metric": "rmse",
+    "metric_direction": "minimize",
+    "cv_score": 30315.772663510867,
+    "fold_scores": [
+      25578.48846198696,
+      24425.319322375297,
+      46496.84514028882,
+      26831.299931237027,
+      21505.8057277564
+    ],
+    "metrics": {
+      "rmse": 30315.772663510867,
+      "mae": 15833.86736943493
+    },
+    "fold_metrics": {
+      "rmse": [
+        25578.48846198696,
+        24425.319322375297,
+        46496.84514028882,
+        26831.299931237027,
+        21505.8057277564
+      ],
+      "mae": [
+        15461.25390625,
+        14883.0595703125,
+        18364.328125,
+        16621.673828125,
+        13839.0205078125
+      ]
+    },
+    "model_family": "xgboost",
+    "n_folds": 5,
+    "target_column": "SalePrice",
+    "id_column": "Id"
+  },
+  "tuning": {
+    "trial_index": 3,
+    "sampled_params": {
+      "n_estimators": 800,
+      "max_depth": 9,
+      "learning_rate": 0.03254781056146519,
+      "subsample": 0.6230872447814799,
+      "colsample_bytree": 0.6429217422611117
+    },
+    "merged_model_params": {
+      "n_estimators": 800,
+      "max_depth": 9,
+      "learning_rate": 0.03254781056146519,
+      "subsample": 0.6230872447814799,
+      "colsample_bytree": 0.6429217422611117
+    },
+    "sampler_seed": 43,
+    "total_trials": 8,
+    "model_family": "xgboost"
+  }
+}

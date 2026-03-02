@@ -1,0 +1,303 @@
+{
+  "competition": "house_prices",
+  "profile": "local_arm64",
+  "model_family": "xgboost",
+  "sampler_seed": 42,
+  "n_trials": 20,
+  "best_trial": {
+    "trial_index": 16,
+    "run_id": "20260227_132402_tune_xgboost_t016",
+    "score": 29219.877587489023,
+    "metric": "rmse",
+    "metric_direction": "minimize",
+    "sampled_params": {
+      "n_estimators": 900,
+      "max_depth": 5,
+      "learning_rate": 0.022111440768308573,
+      "subsample": 0.6986510030775934,
+      "colsample_bytree": 0.8245472536652603
+    }
+  },
+  "trials": [
+    {
+      "trial_index": 1,
+      "run_id": "20260227_132244_tune_xgboost_t001",
+      "score": 30084.15131644384,
+      "metric": "rmse",
+      "metric_direction": "minimize",
+      "sampled_params": {
+        "n_estimators": 300,
+        "max_depth": 3,
+        "learning_rate": 0.09221030180784595,
+        "subsample": 0.6979567415213905,
+        "colsample_bytree": 0.6558151714100575
+      }
+    },
+    {
+      "trial_index": 2,
+      "run_id": "20260227_132246_tune_xgboost_t002",
+      "score": 30310.557679500063,
+      "metric": "rmse",
+      "metric_direction": "minimize",
+      "sampled_params": {
+        "n_estimators": 300,
+        "max_depth": 4,
+        "learning_rate": 0.058647360500318345,
+        "subsample": 0.6127130717927134,
+        "colsample_bytree": 0.637478095944637
+      }
+    },
+    {
+      "trial_index": 3,
+      "run_id": "20260227_132248_tune_xgboost_t003",
+      "score": 30172.366915171497,
+      "metric": "rmse",
+      "metric_direction": "minimize",
+      "sampled_params": {
+        "n_estimators": 500,
+        "max_depth": 3,
+        "learning_rate": 0.05372750358334851,
+        "subsample": 0.8864078451689614,
+        "colsample_bytree": 0.8805299894360943
+      }
+    },
+    {
+      "trial_index": 4,
+      "run_id": "20260227_132250_tune_xgboost_t004",
+      "score": 29792.0211530298,
+      "metric": "rmse",
+      "metric_direction": "minimize",
+      "sampled_params": {
+        "n_estimators": 800,
+        "max_depth": 6,
+        "learning_rate": 0.03840912764817736,
+        "subsample": 0.7112762832922651,
+        "colsample_bytree": 0.9477201283171736
+      }
+    },
+    {
+      "trial_index": 5,
+      "run_id": "20260227_132259_tune_xgboost_t005",
+      "score": 30072.077308968517,
+      "metric": "rmse",
+      "metric_direction": "minimize",
+      "sampled_params": {
+        "n_estimators": 400,
+        "max_depth": 9,
+        "learning_rate": 0.027712526922096588,
+        "subsample": 0.6621917999247126,
+        "colsample_bytree": 0.9828852288827125
+      }
+    },
+    {
+      "trial_index": 6,
+      "run_id": "20260227_132306_tune_xgboost_t006",
+      "score": 30242.358610009705,
+      "metric": "rmse",
+      "metric_direction": "minimize",
+      "sampled_params": {
+        "n_estimators": 700,
+        "max_depth": 4,
+        "learning_rate": 0.013202772022451676,
+        "subsample": 0.6386865507333855,
+        "colsample_bytree": 0.9389977465389839
+      }
+    },
+    {
+      "trial_index": 7,
+      "run_id": "20260227_132310_tune_xgboost_t007",
+      "score": 30327.87964851661,
+      "metric": "rmse",
+      "metric_direction": "minimize",
+      "sampled_params": {
+        "n_estimators": 600,
+        "max_depth": 3,
+        "learning_rate": 0.08900265114467813,
+        "subsample": 0.8144912365818803,
+        "colsample_bytree": 0.9892463055917482
+      }
+    },
+    {
+      "trial_index": 8,
+      "run_id": "20260227_132314_tune_xgboost_t008",
+      "score": 29958.22041712285,
+      "metric": "rmse",
+      "metric_direction": "minimize",
+      "sampled_params": {
+        "n_estimators": 800,
+        "max_depth": 4,
+        "learning_rate": 0.05226625946723365,
+        "subsample": 0.9317618657011979,
+        "colsample_bytree": 0.8474079009456984
+      }
+    },
+    {
+      "trial_index": 9,
+      "run_id": "20260227_132319_tune_xgboost_t009",
+      "score": 30554.615166161337,
+      "metric": "rmse",
+      "metric_direction": "minimize",
+      "sampled_params": {
+        "n_estimators": 700,
+        "max_depth": 6,
+        "learning_rate": 0.08254087967109364,
+        "subsample": 0.6183297534622648,
+        "colsample_bytree": 0.6911593102606187
+      }
+    },
+    {
+      "trial_index": 10,
+      "run_id": "20260227_132326_tune_xgboost_t010",
+      "score": 29567.19922854904,
+      "metric": "rmse",
+      "metric_direction": "minimize",
+      "sampled_params": {
+        "n_estimators": 600,
+        "max_depth": 4,
+        "learning_rate": 0.12965641549964813,
+        "subsample": 0.9465934667021079,
+        "colsample_bytree": 0.7520504900156665
+      }
+    },
+    {
+      "trial_index": 11,
+      "run_id": "20260227_132330_tune_xgboost_t011",
+      "score": 29847.948350641178,
+      "metric": "rmse",
+      "metric_direction": "minimize",
+      "sampled_params": {
+        "n_estimators": 900,
+        "max_depth": 8,
+        "learning_rate": 0.01627863026975449,
+        "subsample": 0.7421082800910086,
+        "colsample_bytree": 0.8680700697510773
+      }
+    },
+    {
+      "trial_index": 12,
+      "run_id": "20260227_132343_tune_xgboost_t012",
+      "score": 29764.759775686216,
+      "metric": "rmse",
+      "metric_direction": "minimize",
+      "sampled_params": {
+        "n_estimators": 300,
+        "max_depth": 5,
+        "learning_rate": 0.049537262353704474,
+        "subsample": 0.6979243700605705,
+        "colsample_bytree": 0.7849040847404463
+      }
+    },
+    {
+      "trial_index": 13,
+      "run_id": "20260227_132346_tune_xgboost_t013",
+      "score": 29981.303417050836,
+      "metric": "rmse",
+      "metric_direction": "minimize",
+      "sampled_params": {
+        "n_estimators": 600,
+        "max_depth": 6,
+        "learning_rate": 0.07775058690275993,
+        "subsample": 0.9371407680759238,
+        "colsample_bytree": 0.9103999646184979
+      }
+    },
+    {
+      "trial_index": 14,
+      "run_id": "20260227_132352_tune_xgboost_t014",
+      "score": 30009.586944210572,
+      "metric": "rmse",
+      "metric_direction": "minimize",
+      "sampled_params": {
+        "n_estimators": 500,
+        "max_depth": 3,
+        "learning_rate": 0.11152923792336034,
+        "subsample": 0.7604659148089316,
+        "colsample_bytree": 0.6264754420846189
+      }
+    },
+    {
+      "trial_index": 15,
+      "run_id": "20260227_132355_tune_xgboost_t015",
+      "score": 30228.00146113369,
+      "metric": "rmse",
+      "metric_direction": "minimize",
+      "sampled_params": {
+        "n_estimators": 700,
+        "max_depth": 6,
+        "learning_rate": 0.07124351916707018,
+        "subsample": 0.7582527604242657,
+        "colsample_bytree": 0.9658190358962174
+      }
+    },
+    {
+      "trial_index": 16,
+      "run_id": "20260227_132402_tune_xgboost_t016",
+      "score": 29219.877587489023,
+      "metric": "rmse",
+      "metric_direction": "minimize",
+      "sampled_params": {
+        "n_estimators": 900,
+        "max_depth": 5,
+        "learning_rate": 0.022111440768308573,
+        "subsample": 0.6986510030775934,
+        "colsample_bytree": 0.8245472536652603
+      }
+    },
+    {
+      "trial_index": 17,
+      "run_id": "20260227_132410_tune_xgboost_t017",
+      "score": 30652.273514390854,
+      "metric": "rmse",
+      "metric_direction": "minimize",
+      "sampled_params": {
+        "n_estimators": 600,
+        "max_depth": 9,
+        "learning_rate": 0.14726329120893958,
+        "subsample": 0.7597602020561589,
+        "colsample_bytree": 0.6877283036629134
+      }
+    },
+    {
+      "trial_index": 18,
+      "run_id": "20260227_132419_tune_xgboost_t018",
+      "score": 29792.1252916459,
+      "metric": "rmse",
+      "metric_direction": "minimize",
+      "sampled_params": {
+        "n_estimators": 400,
+        "max_depth": 10,
+        "learning_rate": 0.013130336981811581,
+        "subsample": 0.6188465501698938,
+        "colsample_bytree": 0.6438596521402636
+      }
+    },
+    {
+      "trial_index": 19,
+      "run_id": "20260227_132427_tune_xgboost_t019",
+      "score": 29993.157918513745,
+      "metric": "rmse",
+      "metric_direction": "minimize",
+      "sampled_params": {
+        "n_estimators": 400,
+        "max_depth": 9,
+        "learning_rate": 0.05969611092231946,
+        "subsample": 0.7539069246698,
+        "colsample_bytree": 0.8383553713444513
+      }
+    },
+    {
+      "trial_index": 20,
+      "run_id": "20260227_132434_tune_xgboost_t020",
+      "score": 29657.97281531445,
+      "metric": "rmse",
+      "metric_direction": "minimize",
+      "sampled_params": {
+        "n_estimators": 900,
+        "max_depth": 7,
+        "learning_rate": 0.18340116810385773,
+        "subsample": 0.9443118808937992,
+        "colsample_bytree": 0.6045924087771278
+      }
+    }
+  ]
+}

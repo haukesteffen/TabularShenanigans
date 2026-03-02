@@ -1,0 +1,7 @@
+{
+  "timestamp_utc": "2026-02-27T14:38:59.558268+00:00",
+  "competition_slug": "house-prices-advanced-regression-techniques",
+  "submission_path": "/Users/hs/dev/TabularShenanigans/artifacts/house_prices/runs/20260227_143138_stack_stage_linear_t004/submission.csv",
+  "message": "3-stage pipeline test",
+  "stdout": "Successfully submitted to House Prices - Advanced Regression Techniques"
+}

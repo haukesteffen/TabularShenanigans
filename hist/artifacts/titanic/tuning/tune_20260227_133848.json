@@ -1,0 +1,61 @@
+{
+  "competition": "titanic",
+  "profile": "local_arm64",
+  "sampler_seed": 42,
+  "learners": [
+    {
+      "name": "xgboost",
+      "model_family": "xgboost",
+      "best_trial": {
+        "trial_index": 1,
+        "run_id": "20260227_133846_tune_xgboost_t001",
+        "score": 0.8282828282828283,
+        "metric": "accuracy",
+        "metric_direction": "maximize",
+        "model_family": "xgboost",
+        "sampled_params": {
+          "n_estimators": 300,
+          "max_depth": 3,
+          "learning_rate": 0.09221030180784595,
+          "subsample": 0.6979567415213905,
+          "colsample_bytree": 0.6558151714100575
+        }
+      }
+    }
+  ],
+  "best_trial_overall": {
+    "trial_index": 1,
+    "run_id": "20260227_133846_tune_xgboost_t001",
+    "score": 0.8282828282828283,
+    "metric": "accuracy",
+    "metric_direction": "maximize",
+    "model_family": "xgboost",
+    "sampled_params": {
+      "n_estimators": 300,
+      "max_depth": 3,
+      "learning_rate": 0.09221030180784595,
+      "subsample": 0.6979567415213905,
+      "colsample_bytree": 0.6558151714100575
+    }
+  },
+  "best_run_ids": [
+    "20260227_133846_tune_xgboost_t001"
+  ],
+  "trials": [
+    {
+      "trial_index": 1,
+      "run_id": "20260227_133846_tune_xgboost_t001",
+      "score": 0.8282828282828283,
+      "metric": "accuracy",
+      "metric_direction": "maximize",
+      "model_family": "xgboost",
+      "sampled_params": {
+        "n_estimators": 300,
+        "max_depth": 3,
+        "learning_rate": 0.09221030180784595,
+        "subsample": 0.6979567415213905,
+        "colsample_bytree": 0.6558151714100575
+      }
+    }
+  ]
+}
