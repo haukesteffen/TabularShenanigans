@@ -20,14 +20,17 @@ Out of scope now:
 - Kaggle download/submission integration
 - EDA, feature engineering, baseline models, stacking
 
-## Non-Negotiable Rules
+## Current Phase Rules (Functionality First)
 - Keep implementation simple.
 - Absolutely no overengineering.
 - One runtime config source only: a single `config.yaml`.
 - No config overrides via CLI or environment variables.
 - No multi-file config composition.
-- Fail fast with clear error messages on invalid or conflicting inputs.
-- Use deterministic behavior by default (fixed random seed in config).
+- Focus on working functionality over code quality conventions and polish.
+- Unit and integration tests are out of scope in this phase.
+- Avoid broad defensive `try/except` blocks; prefer direct failures during development unless minimal handling is required for core flow.
+- Keep validation and error messaging minimal: only what is needed to unblock usage and debugging.
+- Deterministic behavior is preferred when easy to keep, but iteration speed takes priority in this phase.
 - Ship small focused iterations.
 - After each iteration, provide a detailed explanation of changes and behavior.
 
@@ -62,9 +65,9 @@ Error contract:
 - Any attempt to use additional config sources -> hard error
 
 ## Validation And Error Contract
-- Validation layer: Pydantic.
-- Error timing: startup, before any pipeline side effects.
-- Error style: clear, actionable, and specific to the failing field/source.
+- Validation layer: Pydantic with minimal scope needed for current functionality.
+- Error timing: fail as early as practical, but avoid extra boilerplate solely for error UX.
+- Error style: simple and direct; detailed/production-grade messaging is deferred.
 
 ## Next Phases (Preview Only)
 - CV strategy: 7-fold shuffled (`KFold` for regression, `StratifiedKFold` for binary classification).
@@ -80,4 +83,5 @@ For every shipped iteration, provide:
 - How to run it
 - Expected outputs and errors
 - Current limitations
+- Which shortcuts were intentionally taken in this phase (for example: no tests, minimal error handling)
 - Next immediate step
