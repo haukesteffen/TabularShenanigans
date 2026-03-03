@@ -17,7 +17,8 @@ Config-driven Python workflows for semi-automated participation in tabular Kaggl
 
 ## Current MVP Status
 - Step 1 (configuration pipeline) is complete.
-- Current implementation priority is Kaggle competition data fetch.
+- Step 2 (Kaggle competition data fetch) is complete.
+- Current implementation priority is script-based exploratory data analysis (Step 3).
 
 ## Tooling
 - Python for orchestration
@@ -29,7 +30,8 @@ Config-driven Python workflows for semi-automated participation in tabular Kaggl
 1. Keep a project `config.yaml` at repository root.
 2. Run the current Python entrypoint scripts directly from the repo.
 3. Ensure Kaggle CLI access is already configured for your user.
-4. Follow iteration notes and current development-mode rules in [`docs/TECHNICAL_GUIDE.md`](docs/TECHNICAL_GUIDE.md).
+4. Current run behavior: fetch competition zip if missing, then generate EDA report CSVs under `reports/<competition_slug>/`.
+5. Follow iteration notes and current development-mode rules in [`docs/TECHNICAL_GUIDE.md`](docs/TECHNICAL_GUIDE.md).
 
 ## Roadmap
 1. Robust config pipeline
