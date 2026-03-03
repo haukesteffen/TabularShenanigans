@@ -3,21 +3,22 @@
 Implementation playbook for this repository. Use this file as the technical source of truth.
 
 ## Current Phase
-Step 1: Config only.
+Step 2: Kaggle data fetch.
 
 In scope now:
 - `config.yaml`
 - `src/tabular_shenanigans/__init__.py`
 - `src/tabular_shenanigans/config.py`
-- Minimal callable entrypoint (`main.py` or `src/tabular_shenanigans/cli.py`) to load config, validate, and fail fast
+- Minimal callable entrypoint (`main.py` or `src/tabular_shenanigans/cli.py`)
+- Kaggle data download module (for example `src/tabular_shenanigans/data.py`)
+- Local data target path: `data/<competition_slug>/`
 
 Out of scope now:
 - `src/tabular_shenanigans/pipeline.py`
-- `src/tabular_shenanigans/data.py`
 - `src/tabular_shenanigans/cv.py`
 - `src/tabular_shenanigans/train.py`
 - `artifacts/` (except optional placeholder)
-- Kaggle download/submission integration
+- Kaggle submission integration
 - EDA, feature engineering, baseline models, stacking
 
 ## Current Phase Rules (Functionality First)
@@ -26,6 +27,8 @@ Out of scope now:
 - One runtime config source only: a single `config.yaml`.
 - No config overrides via CLI or environment variables.
 - No multi-file config composition.
+- Assume Kaggle CLI is available and authenticated.
+- Assume secrets are valid and user has joined the configured competition.
 - Focus on working functionality over code quality conventions and polish.
 - Unit and integration tests are out of scope in this phase.
 - Avoid broad defensive `try/except` blocks; prefer direct failures during development unless minimal handling is required for core flow.
@@ -35,7 +38,7 @@ Out of scope now:
 - After each iteration, provide a detailed explanation of changes and behavior.
 
 ## Future Scalability Guardrails (CPU -> Cloud GPU)
-These are design guardrails for upcoming phases. They do not expand current Step 1 scope.
+These are design guardrails for upcoming phases. They do not expand current Step 2 scope.
 
 - Stay CPU-first by default; treat GPU support as an optional backend path to add later.
 - Keep data and modeling logic behind small internal interfaces so backend swaps are localized.
@@ -46,11 +49,11 @@ These are design guardrails for upcoming phases. They do not expand current Step
 - Plan dependencies as core CPU requirements plus optional GPU extras, not mandatory RAPIDS install.
 - When GPU backend is introduced, require CPU/GPU parity checks with explicit numeric tolerance.
 
-## Build Order (Step 1)
-1. Implement YAML loading.
-2. Define Pydantic config models and validation rules.
-3. Implement config loading/validation entry function in `config.py`.
-4. Wire minimal entrypoint to call loader and surface errors clearly.
+## Build Order (Step 2)
+1. Add Kaggle download function using the competition slug from validated config.
+2. Download competition files to `data/<competition_slug>/`.
+3. Keep fetch-if-missing behavior to avoid duplicate downloads.
+4. Wire minimal entrypoint to call config loader, then data fetch.
 
 ## Interfaces (Current Phase)
 Input:
@@ -58,15 +61,18 @@ Input:
 
 Output:
 - A validated in-memory config object from Pydantic
+- Competition files downloaded under `data/<competition_slug>/`
 
 Error contract:
 - Missing config file -> hard error
 - Schema/type violation -> hard error
 - Any attempt to use additional config sources -> hard error
+- Kaggle command failure -> hard error (bubble up with minimal wrapping)
 
 ## Validation And Error Contract
-- Validation layer: Pydantic with minimal scope needed for current functionality.
-- Error timing: fail as early as practical, but avoid extra boilerplate solely for error UX.
+- Validation layer: Pydantic for config only, with minimal scope needed for current functionality.
+- Runtime assumptions: Kaggle CLI/auth/competition access are preconfigured by the user.
+- Error timing: fail fast; avoid extra preflight checks.
 - Error style: simple and direct; detailed/production-grade messaging is deferred.
 
 ## Next Phases (Preview Only)

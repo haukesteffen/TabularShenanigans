@@ -16,8 +16,8 @@ Config-driven Python workflows for semi-automated participation in tabular Kaggl
 - Refactoring for style, architecture hardening, and production-grade robustness are deferred to a later stabilization phase.
 
 ## Current MVP Status
-- Current implementation priority is the configuration pipeline.
-- Full Kaggle/data/modeling flow is planned in subsequent MVP steps.
+- Step 1 (configuration pipeline) is complete.
+- Current implementation priority is Kaggle competition data fetch.
 
 ## Tooling
 - Python for orchestration
@@ -28,7 +28,8 @@ Config-driven Python workflows for semi-automated participation in tabular Kaggl
 ## Quickstart (Current Stage)
 1. Keep a project `config.yaml` at repository root.
 2. Run the current Python entrypoint scripts directly from the repo.
-3. Follow iteration notes and current development-mode rules in [`docs/TECHNICAL_GUIDE.md`](docs/TECHNICAL_GUIDE.md).
+3. Ensure Kaggle CLI access is already configured for your user.
+4. Follow iteration notes and current development-mode rules in [`docs/TECHNICAL_GUIDE.md`](docs/TECHNICAL_GUIDE.md).
 
 ## Roadmap
 1. Robust config pipeline
