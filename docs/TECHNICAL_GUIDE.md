@@ -3,7 +3,7 @@
 Implementation playbook for this repository. Use this file as the technical source of truth.
 
 ## Current Phase
-Step 3: Exploratory data analysis.
+Step 4: Preprocessing and feature engineering.
 
 In scope now:
 - `config.yaml`
@@ -12,17 +12,18 @@ In scope now:
 - Minimal callable entrypoint (`main.py` or `src/tabular_shenanigans/cli.py`)
 - Kaggle data download module (`src/tabular_shenanigans/data.py`)
 - EDA module (`src/tabular_shenanigans/eda.py`)
+- Preprocessing module (`src/tabular_shenanigans/preprocess.py`)
 - Local data target path: `data/<competition_slug>/`
 - EDA report path: `reports/<competition_slug>/`
+- Preprocessing artifact path: `artifacts/<competition_slug>/preprocess/`
 
 Out of scope now:
 - `src/tabular_shenanigans/pipeline.py`
 - `src/tabular_shenanigans/cv.py`
 - `src/tabular_shenanigans/train.py`
-- `artifacts/` (except optional placeholder)
 - Kaggle submission integration
 - Plot generation and notebook-first workflows
-- Feature engineering, baseline models, stacking
+- Baseline models, stacking
 
 ## Current Phase Rules (Functionality First)
 - Keep implementation simple.
@@ -33,6 +34,7 @@ Out of scope now:
 - Assume Kaggle CLI is available and authenticated.
 - Assume secrets are valid and user has joined the configured competition.
 - Keep EDA numeric/script-driven (terminal summary + CSV reports), no plots.
+- Keep preprocessing output CSV-based for this MVP iteration.
 - Focus on working functionality over code quality conventions and polish.
 - Unit and integration tests are out of scope in this phase.
 - Avoid broad defensive `try/except` blocks; prefer direct failures during development unless minimal handling is required for core flow.
@@ -42,7 +44,7 @@ Out of scope now:
 - After each iteration, provide a detailed explanation of changes and behavior.
 
 ## Future Scalability Guardrails (CPU -> Cloud GPU)
-These are design guardrails for upcoming phases. They do not expand current Step 3 scope.
+These are design guardrails for upcoming phases. They do not expand current Step 4 scope.
 
 - Stay CPU-first by default; treat GPU support as an optional backend path to add later.
 - Keep data and modeling logic behind small internal interfaces so backend swaps are localized.
@@ -53,12 +55,15 @@ These are design guardrails for upcoming phases. They do not expand current Step
 - Plan dependencies as core CPU requirements plus optional GPU extras, not mandatory RAPIDS install.
 - When GPU backend is introduced, require CPU/GPU parity checks with explicit numeric tolerance.
 
-## Build Order (Step 3)
-1. Ensure data fetch (Step 2) runs before analysis.
-2. Add EDA function to read `train.csv` and `test.csv` from competition zip.
+## Build Order (Step 4)
+1. Ensure data fetch (Step 2) and EDA (Step 3) run before preprocessing.
+2. Add preprocessing function to read `train.csv` and `test.csv` from competition zip.
 3. Infer target column from train/test column difference.
-4. Write numeric report CSV files to `reports/<competition_slug>/`.
-5. Wire entrypoint to call config loader, data fetch, then EDA.
+4. Build sklearn preprocessing pipeline:
+   - Numeric: median imputation + `StandardScaler`
+   - Categorical: most-frequent imputation + `OneHotEncoder`
+5. Fit on train features, transform train/test features, and write CSV artifacts.
+6. Wire entrypoint to call config loader, data fetch, EDA, then preprocessing.
 
 ## Interfaces (Current Phase)
 Input:
@@ -69,6 +74,7 @@ Output:
 - Competition files downloaded under `data/<competition_slug>/`
 - EDA summary printed to terminal
 - EDA report CSV files under `reports/<competition_slug>/`
+- Preprocessed feature/target CSV files under `artifacts/<competition_slug>/preprocess/`
 
 Error contract:
 - Missing config file -> hard error
@@ -77,11 +83,13 @@ Error contract:
 - Kaggle command failure -> hard error (bubble up with minimal wrapping)
 - Missing/invalid competition zip contents -> hard error
 - Target inference not exactly one column -> hard error
+- Preprocessing fit/transform failure -> hard error
 
 ## Validation And Error Contract
 - Validation layer: Pydantic for config only, with minimal scope needed for current functionality.
 - Runtime assumptions: Kaggle CLI/auth/competition access are preconfigured by the user.
 - Runtime assumptions: Kaggle zip contains `train.csv` and `test.csv`.
+- Runtime assumptions: transformed feature matrices are small enough to persist as CSV in this MVP phase.
 - Error timing: fail fast; avoid extra preflight checks.
 - Error style: simple and direct; detailed/production-grade messaging is deferred.
 

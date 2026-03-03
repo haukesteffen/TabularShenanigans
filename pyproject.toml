@@ -9,6 +9,7 @@ dependencies = [
     "pandas>=3.0.1",
     "pydantic",
     "PyYAML",
+    "scikit-learn>=1.8.0",
 ]
 
 [project.optional-dependencies]
