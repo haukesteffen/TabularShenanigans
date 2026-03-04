@@ -1,42 +1,19 @@
 from datetime import datetime, timezone
 from pathlib import Path
-import zipfile
 
 import pandas as pd
 from sklearn.compose import ColumnTransformer
 from sklearn.impute import SimpleImputer
 from sklearn.pipeline import Pipeline
 from sklearn.preprocessing import OneHotEncoder, StandardScaler
-
-
-def _find_competition_zip(competition_slug: str) -> Path:
-    data_dir = Path("data") / competition_slug
-    zip_files = sorted(data_dir.glob("*.zip"))
-    if not zip_files:
-        raise ValueError(f"No competition zip found in {data_dir}")
-    return zip_files[0]
-
-
-def _read_csv_from_zip(zip_path: Path, member_name: str) -> pd.DataFrame:
-    with zipfile.ZipFile(zip_path) as archive:
-        if member_name not in archive.namelist():
-            raise ValueError(f"Missing {member_name} in {zip_path}")
-        with archive.open(member_name) as f:
-            return pd.read_csv(f)
-
-
-def _infer_target_column(train_df: pd.DataFrame, test_df: pd.DataFrame) -> str:
-    candidate_columns = [col for col in train_df.columns if col not in test_df.columns]
-    if len(candidate_columns) != 1:
-        raise ValueError(f"Could not infer a single target column. Candidates: {candidate_columns}")
-    return candidate_columns[0]
+from tabular_shenanigans.data import find_competition_zip, infer_target_column, read_csv_from_zip
 
 
 def run_preprocessing(competition_slug: str) -> Path:
-    zip_path = _find_competition_zip(competition_slug)
-    train_df = _read_csv_from_zip(zip_path, "train.csv")
-    test_df = _read_csv_from_zip(zip_path, "test.csv")
-    target_column = _infer_target_column(train_df, test_df)
+    zip_path = find_competition_zip(competition_slug)
+    train_df = read_csv_from_zip(zip_path, "train.csv")
+    test_df = read_csv_from_zip(zip_path, "test.csv")
+    target_column = infer_target_column(train_df, test_df)
 
     x_train_raw = train_df.drop(columns=[target_column])
     y_train = train_df[target_column]
