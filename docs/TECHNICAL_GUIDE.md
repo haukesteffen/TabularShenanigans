@@ -68,6 +68,12 @@ These are design guardrails for upcoming phases. They do not expand current Step
 ## Interfaces (Current Phase)
 Input:
 - One config file: `config.yaml` (single source of truth)
+- Required key: `competition_slug`
+- Optional keys for preprocessing:
+  - `force_categorical` (list of column names)
+  - `force_numeric` (list of column names)
+  - `drop_columns` (list of column names)
+  - `low_cardinality_int_threshold` (positive integer)
 
 Output:
 - A validated in-memory config object from Pydantic
@@ -83,6 +89,9 @@ Error contract:
 - Kaggle command failure -> hard error (bubble up with minimal wrapping)
 - Missing/invalid competition zip contents -> hard error
 - Target inference not exactly one column -> hard error
+- Unknown columns in `force_categorical`, `force_numeric`, or `drop_columns` -> hard error
+- Any overlap between `force_categorical` and `force_numeric` -> hard error
+- No feature columns remaining after `drop_columns` -> hard error
 - Preprocessing fit/transform failure -> hard error
 
 ## Validation And Error Contract

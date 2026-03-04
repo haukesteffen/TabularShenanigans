@@ -12,6 +12,10 @@ class AppConfig(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     competition_slug: str = Field(min_length=1)
+    force_categorical: list[str] = Field(default_factory=list)
+    force_numeric: list[str] = Field(default_factory=list)
+    drop_columns: list[str] = Field(default_factory=list)
+    low_cardinality_int_threshold: int | None = Field(default=None, ge=1)
 
 
 def load_config(path: str = "config.yaml") -> AppConfig:

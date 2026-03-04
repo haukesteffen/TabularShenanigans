@@ -15,7 +15,13 @@ def main() -> None:
     print(f"Data ready: {data_dir}")
     report_dir = run_eda(config.competition_slug)
     print(f"EDA reports ready: {report_dir}")
-    artifact_dir = run_preprocessing(config.competition_slug)
+    artifact_dir = run_preprocessing(
+        competition_slug=config.competition_slug,
+        force_categorical=config.force_categorical,
+        force_numeric=config.force_numeric,
+        drop_columns=config.drop_columns,
+        low_cardinality_int_threshold=config.low_cardinality_int_threshold,
+    )
     print(f"Preprocessing artifacts ready: {artifact_dir}")
 
 

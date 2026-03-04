@@ -34,6 +34,13 @@ Config-driven Python workflows for semi-automated participation in tabular Kaggl
 4. Current run behavior: fetch competition zip if missing, generate EDA report CSVs, then write preprocessed train/test feature CSVs under `artifacts/<competition_slug>/preprocess/`.
 5. Follow iteration notes and current development-mode rules in [`docs/TECHNICAL_GUIDE.md`](docs/TECHNICAL_GUIDE.md).
 
+### Optional preprocessing config
+`config.yaml` supports optional feature typing overrides used by preprocessing:
+- `force_categorical`: list of feature names to force into the categorical pipeline.
+- `force_numeric`: list of feature names to force into the numeric pipeline.
+- `drop_columns`: list of feature names to remove before preprocessing.
+- `low_cardinality_int_threshold`: if set, integer columns with unique values at or below this threshold are treated as categorical by default.
+
 ## Roadmap
 1. Robust config pipeline
 2. Kaggle data fetch
