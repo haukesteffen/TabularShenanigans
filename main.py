@@ -7,6 +7,7 @@ from tabular_shenanigans.config import load_config
 from tabular_shenanigans.data import fetch_competition_data, resolve_task_type_and_primary_metric
 from tabular_shenanigans.eda import run_eda
 from tabular_shenanigans.preprocess import run_preprocessing
+from tabular_shenanigans.submit import run_submission
 from tabular_shenanigans.train import run_training
 
 
@@ -46,6 +47,13 @@ def main() -> None:
         cv_random_state=config.cv_random_state,
     )
     print(f"Training artifacts ready: {train_dir}")
+    submission_path, submission_status = run_submission(
+        competition_slug=config.competition_slug,
+        run_dir=train_dir,
+        submit_enabled=config.submit_enabled,
+        submit_message_prefix=config.submit_message_prefix,
+    )
+    print(f"Submission file ready: {submission_path} ({submission_status})")
 
 
 if __name__ == "__main__":

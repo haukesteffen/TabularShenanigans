@@ -22,6 +22,8 @@ class AppConfig(BaseModel):
     cv_n_splits: int = Field(default=7, ge=2)
     cv_shuffle: bool = True
     cv_random_state: int = 42
+    submit_enabled: bool = False
+    submit_message_prefix: str | None = None
 
 
 def load_config(path: str = "config.yaml") -> AppConfig:

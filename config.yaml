@@ -5,6 +5,8 @@ competition_slug: house-prices-advanced-regression-techniques
 # cv_n_splits: 7
 # cv_shuffle: true
 # cv_random_state: 42
+submit_enabled: true
+# submit_message_prefix: baseline-linear
 drop_columns:
   - Id
 force_categorical:

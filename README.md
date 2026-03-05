@@ -20,7 +20,8 @@ Config-driven Python workflows for semi-automated participation in tabular Kaggl
 - Step 2 (Kaggle competition data fetch) is complete.
 - Step 3 (script-based exploratory data analysis) is complete.
 - Step 4 (preprocessing and feature engineering) is complete.
-- Current implementation priority is baseline training with CV (Step 5).
+- Step 5 (baseline training with CV) is complete.
+- Current implementation priority is submission workflow integration.
 
 ## Tooling
 - Python for orchestration
@@ -32,7 +33,7 @@ Config-driven Python workflows for semi-automated participation in tabular Kaggl
 1. Keep a project `config.yaml` at repository root.
 2. Run the current Python entrypoint scripts directly from the repo.
 3. Ensure Kaggle CLI access is already configured for your user.
-4. Current run behavior: fetch competition zip if missing, generate EDA report CSVs, write preprocessing artifacts, then run linear baseline CV training with OOF/test prediction artifacts.
+4. Current run behavior: fetch competition zip if missing, generate EDA report CSVs, write preprocessing artifacts, run linear baseline CV training, then build a validated submission file from the latest run (validated against `sample_submission.csv`).
 5. Follow iteration notes and current development-mode rules in [`docs/TECHNICAL_GUIDE.md`](docs/TECHNICAL_GUIDE.md).
 
 ### Optional preprocessing config
@@ -55,6 +56,13 @@ If inference is partial or ambiguous, the run fails and requires explicit config
 - `cv_n_splits`: number of CV folds (default `7`)
 - `cv_shuffle`: whether to shuffle before splitting (default `true`)
 - `cv_random_state`: random seed for deterministic folds (default `42`)
+
+### Optional submission config
+`config.yaml` also supports:
+- `submit_enabled`: if `true`, submit to Kaggle after training (default `false`)
+- `submit_message_prefix`: optional prefix used in auto-generated submission messages
+
+When `submit_enabled` is `false`, the pipeline still validates submission schema and writes `submission.csv`, then logs a dry-run status.
 
 ## Roadmap
 1. Robust config pipeline

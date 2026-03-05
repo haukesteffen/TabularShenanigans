@@ -3,7 +3,7 @@
 Implementation playbook for this repository. Use this file as the technical source of truth.
 
 ## Current Phase
-Step 5: Baseline modeling with CV.
+Step 5.5: Submission workflow integration.
 
 In scope now:
 - `config.yaml`
@@ -15,15 +15,16 @@ In scope now:
 - Preprocessing module (`src/tabular_shenanigans/preprocess.py`)
 - CV module (`src/tabular_shenanigans/cv.py`)
 - Training module (`src/tabular_shenanigans/train.py`)
+- Submission module (`src/tabular_shenanigans/submit.py`)
 - Local data target path: `data/<competition_slug>/`
 - EDA report path: `reports/<competition_slug>/`
 - Preprocessing artifact path: `artifacts/<competition_slug>/preprocess/`
 - Training artifact path: `artifacts/<competition_slug>/train/<run_id>/`
 - Training ledger path: `artifacts/<competition_slug>/train/runs.csv`
+- Submission ledger path: `artifacts/<competition_slug>/train/submissions.csv`
 
 Out of scope now:
 - `src/tabular_shenanigans/pipeline.py`
-- Kaggle submission integration
 - Plot generation and notebook-first workflows
 - Model stacking
 
@@ -46,7 +47,7 @@ Out of scope now:
 - After each iteration, provide a detailed explanation of changes and behavior.
 
 ## Future Scalability Guardrails (CPU -> Cloud GPU)
-These are design guardrails for upcoming phases. They do not expand current Step 4 scope.
+These are design guardrails for upcoming phases. They do not expand current Step 5.5 scope.
 
 - Stay CPU-first by default; treat GPU support as an optional backend path to add later.
 - Keep data and modeling logic behind small internal interfaces so backend swaps are localized.
@@ -57,7 +58,7 @@ These are design guardrails for upcoming phases. They do not expand current Step
 - Plan dependencies as core CPU requirements plus optional GPU extras, not mandatory RAPIDS install.
 - When GPU backend is introduced, require CPU/GPU parity checks with explicit numeric tolerance.
 
-## Build Order (Step 5)
+## Build Order (Step 5.5)
 1. Ensure data fetch (Step 2) and EDA (Step 3) run before preprocessing.
 2. Run preprocessing and persist CPU-friendly CSV artifacts.
 3. Resolve competition `task_type` and `primary_metric` from config/Kaggle metadata.
@@ -68,6 +69,8 @@ These are design guardrails for upcoming phases. They do not expand current Step
    - Regression: `ElasticNet`
    - Binary classification: `LogisticRegression`
 6. Write fold metrics, CV summary, OOF predictions, test predictions, and append run ledger.
+7. Validate `test_predictions.csv` against `sample_submission.csv` and write `submission.csv`.
+8. Submit to Kaggle only when explicitly enabled; always append submission ledger entry.
 
 Preprocessing implementation details:
    - Numeric: median imputation + `StandardScaler`
@@ -89,6 +92,9 @@ Input:
   - `cv_n_splits` (integer >= 2, default 7)
   - `cv_shuffle` (boolean, default true)
   - `cv_random_state` (integer, default 42)
+- Optional keys for submission:
+  - `submit_enabled` (boolean, default false)
+  - `submit_message_prefix` (string, optional)
 
 Output:
 - A validated in-memory config object from Pydantic
@@ -103,6 +109,9 @@ Output:
   - `test_predictions.csv`
   - `run_manifest.json`
 - Append-only training ledger at `artifacts/<competition_slug>/train/runs.csv`
+- Submission artifact in each run dir:
+  - `submission.csv`
+- Append-only submission ledger at `artifacts/<competition_slug>/train/submissions.csv`
 
 Error contract:
 - Missing config file -> hard error
@@ -123,11 +132,13 @@ Error contract:
 - Unsupported metric for chosen task -> hard error
 - Any CV/training fit or scoring failure -> hard error
 - Fold assignment gaps in OOF generation -> hard error
+- Submission schema mismatch against `sample_submission.csv` -> hard error
+- Kaggle submission command failure when `submit_enabled=true` -> hard error
 
 ## Validation And Error Contract
 - Validation layer: Pydantic for config only, with minimal scope needed for current functionality.
 - Runtime assumptions: Kaggle CLI/auth/competition access are preconfigured by the user.
-- Runtime assumptions: Kaggle zip contains `train.csv` and `test.csv`.
+- Runtime assumptions: Kaggle zip contains `train.csv`, `test.csv`, and `sample_submission.csv`.
 - Runtime assumptions: transformed feature matrices are small enough to persist as CSV in this MVP phase.
 - Error timing: fail fast; avoid extra preflight checks.
 - Error style: simple and direct; detailed/production-grade messaging is deferred.
