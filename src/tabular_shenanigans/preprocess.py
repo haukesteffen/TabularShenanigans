@@ -42,18 +42,14 @@ def _resolve_feature_types(
     return ordered_numeric_columns, categorical_columns
 
 
-def run_preprocessing(
-    competition_slug: str,
+def prepare_feature_frames(
+    train_df: pd.DataFrame,
+    test_df: pd.DataFrame,
+    target_column: str,
     force_categorical: list[str] | None = None,
     force_numeric: list[str] | None = None,
     drop_columns: list[str] | None = None,
-    low_cardinality_int_threshold: int | None = None,
-) -> Path:
-    zip_path = find_competition_zip(competition_slug)
-    train_df = read_csv_from_zip(zip_path, "train.csv")
-    test_df = read_csv_from_zip(zip_path, "test.csv")
-    target_column = infer_target_column(train_df, test_df)
-
+) -> tuple[pd.DataFrame, pd.DataFrame, pd.Series]:
     force_categorical = force_categorical or []
     force_numeric = force_numeric or []
     drop_columns = drop_columns or []
@@ -73,6 +69,18 @@ def run_preprocessing(
     if drop_columns:
         x_train_raw = x_train_raw.drop(columns=drop_columns)
         x_test_raw = x_test_raw.drop(columns=drop_columns)
+
+    return x_train_raw, x_test_raw, y_train
+
+
+def build_preprocessor(
+    x_train_raw: pd.DataFrame,
+    force_categorical: list[str] | None = None,
+    force_numeric: list[str] | None = None,
+    low_cardinality_int_threshold: int | None = None,
+) -> tuple[ColumnTransformer, list[str], list[str]]:
+    force_categorical = force_categorical or []
+    force_numeric = force_numeric or []
 
     numeric_columns, categorical_columns = _resolve_feature_types(
         x_train_raw=x_train_raw,
@@ -104,6 +112,40 @@ def run_preprocessing(
         raise ValueError("No features remain after applying drop_columns.")
 
     preprocessor = ColumnTransformer(transformers=transformers, remainder="drop")
+    return preprocessor, numeric_columns, categorical_columns
+
+
+def run_preprocessing(
+    competition_slug: str,
+    force_categorical: list[str] | None = None,
+    force_numeric: list[str] | None = None,
+    drop_columns: list[str] | None = None,
+    low_cardinality_int_threshold: int | None = None,
+) -> Path:
+    zip_path = find_competition_zip(competition_slug)
+    train_df = read_csv_from_zip(zip_path, "train.csv")
+    test_df = read_csv_from_zip(zip_path, "test.csv")
+    target_column = infer_target_column(train_df, test_df)
+
+    force_categorical = force_categorical or []
+    force_numeric = force_numeric or []
+    drop_columns = drop_columns or []
+
+    x_train_raw, x_test_raw, y_train = prepare_feature_frames(
+        train_df=train_df,
+        test_df=test_df,
+        target_column=target_column,
+        force_categorical=force_categorical,
+        force_numeric=force_numeric,
+        drop_columns=drop_columns,
+    )
+
+    preprocessor, numeric_columns, categorical_columns = build_preprocessor(
+        x_train_raw=x_train_raw,
+        force_categorical=force_categorical,
+        force_numeric=force_numeric,
+        low_cardinality_int_threshold=low_cardinality_int_threshold,
+    )
 
     x_train_processed = preprocessor.fit_transform(x_train_raw)
     x_test_processed = preprocessor.transform(x_test_raw)

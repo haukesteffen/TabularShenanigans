@@ -19,7 +19,8 @@ Config-driven Python workflows for semi-automated participation in tabular Kaggl
 - Step 1 (configuration pipeline) is complete.
 - Step 2 (Kaggle competition data fetch) is complete.
 - Step 3 (script-based exploratory data analysis) is complete.
-- Current implementation priority is preprocessing for model-ready features (Step 4).
+- Step 4 (preprocessing and feature engineering) is complete.
+- Current implementation priority is baseline training with CV (Step 5).
 
 ## Tooling
 - Python for orchestration
@@ -31,7 +32,7 @@ Config-driven Python workflows for semi-automated participation in tabular Kaggl
 1. Keep a project `config.yaml` at repository root.
 2. Run the current Python entrypoint scripts directly from the repo.
 3. Ensure Kaggle CLI access is already configured for your user.
-4. Current run behavior: fetch competition zip if missing, generate EDA report CSVs, then write preprocessed train/test feature CSVs under `artifacts/<competition_slug>/preprocess/`.
+4. Current run behavior: fetch competition zip if missing, generate EDA report CSVs, write preprocessing artifacts, then run linear baseline CV training with OOF/test prediction artifacts.
 5. Follow iteration notes and current development-mode rules in [`docs/TECHNICAL_GUIDE.md`](docs/TECHNICAL_GUIDE.md).
 
 ### Optional preprocessing config
@@ -48,6 +49,12 @@ Config-driven Python workflows for semi-automated participation in tabular Kaggl
 
 If either key is missing, the pipeline tries to infer missing values from Kaggle competition metadata.
 If inference is partial or ambiguous, the run fails and requires explicit config values.
+
+### Optional CV config
+`config.yaml` also supports:
+- `cv_n_splits`: number of CV folds (default `7`)
+- `cv_shuffle`: whether to shuffle before splitting (default `true`)
+- `cv_random_state`: random seed for deterministic folds (default `42`)
 
 ## Roadmap
 1. Robust config pipeline

@@ -19,6 +19,9 @@ class AppConfig(BaseModel):
     force_numeric: list[str] = Field(default_factory=list)
     drop_columns: list[str] = Field(default_factory=list)
     low_cardinality_int_threshold: int | None = Field(default=None, ge=1)
+    cv_n_splits: int = Field(default=7, ge=2)
+    cv_shuffle: bool = True
+    cv_random_state: int = 42
 
 
 def load_config(path: str = "config.yaml") -> AppConfig:

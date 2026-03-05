@@ -7,6 +7,7 @@ from tabular_shenanigans.config import load_config
 from tabular_shenanigans.data import fetch_competition_data, resolve_task_type_and_primary_metric
 from tabular_shenanigans.eda import run_eda
 from tabular_shenanigans.preprocess import run_preprocessing
+from tabular_shenanigans.train import run_training
 
 
 def main() -> None:
@@ -32,6 +33,19 @@ def main() -> None:
         low_cardinality_int_threshold=config.low_cardinality_int_threshold,
     )
     print(f"Preprocessing artifacts ready: {artifact_dir}")
+    train_dir = run_training(
+        competition_slug=config.competition_slug,
+        task_type=task_type,
+        primary_metric=primary_metric,
+        force_categorical=config.force_categorical,
+        force_numeric=config.force_numeric,
+        drop_columns=config.drop_columns,
+        low_cardinality_int_threshold=config.low_cardinality_int_threshold,
+        cv_n_splits=config.cv_n_splits,
+        cv_shuffle=config.cv_shuffle,
+        cv_random_state=config.cv_random_state,
+    )
+    print(f"Training artifacts ready: {train_dir}")
 
 
 if __name__ == "__main__":
