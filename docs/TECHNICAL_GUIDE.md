@@ -69,6 +69,9 @@ These are design guardrails for upcoming phases. They do not expand current Step
 Input:
 - One config file: `config.yaml` (single source of truth)
 - Required key: `competition_slug`
+- Optional keys for competition metadata:
+  - `task_type` (`regression` or `binary`)
+  - `primary_metric` (`rmse`, `rmsle`, `mae`, `roc_auc`, `log_loss`, `accuracy`)
 - Optional keys for preprocessing:
   - `force_categorical` (list of column names)
   - `force_numeric` (list of column names)
@@ -87,6 +90,10 @@ Error contract:
 - Schema/type violation -> hard error
 - Any attempt to use additional config sources -> hard error
 - Kaggle command failure -> hard error (bubble up with minimal wrapping)
+- Missing exact competition metadata match for slug -> hard error
+- Unknown/unsupported configured `primary_metric` -> hard error
+- Partial task/metric inference from Kaggle metadata -> hard error
+- Invalid task/metric pairing (for example `binary` + `rmse`) -> hard error
 - Missing/invalid competition zip contents -> hard error
 - Target inference not exactly one column -> hard error
 - Unknown columns in `force_categorical`, `force_numeric`, or `drop_columns` -> hard error

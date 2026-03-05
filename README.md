@@ -41,6 +41,14 @@ Config-driven Python workflows for semi-automated participation in tabular Kaggl
 - `drop_columns`: list of feature names to remove before preprocessing.
 - `low_cardinality_int_threshold`: if set, integer columns with unique values at or below this threshold are treated as categorical by default.
 
+### Optional competition metadata config
+`config.yaml` also supports optional overrides for competition task + scoring:
+- `task_type`: `regression` or `binary`
+- `primary_metric`: one of `rmse`, `rmsle`, `mae`, `roc_auc`, `log_loss`, `accuracy`
+
+If either key is missing, the pipeline tries to infer missing values from Kaggle competition metadata.
+If inference is partial or ambiguous, the run fails and requires explicit config values.
+
 ## Roadmap
 1. Robust config pipeline
 2. Kaggle data fetch

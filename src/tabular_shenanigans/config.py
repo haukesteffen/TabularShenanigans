@@ -1,4 +1,5 @@
 from pathlib import Path
+from typing import Literal
 
 import yaml
 from pydantic import BaseModel, ConfigDict, Field
@@ -12,6 +13,8 @@ class AppConfig(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     competition_slug: str = Field(min_length=1)
+    task_type: Literal["regression", "binary"] | None = None
+    primary_metric: str | None = None
     force_categorical: list[str] = Field(default_factory=list)
     force_numeric: list[str] = Field(default_factory=list)
     drop_columns: list[str] = Field(default_factory=list)

@@ -1,4 +1,7 @@
 competition_slug: house-prices-advanced-regression-techniques
+# Optional overrides. If omitted, values are inferred from Kaggle metadata.
+# task_type: regression
+# primary_metric: rmsle
 drop_columns:
   - Id
 force_categorical:
