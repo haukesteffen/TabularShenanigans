@@ -10,7 +10,7 @@ Config-driven Python workflows for semi-automated participation in tabular Kaggl
 
 ## Development Defaults
 The repository is developed and manually verified primarily against these Playground Series competitions:
-- default classification target: `playground-series-s5e12` with `primary_metric: roc_auc`
+- default classification target: `playground-series-s6e3` with `primary_metric: roc_auc`
 - default regression target: `playground-series-s5e10` with `primary_metric: mse`
 
 ## Current Capabilities
@@ -73,13 +73,13 @@ If `id_column` or `label_column` are omitted, the pipeline infers them from `tra
 
 ## Preferred Manual Verification Targets
 Use these Playground competitions as the primary smoke tests:
-- binary classification: `playground-series-s5e12` with `task_type: binary` and `primary_metric: roc_auc`
+- binary classification: `playground-series-s6e3` with `task_type: binary` and `primary_metric: roc_auc`
 - regression: `playground-series-s5e10` with `task_type: regression` and `primary_metric: mse`
 
 Example binary config:
 
 ```yaml
-competition_slug: playground-series-s5e12
+competition_slug: playground-series-s6e3
 task_type: binary
 primary_metric: roc_auc
 ```
@@ -111,6 +111,7 @@ Manual verification for each target:
 - Kaggle CLI is installed, authenticated, and has access to the configured competition.
 - Competition zip contents include `train.csv`, `test.csv`, and `sample_submission.csv`.
 - The competition follows a simple two-column Playground submission contract: `sample_submission.csv` must be exactly `[id_column, label_column]`.
+- Binary classification supports any two-class labels accepted by scikit-learn; probability outputs are aligned to the resolved positive class.
 - `task_type` and `primary_metric` are explicitly configured for every run.
 - Runtime config comes from `config.yaml` only; there are no CLI or environment overrides.
 - The current workflow is CPU-first and optimized for iteration speed over production hardening.
