@@ -2,7 +2,9 @@ from pathlib import Path
 from typing import Literal
 
 import yaml
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, model_validator
+
+from tabular_shenanigans.data import SUPPORTED_PRIMARY_METRICS, is_metric_valid_for_task, normalize_primary_metric
 
 
 class ConfigError(ValueError):
@@ -13,8 +15,8 @@ class AppConfig(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     competition_slug: str = Field(min_length=1)
-    task_type: Literal["regression", "binary"] | None = None
-    primary_metric: str | None = None
+    task_type: Literal["regression", "binary"]
+    primary_metric: str
     id_column: str | None = None
     label_column: str | None = None
     force_categorical: list[str] = Field(default_factory=list)
@@ -26,6 +28,21 @@ class AppConfig(BaseModel):
     cv_random_state: int = 42
     submit_enabled: bool = False
     submit_message_prefix: str | None = None
+
+    @model_validator(mode="after")
+    def validate_task_and_metric(self) -> "AppConfig":
+        normalized_primary_metric = normalize_primary_metric(self.primary_metric)
+        if normalized_primary_metric is None:
+            raise ValueError(
+                "Configured primary_metric is not supported. "
+                f"Supported values: {sorted(set(SUPPORTED_PRIMARY_METRICS.values()))}"
+            )
+        if not is_metric_valid_for_task(self.task_type, normalized_primary_metric):
+            raise ValueError(
+                f"Configured primary_metric '{normalized_primary_metric}' is not valid for task_type '{self.task_type}'."
+            )
+        self.primary_metric = normalized_primary_metric
+        return self
 
 
 def load_config(path: str = "config.yaml") -> AppConfig:

@@ -4,7 +4,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).parent / "src"))
 
 from tabular_shenanigans.config import load_config
-from tabular_shenanigans.data import fetch_competition_data, resolve_task_type_and_primary_metric
+from tabular_shenanigans.data import fetch_competition_data
 from tabular_shenanigans.eda import run_eda
 from tabular_shenanigans.preprocess import run_preprocessing
 from tabular_shenanigans.submit import run_submission
@@ -13,14 +13,9 @@ from tabular_shenanigans.train import run_training
 
 def main() -> None:
     config = load_config()
-    task_type, primary_metric, provenance = resolve_task_type_and_primary_metric(
-        competition_slug=config.competition_slug,
-        configured_task_type=config.task_type,
-        configured_primary_metric=config.primary_metric,
-    )
     print(
         "Resolved competition setup: "
-        f"task_type={task_type}, primary_metric={primary_metric}, source={provenance}"
+        f"task_type={config.task_type}, primary_metric={config.primary_metric}"
     )
     data_dir = fetch_competition_data(config.competition_slug)
     print(f"Data ready: {data_dir}")
@@ -46,8 +41,8 @@ def main() -> None:
     print(f"Preprocessing artifacts ready: {artifact_dir}")
     train_dir = run_training(
         competition_slug=config.competition_slug,
-        task_type=task_type,
-        primary_metric=primary_metric,
+        task_type=config.task_type,
+        primary_metric=config.primary_metric,
         id_column=config.id_column,
         label_column=config.label_column,
         force_categorical=config.force_categorical,

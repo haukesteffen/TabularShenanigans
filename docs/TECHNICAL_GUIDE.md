@@ -4,7 +4,7 @@ Technical reference for the current repository design. Use GitHub issues and pul
 
 ## System Flow
 1. Load and validate the repository-root `config.yaml`.
-2. Resolve `task_type` and `primary_metric` from config or Kaggle competition metadata.
+2. Use explicit `task_type` and `primary_metric` from config.
 3. Download the competition zip into `data/<competition_slug>/` when it is missing.
 4. Read `train.csv`, `test.csv`, and `sample_submission.csv` from the zip as needed.
 5. Run EDA and write report CSVs under `reports/<competition_slug>/`.
@@ -20,8 +20,8 @@ Technical reference for the current repository design. Use GitHub issues and pul
 
 ## Module Responsibilities
 - `main.py`: orchestration entrypoint for config loading, data fetch, EDA, preprocessing, training, and submission.
-- `src/tabular_shenanigans/config.py`: Pydantic-backed config schema and loading.
-- `src/tabular_shenanigans/data.py`: Kaggle metadata lookup, competition download, zip access, and dataset schema resolution.
+- `src/tabular_shenanigans/config.py`: Pydantic-backed config schema, metric normalization, and runtime contract validation.
+- `src/tabular_shenanigans/data.py`: competition download, zip access, metric helpers, and dataset schema resolution.
 - `src/tabular_shenanigans/eda.py`: competition-scan EDA summaries written to CSV, including missingness, categorical cardinality, target summary, and feature-type counts.
 - `src/tabular_shenanigans/preprocess.py`: feature frame preparation, column typing, and sklearn preprocessing pipelines.
 - `src/tabular_shenanigans/cv.py`: task-aware CV splitters and metric scoring helpers.
@@ -31,10 +31,11 @@ Technical reference for the current repository design. Use GitHub issues and pul
 ## Configuration Contract
 Input:
 - One config file: `config.yaml` (single source of truth)
-- Required key: `competition_slug`
-- Optional keys for competition metadata:
+- Required keys:
+  - `competition_slug`
   - `task_type` (`regression` or `binary`)
-  - `primary_metric` (`rmse`, `rmsle`, `mae`, `roc_auc`, `log_loss`, `accuracy`)
+  - `primary_metric` (`rmse`, `mse`, `rmsle`, `mae`, `roc_auc`, `log_loss`, `accuracy`)
+- Optional submission schema keys:
   - `id_column` (optional override for the inferred identifier column)
   - `label_column` (optional override for the inferred submission/target column)
 - Optional keys for preprocessing:
@@ -51,6 +52,18 @@ Input:
   - `submit_message_prefix` (string, optional)
 
 The config is validated by Pydantic with `extra="forbid"`. Unknown keys, schema mismatches, and missing required fields are hard errors.
+Configured metrics are normalized to the internal metric names during config validation.
+
+## Preferred Verification Targets
+- `playground-series-s5e12`: binary smoke test with `task_type: binary` and `primary_metric: roc_auc`
+- `playground-series-s5e10`: regression smoke test with `task_type: regression` and `primary_metric: mse`
+
+Manual verification steps for each target:
+- verify the competition assets include `train.csv`, `test.csv`, and `sample_submission.csv`
+- run the workflow from a clean repo state with explicit `task_type` and `primary_metric`
+- confirm inferred `id_column` and `label_column`
+- confirm `test_predictions.csv` is generated in the run directory
+- confirm `submission.csv` validates against `sample_submission.csv`
 
 ## Artifact Contract
 - A validated in-memory config object from Pydantic
@@ -80,13 +93,14 @@ The config is validated by Pydantic with `extra="forbid"`. Unknown keys, schema 
 ## Runtime Invariants And Failure Behavior
 - One runtime config source only: `config.yaml`
 - No config overrides via CLI or environment variables
+- `task_type` and `primary_metric` must be present in config for every run
 - Kaggle CLI and authentication are expected to be preconfigured
 - Competition zip contents are expected to include `train.csv`, `test.csv`, and `sample_submission.csv`
 - `id_column` inference must resolve to exactly one column present in `train.csv`, `test.csv`, and `sample_submission.csv`
 - `label_column` inference must resolve to exactly one column present in `train.csv` and `sample_submission.csv` but not `test.csv`
 - `sample_submission.csv` must match the resolved schema exactly as `[id_column, label_column]`
 - Feature override columns must exist and cannot overlap between forced numeric and forced categorical sets
-- Metric resolution must produce a supported metric compatible with the resolved task type
+- Configured metric must normalize to a supported metric compatible with the configured task type
 - CV splitter construction must support both `cv_shuffle=true` and `cv_shuffle=false`
 - Submission output must match the schema and row count of `sample_submission.csv`
 - Fail fast is the default behavior; errors are surfaced directly with minimal wrapping
@@ -96,9 +110,8 @@ Hard-error cases include:
 - Schema/type violation -> hard error
 - Any attempt to use additional config sources -> hard error
 - Kaggle command failure -> hard error (bubble up with minimal wrapping)
-- Missing exact competition metadata match for slug -> hard error
+- Missing `task_type` or `primary_metric` -> hard error
 - Unknown/unsupported configured `primary_metric` -> hard error
-- Partial task/metric inference from Kaggle metadata -> hard error
 - Invalid task/metric pairing (for example `binary` + `rmse`) -> hard error
 - Missing/invalid competition zip contents -> hard error
 - `id_column` inference not exactly one column -> hard error
@@ -127,7 +140,7 @@ Hard-error cases include:
 
 ## Extension Notes
 - New config keys should be added to `AppConfig` in `config.py` and documented in both this file and `README.md` when user-facing.
-- New metrics should be normalized and validated in `data.py`, then scored in `cv.py`.
+- New metrics should be normalized and validated during config loading, then scored in `cv.py`.
 - New model families should be introduced in `train.py` with explicit task compatibility and matching artifact outputs.
 - New preprocessing modes should be added in `preprocess.py` without breaking the existing feature-frame contract.
 - New run or submission artifacts should be reflected in both the artifact contract above and the corresponding ledger rows.

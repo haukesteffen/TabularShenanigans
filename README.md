@@ -10,7 +10,7 @@ Config-driven Python workflows for semi-automated participation in tabular Kaggl
 ## Current Capabilities
 - Load and validate a single repository-root `config.yaml`.
 - Fetch Kaggle competition data into `data/<competition_slug>/` when the zip is missing.
-- Infer `task_type` and `primary_metric` from config or Kaggle metadata.
+- Require explicit `task_type` and `primary_metric` in config.
 - Infer Playground-style submission schema from dataset files:
   - `id_column` as the only column shared by `train.csv`, `test.csv`, and `sample_submission.csv`
   - `label_column` as the only column shared by `train.csv` and `sample_submission.csv` but not `test.csv`
@@ -31,18 +31,18 @@ Config-driven Python workflows for semi-automated participation in tabular Kaggl
 ## Quickstart
 1. Ensure Kaggle CLI access is already configured for your user.
 2. Install dependencies with `uv sync`.
-3. Keep a project `config.yaml` at repository root.
+3. Keep a project `config.yaml` at repository root with explicit `competition_slug`, `task_type`, and `primary_metric`.
 4. Run `uv run python main.py`.
 
 The current pipeline fetches competition data if needed, runs config-aware EDA, writes preprocessing artifacts, trains a baseline CV model with task-aware diagnostics, writes prediction artifacts, and prepares a validated submission file.
 
 ## Config Overview
-Required key:
+Required keys:
 - `competition_slug`
-
-Optional competition metadata keys:
 - `task_type`: `regression` or `binary`
-- `primary_metric`: one of `rmse`, `rmsle`, `mae`, `roc_auc`, `log_loss`, `accuracy`
+- `primary_metric`: one of `rmse`, `mse`, `rmsle`, `mae`, `roc_auc`, `log_loss`, `accuracy`
+
+Optional submission schema keys:
 - `id_column`: override for the inferred identifier column
 - `label_column`: override for the inferred submission/target column
 
@@ -61,9 +61,36 @@ Optional submission keys:
 - `submit_enabled`: if `true`, submit to Kaggle after training (default `false`)
 - `submit_message_prefix`: optional prefix used in auto-generated submission messages
 
-If competition metadata keys are omitted, the pipeline attempts inference from Kaggle metadata. Partial or ambiguous task/metric inference fails fast and requires explicit values in `config.yaml`.
-
 If `id_column` or `label_column` are omitted, the pipeline infers them from `train.csv`, `test.csv`, and `sample_submission.csv`. Invalid overrides, ambiguous inference, or a `sample_submission.csv` shape that does not exactly match `[id_column, label_column]` are hard errors.
+
+`task_type` and `primary_metric` are always config-driven. The pipeline does not infer them from Kaggle metadata.
+
+## Preferred Manual Verification Targets
+Use these Playground competitions as the primary smoke tests:
+- binary classification: `playground-series-s5e12` with `task_type: binary` and `primary_metric: roc_auc`
+- regression: `playground-series-s5e10` with `task_type: regression` and `primary_metric: mse`
+
+Example binary config:
+
+```yaml
+competition_slug: playground-series-s5e12
+task_type: binary
+primary_metric: roc_auc
+```
+
+Example regression config:
+
+```yaml
+competition_slug: playground-series-s5e10
+task_type: regression
+primary_metric: mse
+```
+
+Manual verification for each target:
+- confirm the competition archive includes `train.csv`, `test.csv`, and `sample_submission.csv`
+- confirm the pipeline infers `id_column` and `label_column` without overrides
+- confirm `artifacts/<competition_slug>/train/<run_id>/test_predictions.csv` is written
+- confirm `artifacts/<competition_slug>/train/<run_id>/submission.csv` is written and validated against `sample_submission.csv`
 
 ## Outputs
 - Competition data: `data/<competition_slug>/`
@@ -78,5 +105,6 @@ If `id_column` or `label_column` are omitted, the pipeline infers them from `tra
 - Kaggle CLI is installed, authenticated, and has access to the configured competition.
 - Competition zip contents include `train.csv`, `test.csv`, and `sample_submission.csv`.
 - The competition follows a simple two-column Playground submission contract: `sample_submission.csv` must be exactly `[id_column, label_column]`.
+- `task_type` and `primary_metric` are explicitly configured for every run.
 - Runtime config comes from `config.yaml` only; there are no CLI or environment overrides.
 - The current workflow is CPU-first and optimized for iteration speed over production hardening.

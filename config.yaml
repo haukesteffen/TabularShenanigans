@@ -1,15 +1,9 @@
-competition_slug: house-prices-advanced-regression-techniques
-# Optional overrides. If omitted, values are inferred from Kaggle metadata.
-# task_type: regression
-# primary_metric: rmsle
+competition_slug: playground-series-s5e12
+task_type: binary
+primary_metric: roc_auc
+# Optional runtime settings.
 # cv_n_splits: 7
 # cv_shuffle: true
 # cv_random_state: 42
 # submit_enabled: true
 # submit_message_prefix: baseline-linear
-drop_columns:
-  - Id
-force_categorical:
-  - MSSubClass
-  - MoSold
-  - YrSold
