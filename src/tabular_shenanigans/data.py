@@ -14,8 +14,6 @@ SUPPORTED_PRIMARY_METRICS = {
     "log loss": "log_loss",
     "accuracy": "accuracy",
 }
-
-
 def normalize_primary_metric(metric_name: str) -> str | None:
     normalized_name = metric_name.strip().lower()
     if normalized_name in SUPPORTED_PRIMARY_METRICS.values():
@@ -162,8 +160,67 @@ def read_csv_from_zip(zip_path: Path, member_name: str) -> pd.DataFrame:
             return pd.read_csv(f)
 
 
-def infer_target_column(train_df: pd.DataFrame, test_df: pd.DataFrame) -> str:
-    candidate_columns = [col for col in train_df.columns if col not in test_df.columns]
-    if len(candidate_columns) != 1:
-        raise ValueError(f"Could not infer a single target column. Candidates: {candidate_columns}")
-    return candidate_columns[0]
+def resolve_id_and_label_columns(
+    train_df: pd.DataFrame,
+    test_df: pd.DataFrame,
+    sample_submission_df: pd.DataFrame,
+    configured_id_column: str | None = None,
+    configured_label_column: str | None = None,
+) -> tuple[str, str]:
+    train_columns = train_df.columns.tolist()
+    test_columns = test_df.columns.tolist()
+    sample_submission_columns = sample_submission_df.columns.tolist()
+
+    id_candidates = [
+        column
+        for column in train_columns
+        if column in test_columns and column in sample_submission_columns
+    ]
+    label_candidates = [
+        column
+        for column in train_columns
+        if column not in test_columns and column in sample_submission_columns
+    ]
+
+    if configured_id_column is not None:
+        if configured_id_column not in id_candidates:
+            raise ValueError(
+                f"Configured id_column '{configured_id_column}' is invalid. "
+                "Expected a column present in train.csv, test.csv, and sample_submission.csv. "
+                f"Candidates: {id_candidates}"
+            )
+        id_column = configured_id_column
+    else:
+        if len(id_candidates) != 1:
+            raise ValueError(
+                "Could not infer a single id_column. "
+                "Columns present in train.csv, test.csv, and sample_submission.csv: "
+                f"{id_candidates}"
+            )
+        id_column = id_candidates[0]
+
+    if configured_label_column is not None:
+        if configured_label_column not in label_candidates:
+            raise ValueError(
+                f"Configured label_column '{configured_label_column}' is invalid. "
+                "Expected a column present in train.csv and sample_submission.csv but not test.csv. "
+                f"Candidates: {label_candidates}"
+            )
+        label_column = configured_label_column
+    else:
+        if len(label_candidates) != 1:
+            raise ValueError(
+                "Could not infer a single label_column. "
+                "Columns present in train.csv and sample_submission.csv but not test.csv: "
+                f"{label_candidates}"
+            )
+        label_column = label_candidates[0]
+
+    expected_submission_columns = [id_column, label_column]
+    if sample_submission_columns != expected_submission_columns:
+        raise ValueError(
+            "sample_submission.csv must match the resolved schema exactly. "
+            f"Expected columns {expected_submission_columns}, got {sample_submission_columns}"
+        )
+
+    return id_column, label_column

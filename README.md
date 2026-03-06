@@ -11,6 +11,9 @@ Config-driven Python workflows for semi-automated participation in tabular Kaggl
 - Load and validate a single repository-root `config.yaml`.
 - Fetch Kaggle competition data into `data/<competition_slug>/` when the zip is missing.
 - Infer `task_type` and `primary_metric` from config or Kaggle metadata.
+- Infer Playground-style submission schema from dataset files:
+  - `id_column` as the only column shared by `train.csv`, `test.csv`, and `sample_submission.csv`
+  - `label_column` as the only column shared by `train.csv` and `sample_submission.csv` but not `test.csv`
 - Generate terminal and CSV EDA summaries under `reports/<competition_slug>/`, including missingness, categorical cardinality, target summary, and feature-type counts.
 - Build preprocessing artifacts under `artifacts/<competition_slug>/preprocess/`.
 - Train baseline cross-validated models with fold-local preprocessing:
@@ -40,6 +43,8 @@ Required key:
 Optional competition metadata keys:
 - `task_type`: `regression` or `binary`
 - `primary_metric`: one of `rmse`, `rmsle`, `mae`, `roc_auc`, `log_loss`, `accuracy`
+- `id_column`: override for the inferred identifier column
+- `label_column`: override for the inferred submission/target column
 
 Optional preprocessing keys:
 - `force_categorical`: list of feature names to force into the categorical pipeline
@@ -56,7 +61,9 @@ Optional submission keys:
 - `submit_enabled`: if `true`, submit to Kaggle after training (default `false`)
 - `submit_message_prefix`: optional prefix used in auto-generated submission messages
 
-If competition metadata keys are omitted, the pipeline attempts inference from Kaggle metadata. Partial or ambiguous inference fails fast and requires explicit values in `config.yaml`.
+If competition metadata keys are omitted, the pipeline attempts inference from Kaggle metadata. Partial or ambiguous task/metric inference fails fast and requires explicit values in `config.yaml`.
+
+If `id_column` or `label_column` are omitted, the pipeline infers them from `train.csv`, `test.csv`, and `sample_submission.csv`. Invalid overrides, ambiguous inference, or a `sample_submission.csv` shape that does not exactly match `[id_column, label_column]` are hard errors.
 
 ## Outputs
 - Competition data: `data/<competition_slug>/`
@@ -70,6 +77,6 @@ If competition metadata keys are omitted, the pipeline attempts inference from K
 ## Current Assumptions
 - Kaggle CLI is installed, authenticated, and has access to the configured competition.
 - Competition zip contents include `train.csv`, `test.csv`, and `sample_submission.csv`.
-- A single target column can be inferred from the train/test schema difference.
+- The competition follows a simple two-column Playground submission contract: `sample_submission.csv` must be exactly `[id_column, label_column]`.
 - Runtime config comes from `config.yaml` only; there are no CLI or environment overrides.
 - The current workflow is CPU-first and optimized for iteration speed over production hardening.

@@ -26,6 +26,8 @@ def main() -> None:
     print(f"Data ready: {data_dir}")
     report_dir = run_eda(
         competition_slug=config.competition_slug,
+        id_column=config.id_column,
+        label_column=config.label_column,
         force_categorical=config.force_categorical,
         force_numeric=config.force_numeric,
         drop_columns=config.drop_columns,
@@ -34,6 +36,8 @@ def main() -> None:
     print(f"EDA reports ready: {report_dir}")
     artifact_dir = run_preprocessing(
         competition_slug=config.competition_slug,
+        id_column=config.id_column,
+        label_column=config.label_column,
         force_categorical=config.force_categorical,
         force_numeric=config.force_numeric,
         drop_columns=config.drop_columns,
@@ -44,6 +48,8 @@ def main() -> None:
         competition_slug=config.competition_slug,
         task_type=task_type,
         primary_metric=primary_metric,
+        id_column=config.id_column,
+        label_column=config.label_column,
         force_categorical=config.force_categorical,
         force_numeric=config.force_numeric,
         drop_columns=config.drop_columns,
@@ -58,6 +64,8 @@ def main() -> None:
         run_dir=train_dir,
         submit_enabled=config.submit_enabled,
         submit_message_prefix=config.submit_message_prefix,
+        id_column=config.id_column,
+        label_column=config.label_column,
     )
     print(f"Submission file ready: {submission_path} ({submission_status})")
 

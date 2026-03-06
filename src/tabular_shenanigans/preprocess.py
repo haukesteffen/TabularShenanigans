@@ -6,7 +6,7 @@ from sklearn.compose import ColumnTransformer
 from sklearn.impute import SimpleImputer
 from sklearn.pipeline import Pipeline
 from sklearn.preprocessing import OneHotEncoder, StandardScaler
-from tabular_shenanigans.data import find_competition_zip, infer_target_column, read_csv_from_zip
+from tabular_shenanigans.data import find_competition_zip, read_csv_from_zip, resolve_id_and_label_columns
 
 
 def _validate_column_names(config_name: str, columns: list[str], available_columns: list[str]) -> None:
@@ -45,7 +45,7 @@ def _resolve_feature_types(
 def prepare_feature_frames(
     train_df: pd.DataFrame,
     test_df: pd.DataFrame,
-    target_column: str,
+    label_column: str,
     force_categorical: list[str] | None = None,
     force_numeric: list[str] | None = None,
     drop_columns: list[str] | None = None,
@@ -54,8 +54,8 @@ def prepare_feature_frames(
     force_numeric = force_numeric or []
     drop_columns = drop_columns or []
 
-    x_train_raw = train_df.drop(columns=[target_column])
-    y_train = train_df[target_column]
+    x_train_raw = train_df.drop(columns=[label_column])
+    y_train = train_df[label_column]
     x_test_raw = test_df
 
     _validate_column_names("drop_columns", drop_columns, x_train_raw.columns.tolist())
@@ -142,6 +142,8 @@ def summarize_feature_types(
 
 def run_preprocessing(
     competition_slug: str,
+    id_column: str | None = None,
+    label_column: str | None = None,
     force_categorical: list[str] | None = None,
     force_numeric: list[str] | None = None,
     drop_columns: list[str] | None = None,
@@ -150,7 +152,14 @@ def run_preprocessing(
     zip_path = find_competition_zip(competition_slug)
     train_df = read_csv_from_zip(zip_path, "train.csv")
     test_df = read_csv_from_zip(zip_path, "test.csv")
-    target_column = infer_target_column(train_df, test_df)
+    sample_submission_df = read_csv_from_zip(zip_path, "sample_submission.csv")
+    id_column, label_column = resolve_id_and_label_columns(
+        train_df=train_df,
+        test_df=test_df,
+        sample_submission_df=sample_submission_df,
+        configured_id_column=id_column,
+        configured_label_column=label_column,
+    )
 
     force_categorical = force_categorical or []
     force_numeric = force_numeric or []
@@ -159,7 +168,7 @@ def run_preprocessing(
     x_train_raw, x_test_raw, y_train = prepare_feature_frames(
         train_df=train_df,
         test_df=test_df,
-        target_column=target_column,
+        label_column=label_column,
         force_categorical=force_categorical,
         force_numeric=force_numeric,
         drop_columns=drop_columns,
@@ -184,12 +193,13 @@ def run_preprocessing(
 
     x_train_df.to_csv(artifact_dir / "X_train_processed.csv", index=False)
     x_test_df.to_csv(artifact_dir / "X_test_processed.csv", index=False)
-    y_train.to_frame(name=target_column).to_csv(artifact_dir / "y_train.csv", index=False)
+    y_train.to_frame(name=label_column).to_csv(artifact_dir / "y_train.csv", index=False)
 
     summary_df = pd.DataFrame(
         [
             {"metric": "generated_at_utc", "value": datetime.now(timezone.utc).isoformat()},
-            {"metric": "target_column", "value": target_column},
+            {"metric": "id_column", "value": id_column},
+            {"metric": "label_column", "value": label_column},
             {"metric": "train_rows", "value": int(x_train_df.shape[0])},
             {"metric": "train_cols", "value": int(x_train_df.shape[1])},
             {"metric": "test_rows", "value": int(x_test_df.shape[0])},
