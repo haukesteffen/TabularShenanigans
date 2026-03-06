@@ -4,8 +4,14 @@ Config-driven Python workflows for semi-automated participation in tabular Kaggl
 
 ## Project Overview
 - Focus area: tabular machine learning competitions.
+- Primary target: Kaggle Playground Series tabular competitions.
 - Task scope: regression and binary classification.
 - Scalability direction: CPU-first local workflow now, with a future path to cloud GPU execution (RAPIDS `cudf`/`cuml`) without rewriting the full pipeline.
+
+## Development Defaults
+The repository is developed and manually verified primarily against these Playground Series competitions:
+- default classification target: `playground-series-s5e12` with `primary_metric: roc_auc`
+- default regression target: `playground-series-s5e10` with `primary_metric: mse`
 
 ## Current Capabilities
 - Load and validate a single repository-root `config.yaml`.

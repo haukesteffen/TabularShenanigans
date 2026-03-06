@@ -2,6 +2,8 @@
 
 Technical reference for the current repository design. Use GitHub issues and pull requests for active implementation tracking; this document describes the system as it exists and the contracts it is expected to preserve.
 
+The intended operating scope is Kaggle Playground Series tabular competitions. Current default development targets are `playground-series-s5e12` for binary classification with `primary_metric: roc_auc` and `playground-series-s5e10` for regression with `primary_metric: mse`.
+
 ## System Flow
 1. Load and validate the repository-root `config.yaml`.
 2. Use explicit `task_type` and `primary_metric` from config.
