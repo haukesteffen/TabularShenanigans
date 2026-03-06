@@ -5,6 +5,7 @@ import pandas as pd
 from sklearn.compose import ColumnTransformer
 from sklearn.impute import SimpleImputer
 from sklearn.pipeline import Pipeline
+from sklearn.preprocessing import FunctionTransformer
 from sklearn.preprocessing import OneHotEncoder, StandardScaler
 from tabular_shenanigans.data import find_competition_zip, read_csv_from_zip, resolve_id_and_label_columns
 
@@ -98,6 +99,13 @@ def build_preprocessor(
 
     categorical_pipeline = Pipeline(
         steps=[
+            (
+                "coerce_object",
+                FunctionTransformer(
+                    lambda frame: frame.astype(object),
+                    feature_names_out="one-to-one",
+                ),
+            ),
             ("imputer", SimpleImputer(strategy="most_frequent")),
             ("onehot", OneHotEncoder(handle_unknown="ignore", sparse_output=False)),
         ]
