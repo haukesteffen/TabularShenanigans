@@ -7,10 +7,17 @@ from sklearn.model_selection import KFold, StratifiedKFold
 
 
 def build_splitter(task_type: str, n_splits: int, shuffle: bool, random_state: int) -> KFold | StratifiedKFold:
+    splitter_kwargs = {
+        "n_splits": n_splits,
+        "shuffle": shuffle,
+    }
+    if shuffle:
+        splitter_kwargs["random_state"] = random_state
+
     if task_type == "regression":
-        return KFold(n_splits=n_splits, shuffle=shuffle, random_state=random_state)
+        return KFold(**splitter_kwargs)
     if task_type == "binary":
-        return StratifiedKFold(n_splits=n_splits, shuffle=shuffle, random_state=random_state)
+        return StratifiedKFold(**splitter_kwargs)
     raise ValueError(f"Unsupported task_type for CV splitter: {task_type}")
 
 

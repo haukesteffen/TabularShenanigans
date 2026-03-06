@@ -11,12 +11,12 @@ Config-driven Python workflows for semi-automated participation in tabular Kaggl
 - Load and validate a single repository-root `config.yaml`.
 - Fetch Kaggle competition data into `data/<competition_slug>/` when the zip is missing.
 - Infer `task_type` and `primary_metric` from config or Kaggle metadata.
-- Generate terminal and CSV EDA summaries under `reports/<competition_slug>/`.
+- Generate terminal and CSV EDA summaries under `reports/<competition_slug>/`, including missingness, categorical cardinality, target summary, and feature-type counts.
 - Build preprocessing artifacts under `artifacts/<competition_slug>/preprocess/`.
 - Train baseline cross-validated models with fold-local preprocessing:
   - regression: `ElasticNet`
   - binary classification: `LogisticRegression`
-- Write fold metrics, CV summary, OOF predictions, test predictions, and a run manifest under `artifacts/<competition_slug>/train/<run_id>/`.
+- Write fold metrics, CV summary, task-aware run diagnostics, OOF predictions, test predictions, and a run manifest under `artifacts/<competition_slug>/train/<run_id>/`.
 - Validate predictions against `sample_submission.csv` and optionally submit to Kaggle.
 
 ## Tooling
@@ -31,7 +31,7 @@ Config-driven Python workflows for semi-automated participation in tabular Kaggl
 3. Keep a project `config.yaml` at repository root.
 4. Run `uv run python main.py`.
 
-The current pipeline fetches competition data if needed, runs EDA, writes preprocessing artifacts, trains a baseline CV model, writes prediction artifacts, and prepares a validated submission file.
+The current pipeline fetches competition data if needed, runs config-aware EDA, writes preprocessing artifacts, trains a baseline CV model with task-aware diagnostics, writes prediction artifacts, and prepares a validated submission file.
 
 ## Config Overview
 Required key:
@@ -63,6 +63,7 @@ If competition metadata keys are omitted, the pipeline attempts inference from K
 - EDA reports: `reports/<competition_slug>/`
 - Preprocessing artifacts: `artifacts/<competition_slug>/preprocess/`
 - Training artifacts: `artifacts/<competition_slug>/train/<run_id>/`
+  - includes `fold_metrics.csv`, `cv_summary.csv`, `run_diagnostics.csv`, `oof_predictions.csv`, `test_predictions.csv`, and `run_manifest.json`
 - Run ledger: `artifacts/<competition_slug>/train/runs.csv`
 - Submission ledger: `artifacts/<competition_slug>/train/submissions.csv`
 
