@@ -21,7 +21,24 @@ def build_splitter(task_type: str, n_splits: int, shuffle: bool, random_state: i
     raise ValueError(f"Unsupported task_type for CV splitter: {task_type}")
 
 
-def score_predictions(task_type: str, primary_metric: str, y_true: pd.Series, y_pred: np.ndarray) -> float:
+def resolve_binary_labels(y_values: pd.Series) -> tuple[object, object]:
+    unique_labels = pd.unique(y_values)
+    if len(unique_labels) != 2:
+        raise ValueError(f"Binary tasks require exactly two unique labels, got {len(unique_labels)}: {list(unique_labels)}")
+
+    ordered_labels = sorted(unique_labels.tolist())
+    negative_label = ordered_labels[0]
+    positive_label = ordered_labels[1]
+    return negative_label, positive_label
+
+
+def score_predictions(
+    task_type: str,
+    primary_metric: str,
+    y_true: pd.Series,
+    y_pred: np.ndarray,
+    positive_label: object | None = None,
+) -> float:
     if task_type == "regression":
         y_true_array = y_true.to_numpy()
         y_pred_array = np.asarray(y_pred)
@@ -39,13 +56,18 @@ def score_predictions(task_type: str, primary_metric: str, y_true: pd.Series, y_
     if task_type == "binary":
         y_true_array = y_true.to_numpy()
         y_pred_array = np.asarray(y_pred)
+        if positive_label is None:
+            raise ValueError("Binary scoring requires positive_label.")
+        negative_label, _ = resolve_binary_labels(y_true)
         if primary_metric == "roc_auc":
-            return float(roc_auc_score(y_true_array, y_pred_array))
+            y_true_binary = (y_true == positive_label).astype(int).to_numpy()
+            return float(roc_auc_score(y_true_binary, y_pred_array))
         if primary_metric == "log_loss":
-            return float(log_loss(y_true_array, y_pred_array))
+            y_true_binary = (y_true == positive_label).astype(int).to_numpy()
+            return float(log_loss(y_true_binary, y_pred_array))
         if primary_metric == "accuracy":
-            labels = (y_pred_array >= 0.5).astype(int)
-            return float(accuracy_score(y_true_array, labels))
+            predicted_labels = np.where(y_pred_array >= 0.5, positive_label, negative_label)
+            return float(accuracy_score(y_true_array, predicted_labels))
         raise ValueError(f"Unsupported binary metric: {primary_metric}")
 
     raise ValueError(f"Unsupported task_type for scoring: {task_type}")

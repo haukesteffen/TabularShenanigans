@@ -7,7 +7,7 @@ import numpy as np
 import pandas as pd
 from sklearn.linear_model import ElasticNet, LogisticRegression
 
-from tabular_shenanigans.cv import build_splitter, is_higher_better, score_predictions
+from tabular_shenanigans.cv import build_splitter, is_higher_better, resolve_binary_labels, score_predictions
 from tabular_shenanigans.data import find_competition_zip, read_csv_from_zip, resolve_id_and_label_columns
 from tabular_shenanigans.preprocess import build_preprocessor, prepare_feature_frames
 
@@ -58,10 +58,12 @@ def _build_target_summary(task_type: str, y_train: pd.Series) -> dict[str, objec
         }
 
     if task_type == "binary":
-        positive_count = int(y_train.sum())
+        _, positive_label = resolve_binary_labels(y_train)
+        positive_count = int((y_train == positive_label).sum())
         row_count = int(y_train.shape[0])
         negative_count = row_count - positive_count
         return {
+            "positive_label": str(positive_label),
             "positive_count": positive_count,
             "negative_count": negative_count,
             "target_prevalence": float(positive_count / row_count),
@@ -75,6 +77,7 @@ def _build_diagnostic_rows(
     fold_index: int,
     split_name: str,
     y_values: pd.Series,
+    positive_label: object | None = None,
 ) -> list[dict[str, object]]:
     row = {
         "task_type": task_type,
@@ -103,11 +106,14 @@ def _build_diagnostic_rows(
         return [row]
 
     if task_type == "binary":
-        positive_count = int(y_values.sum())
+        if positive_label is None:
+            raise ValueError("Binary diagnostics require positive_label.")
+        positive_count = int((y_values == positive_label).sum())
         negative_count = int(y_values.shape[0] - positive_count)
         row.update(
             {
                 "diagnostic_type": "class_balance",
+                "positive_label": str(positive_label),
                 "positive_count": positive_count,
                 "negative_count": negative_count,
                 "positive_rate": float(positive_count / y_values.shape[0]),
@@ -152,6 +158,9 @@ def run_training(
         force_numeric=force_numeric,
         drop_columns=drop_columns,
     )
+    positive_label = None
+    if task_type == "binary":
+        _, positive_label = resolve_binary_labels(y_train)
 
     model_name, _, model_params = _build_model(task_type, cv_random_state)
     splitter = build_splitter(
@@ -167,7 +176,15 @@ def run_training(
     test_predictions_per_fold: list[np.ndarray] = []
     fold_metrics: list[dict[str, object]] = []
     run_diagnostics: list[dict[str, object]] = []
-    run_diagnostics.extend(_build_diagnostic_rows(task_type=task_type, fold_index=0, split_name="all", y_values=y_train))
+    run_diagnostics.extend(
+        _build_diagnostic_rows(
+            task_type=task_type,
+            fold_index=0,
+            split_name="all",
+            y_values=y_train,
+            positive_label=positive_label,
+        )
+    )
 
     for fold_index, (train_idx, valid_idx) in enumerate(splitter.split(x_train_raw, y_train), start=1):
         x_fold_train = x_train_raw.iloc[train_idx]
@@ -175,10 +192,22 @@ def run_training(
         y_fold_train = y_train.iloc[train_idx]
         y_fold_valid = y_train.iloc[valid_idx]
         run_diagnostics.extend(
-            _build_diagnostic_rows(task_type=task_type, fold_index=fold_index, split_name="train", y_values=y_fold_train)
+            _build_diagnostic_rows(
+                task_type=task_type,
+                fold_index=fold_index,
+                split_name="train",
+                y_values=y_fold_train,
+                positive_label=positive_label,
+            )
         )
         run_diagnostics.extend(
-            _build_diagnostic_rows(task_type=task_type, fold_index=fold_index, split_name="valid", y_values=y_fold_valid)
+            _build_diagnostic_rows(
+                task_type=task_type,
+                fold_index=fold_index,
+                split_name="valid",
+                y_values=y_fold_valid,
+                positive_label=positive_label,
+            )
         )
 
         preprocessor, _, _ = build_preprocessor(
@@ -196,8 +225,11 @@ def run_training(
         model.fit(x_fold_train_processed, y_fold_train)
 
         if task_type == "binary":
-            fold_valid_predictions = model.predict_proba(x_fold_valid_processed)[:, 1]
-            fold_test_predictions = model.predict_proba(x_test_processed)[:, 1]
+            if positive_label is None:
+                raise ValueError("Binary training requires positive_label.")
+            positive_class_index = list(model.classes_).index(positive_label)
+            fold_valid_predictions = model.predict_proba(x_fold_valid_processed)[:, positive_class_index]
+            fold_test_predictions = model.predict_proba(x_test_processed)[:, positive_class_index]
         else:
             fold_valid_predictions = model.predict(x_fold_valid_processed)
             fold_test_predictions = model.predict(x_test_processed)
@@ -207,6 +239,7 @@ def run_training(
             primary_metric=primary_metric,
             y_true=y_fold_valid,
             y_pred=fold_valid_predictions,
+            positive_label=positive_label,
         )
 
         oof_predictions[valid_idx] = fold_valid_predictions

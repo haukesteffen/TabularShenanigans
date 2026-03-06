@@ -1,4 +1,4 @@
-competition_slug: playground-series-s5e12
+competition_slug: playground-series-s6e3
 task_type: binary
 primary_metric: roc_auc
 # Optional runtime settings.
@@ -6,4 +6,4 @@ primary_metric: roc_auc
 # cv_shuffle: true
 # cv_random_state: 42
 # submit_enabled: true
-# submit_message_prefix: baseline-linear
+# submit_message_prefix: s6e3-logreg-baseline

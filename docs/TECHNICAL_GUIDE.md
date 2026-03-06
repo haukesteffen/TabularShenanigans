@@ -2,7 +2,7 @@
 
 Technical reference for the current repository design. Use GitHub issues and pull requests for active implementation tracking; this document describes the system as it exists and the contracts it is expected to preserve.
 
-The intended operating scope is Kaggle Playground Series tabular competitions. Current default development targets are `playground-series-s5e12` for binary classification with `primary_metric: roc_auc` and `playground-series-s5e10` for regression with `primary_metric: mse`.
+The intended operating scope is Kaggle Playground Series tabular competitions. Current default development targets are `playground-series-s6e3` for binary classification with `primary_metric: roc_auc` and `playground-series-s5e10` for regression with `primary_metric: mse`.
 
 ## System Flow
 1. Load and validate the repository-root `config.yaml`.
@@ -57,7 +57,7 @@ The config is validated by Pydantic with `extra="forbid"`. Unknown keys, schema 
 Configured metrics are normalized to the internal metric names during config validation.
 
 ## Preferred Verification Targets
-- `playground-series-s5e12`: binary smoke test with `task_type: binary` and `primary_metric: roc_auc`
+- `playground-series-s6e3`: binary smoke test with `task_type: binary` and `primary_metric: roc_auc`
 - `playground-series-s5e10`: regression smoke test with `task_type: regression` and `primary_metric: mse`
 
 Manual verification steps for each target:
@@ -98,6 +98,7 @@ Manual verification steps for each target:
 - `task_type` and `primary_metric` must be present in config for every run
 - Kaggle CLI and authentication are expected to be preconfigured
 - Competition zip contents are expected to include `train.csv`, `test.csv`, and `sample_submission.csv`
+- Binary classification supports any two-class target labels; the positive class is resolved from the training target and used consistently for diagnostics, scoring, and probability extraction
 - `id_column` inference must resolve to exactly one column present in `train.csv`, `test.csv`, and `sample_submission.csv`
 - `label_column` inference must resolve to exactly one column present in `train.csv` and `sample_submission.csv` but not `test.csv`
 - `sample_submission.csv` must match the resolved schema exactly as `[id_column, label_column]`
