@@ -27,6 +27,8 @@ def score_predictions(task_type: str, primary_metric: str, y_true: pd.Series, y_
         y_pred_array = np.asarray(y_pred)
         if primary_metric == "rmse":
             return float(math.sqrt(mean_squared_error(y_true_array, y_pred_array)))
+        if primary_metric == "mse":
+            return float(mean_squared_error(y_true_array, y_pred_array))
         if primary_metric == "rmsle":
             clipped_predictions = np.clip(y_pred_array, a_min=0.0, a_max=None)
             return float(math.sqrt(mean_squared_log_error(y_true_array, clipped_predictions)))
