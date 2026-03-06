@@ -115,6 +115,31 @@ def build_preprocessor(
     return preprocessor, numeric_columns, categorical_columns
 
 
+def summarize_feature_types(
+    x_train_raw: pd.DataFrame,
+    force_categorical: list[str] | None = None,
+    force_numeric: list[str] | None = None,
+    low_cardinality_int_threshold: int | None = None,
+) -> pd.DataFrame:
+    force_categorical = force_categorical or []
+    force_numeric = force_numeric or []
+
+    numeric_columns, categorical_columns = _resolve_feature_types(
+        x_train_raw=x_train_raw,
+        force_categorical=force_categorical,
+        force_numeric=force_numeric,
+        low_cardinality_int_threshold=low_cardinality_int_threshold,
+    )
+
+    return pd.DataFrame(
+        [
+            {"feature_type": "numeric", "feature_count": len(numeric_columns)},
+            {"feature_type": "categorical", "feature_count": len(categorical_columns)},
+            {"feature_type": "total", "feature_count": int(x_train_raw.shape[1])},
+        ]
+    )
+
+
 def run_preprocessing(
     competition_slug: str,
     force_categorical: list[str] | None = None,

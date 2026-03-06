@@ -3,6 +3,7 @@ from pathlib import Path
 
 import pandas as pd
 from tabular_shenanigans.data import find_competition_zip, infer_target_column, read_csv_from_zip
+from tabular_shenanigans.preprocess import prepare_feature_frames, summarize_feature_types
 
 
 def _column_summary(df: pd.DataFrame) -> pd.DataFrame:
@@ -16,6 +17,44 @@ def _column_summary(df: pd.DataFrame) -> pd.DataFrame:
         }
     )
     return summary
+
+
+def _missingness_summary(train_df: pd.DataFrame, test_df: pd.DataFrame) -> pd.DataFrame:
+    rows: list[dict[str, object]] = []
+    for dataset_name, df in (("train", train_df), ("test", test_df)):
+        for column in df.columns:
+            rows.append(
+                {
+                    "dataset": dataset_name,
+                    "column": column,
+                    "null_count": int(df[column].isna().sum()),
+                    "null_pct": float(df[column].isna().mean()),
+                }
+            )
+    return pd.DataFrame(rows, columns=["dataset", "column", "null_count", "null_pct"]).sort_values(
+        ["dataset", "null_pct", "column"],
+        ascending=[True, False, True],
+    )
+
+
+def _categorical_cardinality_summary(train_df: pd.DataFrame, test_df: pd.DataFrame) -> pd.DataFrame:
+    rows: list[dict[str, object]] = []
+    for dataset_name, df in (("train", train_df), ("test", test_df)):
+        categorical_columns = df.select_dtypes(exclude=["number"]).columns.tolist()
+        for column in categorical_columns:
+            rows.append(
+                {
+                    "dataset": dataset_name,
+                    "column": column,
+                    "nunique": int(df[column].nunique(dropna=False)),
+                    "null_count": int(df[column].isna().sum()),
+                    "null_pct": float(df[column].isna().mean()),
+                }
+            )
+    return pd.DataFrame(
+        rows,
+        columns=["dataset", "column", "nunique", "null_count", "null_pct"],
+    ).sort_values(["dataset", "nunique", "column"], ascending=[True, False, True])
 
 
 def _target_summary(train_df: pd.DataFrame, target_column: str) -> pd.DataFrame:
@@ -39,18 +78,44 @@ def _target_summary(train_df: pd.DataFrame, target_column: str) -> pd.DataFrame:
     )
 
 
-def run_eda(competition_slug: str) -> Path:
+def run_eda(
+    competition_slug: str,
+    force_categorical: list[str] | None = None,
+    force_numeric: list[str] | None = None,
+    drop_columns: list[str] | None = None,
+    low_cardinality_int_threshold: int | None = None,
+) -> Path:
     zip_path = find_competition_zip(competition_slug)
     train_df = read_csv_from_zip(zip_path, "train.csv")
     test_df = read_csv_from_zip(zip_path, "test.csv")
     target_column = infer_target_column(train_df, test_df)
+    x_train_raw, _, _ = prepare_feature_frames(
+        train_df=train_df,
+        test_df=test_df,
+        target_column=target_column,
+        force_categorical=force_categorical,
+        force_numeric=force_numeric,
+        drop_columns=drop_columns,
+    )
 
     report_dir = Path("reports") / competition_slug
     report_dir.mkdir(parents=True, exist_ok=True)
 
     _column_summary(train_df).to_csv(report_dir / "columns_train.csv", index=False)
     _column_summary(test_df).to_csv(report_dir / "columns_test.csv", index=False)
+    _missingness_summary(train_df, test_df).to_csv(report_dir / "missingness_summary.csv", index=False)
+    _categorical_cardinality_summary(train_df, test_df).to_csv(
+        report_dir / "categorical_cardinality_summary.csv",
+        index=False,
+    )
     _target_summary(train_df, target_column).to_csv(report_dir / "target_summary.csv", index=False)
+    feature_type_counts = summarize_feature_types(
+        x_train_raw=x_train_raw,
+        force_categorical=force_categorical,
+        force_numeric=force_numeric,
+        low_cardinality_int_threshold=low_cardinality_int_threshold,
+    )
+    feature_type_counts.to_csv(report_dir / "feature_type_counts.csv", index=False)
 
     run_summary = pd.DataFrame(
         [
@@ -64,6 +129,7 @@ def run_eda(competition_slug: str) -> Path:
             {"metric": "test_missing_pct", "value": float(test_df.isna().mean().mean())},
             {"metric": "train_duplicate_rows", "value": int(train_df.duplicated().sum())},
             {"metric": "test_duplicate_rows", "value": int(test_df.duplicated().sum())},
+            {"metric": "feature_count_after_drop_columns", "value": int(x_train_raw.shape[1])},
         ]
     )
     run_summary.to_csv(report_dir / "run_summary.csv", index=False)
@@ -75,5 +141,6 @@ def run_eda(competition_slug: str) -> Path:
     print(f"Test missing pct: {test_df.isna().mean().mean():.6f}")
     print(f"Train duplicate rows: {int(train_df.duplicated().sum())}")
     print(f"Test duplicate rows: {int(test_df.duplicated().sum())}")
+    print(f"Feature count after drop_columns: {int(x_train_raw.shape[1])}")
 
     return report_dir

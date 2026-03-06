@@ -15,14 +15,14 @@ Technical reference for the current repository design. Use GitHub issues and pul
 8. Train the baseline model with fold-local preprocessing:
    - regression: `ElasticNet`
    - binary classification: `LogisticRegression`
-9. Write fold metrics, CV summary, OOF predictions, test predictions, and a run manifest under `artifacts/<competition_slug>/train/<run_id>/`.
+9. Write fold metrics, CV summary, task-aware run diagnostics, OOF predictions, test predictions, and a run manifest under `artifacts/<competition_slug>/train/<run_id>/`.
 10. Validate predictions against `sample_submission.csv`, write `submission.csv`, and optionally submit to Kaggle.
 
 ## Module Responsibilities
 - `main.py`: orchestration entrypoint for config loading, data fetch, EDA, preprocessing, training, and submission.
 - `src/tabular_shenanigans/config.py`: Pydantic-backed config schema and loading.
 - `src/tabular_shenanigans/data.py`: Kaggle metadata lookup, competition download, zip access, and target inference.
-- `src/tabular_shenanigans/eda.py`: numeric and schema-oriented EDA summaries written to CSV.
+- `src/tabular_shenanigans/eda.py`: competition-scan EDA summaries written to CSV, including missingness, categorical cardinality, target summary, and feature-type counts.
 - `src/tabular_shenanigans/preprocess.py`: feature frame preparation, column typing, and sklearn preprocessing pipelines.
 - `src/tabular_shenanigans/cv.py`: task-aware CV splitters and metric scoring helpers.
 - `src/tabular_shenanigans/train.py`: baseline model selection, fold training, artifact writing, and run ledger updates.
@@ -55,14 +55,22 @@ The config is validated by Pydantic with `extra="forbid"`. Unknown keys, schema 
 - Competition files downloaded under `data/<competition_slug>/`
 - EDA summary printed to terminal
 - EDA report CSV files under `reports/<competition_slug>/`
+  - `columns_train.csv`
+  - `columns_test.csv`
+  - `missingness_summary.csv`
+  - `categorical_cardinality_summary.csv`
+  - `target_summary.csv`
+  - `feature_type_counts.csv`
+  - `run_summary.csv`
 - Preprocessed feature/target CSV files under `artifacts/<competition_slug>/preprocess/`
 - Training artifacts under `artifacts/<competition_slug>/train/<run_id>/`:
   - `fold_metrics.csv`
   - `cv_summary.csv`
+  - `run_diagnostics.csv`
   - `oof_predictions.csv`
   - `test_predictions.csv`
   - `run_manifest.json`
-- Append-only training ledger at `artifacts/<competition_slug>/train/runs.csv`
+- Training ledger at `artifacts/<competition_slug>/train/runs.csv` with task, metric, CV metadata, task-aware target summary fields, and artifact paths
 - Submission artifact in each run dir:
   - `submission.csv`
 - Append-only submission ledger at `artifacts/<competition_slug>/train/submissions.csv`
@@ -75,6 +83,7 @@ The config is validated by Pydantic with `extra="forbid"`. Unknown keys, schema 
 - Target inference must resolve to exactly one column
 - Feature override columns must exist and cannot overlap between forced numeric and forced categorical sets
 - Metric resolution must produce a supported metric compatible with the resolved task type
+- CV splitter construction must support both `cv_shuffle=true` and `cv_shuffle=false`
 - Submission output must match the schema and row count of `sample_submission.csv`
 - Fail fast is the default behavior; errors are surfaced directly with minimal wrapping
 
