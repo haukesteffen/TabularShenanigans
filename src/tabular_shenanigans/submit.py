@@ -5,7 +5,7 @@ from pathlib import Path
 
 import pandas as pd
 
-from tabular_shenanigans.data import find_competition_zip, read_csv_from_zip
+from tabular_shenanigans.data import find_competition_zip, read_csv_from_zip, resolve_id_and_label_columns
 
 
 def _append_submission_ledger(ledger_path: Path, row: dict[str, object]) -> None:
@@ -36,16 +36,30 @@ def _load_run_metadata(run_dir: Path) -> tuple[str, str, str, float]:
     return run_id, model_name, metric_name, metric_mean
 
 
-def prepare_submission_file(competition_slug: str, run_dir: Path) -> Path:
+def prepare_submission_file(
+    competition_slug: str,
+    run_dir: Path,
+    id_column: str | None = None,
+    label_column: str | None = None,
+) -> Path:
     prediction_path = run_dir / "test_predictions.csv"
     if not prediction_path.exists():
         raise ValueError(f"Missing test predictions file: {prediction_path}")
 
     prediction_df = pd.read_csv(prediction_path)
     zip_path = find_competition_zip(competition_slug)
+    train_df = read_csv_from_zip(zip_path, "train.csv")
+    test_df = read_csv_from_zip(zip_path, "test.csv")
     sample_submission_df = read_csv_from_zip(zip_path, "sample_submission.csv")
+    resolved_id_column, resolved_label_column = resolve_id_and_label_columns(
+        train_df=train_df,
+        test_df=test_df,
+        sample_submission_df=sample_submission_df,
+        configured_id_column=id_column,
+        configured_label_column=label_column,
+    )
 
-    expected_columns = sample_submission_df.columns.tolist()
+    expected_columns = [resolved_id_column, resolved_label_column]
     actual_columns = prediction_df.columns.tolist()
 
     if actual_columns != expected_columns:
@@ -80,8 +94,15 @@ def run_submission(
     run_dir: Path,
     submit_enabled: bool,
     submit_message_prefix: str | None = None,
+    id_column: str | None = None,
+    label_column: str | None = None,
 ) -> tuple[Path, str]:
-    submission_path = prepare_submission_file(competition_slug=competition_slug, run_dir=run_dir)
+    submission_path = prepare_submission_file(
+        competition_slug=competition_slug,
+        run_dir=run_dir,
+        id_column=id_column,
+        label_column=label_column,
+    )
     message = build_submission_message(run_dir=run_dir, submit_message_prefix=submit_message_prefix)
     run_id, model_name, metric_name, metric_mean = _load_run_metadata(run_dir)
 

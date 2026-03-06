@@ -8,7 +8,7 @@ Technical reference for the current repository design. Use GitHub issues and pul
 3. Download the competition zip into `data/<competition_slug>/` when it is missing.
 4. Read `train.csv`, `test.csv`, and `sample_submission.csv` from the zip as needed.
 5. Run EDA and write report CSVs under `reports/<competition_slug>/`.
-6. Prepare raw feature frames from the train/test data and infer the target column from the train/test schema difference.
+6. Resolve `id_column` and `label_column` from `train.csv`, `test.csv`, and `sample_submission.csv`, then prepare raw feature frames from the train/test data.
 7. Build preprocessing for the selected feature types:
    - numeric: median imputation + `StandardScaler`
    - categorical: most-frequent imputation + `OneHotEncoder`
@@ -21,7 +21,7 @@ Technical reference for the current repository design. Use GitHub issues and pul
 ## Module Responsibilities
 - `main.py`: orchestration entrypoint for config loading, data fetch, EDA, preprocessing, training, and submission.
 - `src/tabular_shenanigans/config.py`: Pydantic-backed config schema and loading.
-- `src/tabular_shenanigans/data.py`: Kaggle metadata lookup, competition download, zip access, and target inference.
+- `src/tabular_shenanigans/data.py`: Kaggle metadata lookup, competition download, zip access, and dataset schema resolution.
 - `src/tabular_shenanigans/eda.py`: competition-scan EDA summaries written to CSV, including missingness, categorical cardinality, target summary, and feature-type counts.
 - `src/tabular_shenanigans/preprocess.py`: feature frame preparation, column typing, and sklearn preprocessing pipelines.
 - `src/tabular_shenanigans/cv.py`: task-aware CV splitters and metric scoring helpers.
@@ -35,6 +35,8 @@ Input:
 - Optional keys for competition metadata:
   - `task_type` (`regression` or `binary`)
   - `primary_metric` (`rmse`, `rmsle`, `mae`, `roc_auc`, `log_loss`, `accuracy`)
+  - `id_column` (optional override for the inferred identifier column)
+  - `label_column` (optional override for the inferred submission/target column)
 - Optional keys for preprocessing:
   - `force_categorical` (list of column names)
   - `force_numeric` (list of column names)
@@ -80,7 +82,9 @@ The config is validated by Pydantic with `extra="forbid"`. Unknown keys, schema 
 - No config overrides via CLI or environment variables
 - Kaggle CLI and authentication are expected to be preconfigured
 - Competition zip contents are expected to include `train.csv`, `test.csv`, and `sample_submission.csv`
-- Target inference must resolve to exactly one column
+- `id_column` inference must resolve to exactly one column present in `train.csv`, `test.csv`, and `sample_submission.csv`
+- `label_column` inference must resolve to exactly one column present in `train.csv` and `sample_submission.csv` but not `test.csv`
+- `sample_submission.csv` must match the resolved schema exactly as `[id_column, label_column]`
 - Feature override columns must exist and cannot overlap between forced numeric and forced categorical sets
 - Metric resolution must produce a supported metric compatible with the resolved task type
 - CV splitter construction must support both `cv_shuffle=true` and `cv_shuffle=false`
@@ -97,7 +101,9 @@ Hard-error cases include:
 - Partial task/metric inference from Kaggle metadata -> hard error
 - Invalid task/metric pairing (for example `binary` + `rmse`) -> hard error
 - Missing/invalid competition zip contents -> hard error
-- Target inference not exactly one column -> hard error
+- `id_column` inference not exactly one column -> hard error
+- `label_column` inference not exactly one column -> hard error
+- Invalid `id_column` or `label_column` override -> hard error
 - Unknown columns in `force_categorical`, `force_numeric`, or `drop_columns` -> hard error
 - Any overlap between `force_categorical` and `force_numeric` -> hard error
 - No feature columns remaining after `drop_columns` -> hard error

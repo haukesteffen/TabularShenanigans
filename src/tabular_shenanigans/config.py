@@ -15,6 +15,8 @@ class AppConfig(BaseModel):
     competition_slug: str = Field(min_length=1)
     task_type: Literal["regression", "binary"] | None = None
     primary_metric: str | None = None
+    id_column: str | None = None
+    label_column: str | None = None
     force_categorical: list[str] = Field(default_factory=list)
     force_numeric: list[str] = Field(default_factory=list)
     drop_columns: list[str] = Field(default_factory=list)

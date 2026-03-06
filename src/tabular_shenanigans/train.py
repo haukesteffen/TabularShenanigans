@@ -8,7 +8,7 @@ import pandas as pd
 from sklearn.linear_model import ElasticNet, LogisticRegression
 
 from tabular_shenanigans.cv import build_splitter, is_higher_better, score_predictions
-from tabular_shenanigans.data import find_competition_zip, infer_target_column, read_csv_from_zip
+from tabular_shenanigans.data import find_competition_zip, read_csv_from_zip, resolve_id_and_label_columns
 from tabular_shenanigans.preprocess import build_preprocessor, prepare_feature_frames
 
 
@@ -122,6 +122,8 @@ def run_training(
     competition_slug: str,
     task_type: str,
     primary_metric: str,
+    id_column: str | None = None,
+    label_column: str | None = None,
     force_categorical: list[str] | None = None,
     force_numeric: list[str] | None = None,
     drop_columns: list[str] | None = None,
@@ -133,12 +135,19 @@ def run_training(
     zip_path = find_competition_zip(competition_slug)
     train_df = read_csv_from_zip(zip_path, "train.csv")
     test_df = read_csv_from_zip(zip_path, "test.csv")
-    target_column = infer_target_column(train_df, test_df)
+    sample_submission_df = read_csv_from_zip(zip_path, "sample_submission.csv")
+    id_column, label_column = resolve_id_and_label_columns(
+        train_df=train_df,
+        test_df=test_df,
+        sample_submission_df=sample_submission_df,
+        configured_id_column=id_column,
+        configured_label_column=label_column,
+    )
 
     x_train_raw, x_test_raw, y_train = prepare_feature_frames(
         train_df=train_df,
         test_df=test_df,
-        target_column=target_column,
+        label_column=label_column,
         force_categorical=force_categorical,
         force_numeric=force_numeric,
         drop_columns=drop_columns,
@@ -258,21 +267,20 @@ def run_training(
     )
     oof_df.to_csv(run_dir / "oof_predictions.csv", index=False)
 
-    if "Id" in test_df.columns:
-        test_predictions_df = pd.DataFrame(
-            {
-                "Id": test_df["Id"].to_numpy(),
-                target_column: mean_test_predictions,
-            }
-        )
-    else:
-        test_predictions_df = pd.DataFrame({target_column: mean_test_predictions})
+    test_predictions_df = pd.DataFrame(
+        {
+            id_column: test_df[id_column].to_numpy(),
+            label_column: mean_test_predictions,
+        }
+    )
     test_predictions_df.to_csv(run_dir / "test_predictions.csv", index=False)
 
     config_snapshot = {
         "competition_slug": competition_slug,
         "task_type": task_type,
         "primary_metric": primary_metric,
+        "id_column": id_column,
+        "label_column": label_column,
         "force_categorical": force_categorical or [],
         "force_numeric": force_numeric or [],
         "drop_columns": drop_columns or [],
@@ -299,7 +307,8 @@ def run_training(
         "generated_at_utc": datetime.now(timezone.utc).isoformat(),
         "config_fingerprint": config_fingerprint,
         "config_snapshot": config_snapshot,
-        "target_column": target_column,
+        "id_column": id_column,
+        "label_column": label_column,
         "target_summary": target_summary,
         "train_rows": int(x_train_raw.shape[0]),
         "train_cols": int(x_train_raw.shape[1]),
