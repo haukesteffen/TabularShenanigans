@@ -1,82 +1,34 @@
-# Technical Playbook
+# Technical Guide
 
-Implementation playbook for this repository. Use this file as the technical source of truth.
+Technical reference for the current repository design. Use GitHub issues and pull requests for active implementation tracking; this document describes the system as it exists and the contracts it is expected to preserve.
 
-## Current Phase
-Step 5.5: Submission workflow integration.
+## System Flow
+1. Load and validate the repository-root `config.yaml`.
+2. Resolve `task_type` and `primary_metric` from config or Kaggle competition metadata.
+3. Download the competition zip into `data/<competition_slug>/` when it is missing.
+4. Read `train.csv`, `test.csv`, and `sample_submission.csv` from the zip as needed.
+5. Run EDA and write report CSVs under `reports/<competition_slug>/`.
+6. Prepare raw feature frames from the train/test data and infer the target column from the train/test schema difference.
+7. Build preprocessing for the selected feature types:
+   - numeric: median imputation + `StandardScaler`
+   - categorical: most-frequent imputation + `OneHotEncoder`
+8. Train the baseline model with fold-local preprocessing:
+   - regression: `ElasticNet`
+   - binary classification: `LogisticRegression`
+9. Write fold metrics, CV summary, OOF predictions, test predictions, and a run manifest under `artifacts/<competition_slug>/train/<run_id>/`.
+10. Validate predictions against `sample_submission.csv`, write `submission.csv`, and optionally submit to Kaggle.
 
-In scope now:
-- `config.yaml`
-- `src/tabular_shenanigans/__init__.py`
-- `src/tabular_shenanigans/config.py`
-- Minimal callable entrypoint (`main.py` or `src/tabular_shenanigans/cli.py`)
-- Kaggle data download module (`src/tabular_shenanigans/data.py`)
-- EDA module (`src/tabular_shenanigans/eda.py`)
-- Preprocessing module (`src/tabular_shenanigans/preprocess.py`)
-- CV module (`src/tabular_shenanigans/cv.py`)
-- Training module (`src/tabular_shenanigans/train.py`)
-- Submission module (`src/tabular_shenanigans/submit.py`)
-- Local data target path: `data/<competition_slug>/`
-- EDA report path: `reports/<competition_slug>/`
-- Preprocessing artifact path: `artifacts/<competition_slug>/preprocess/`
-- Training artifact path: `artifacts/<competition_slug>/train/<run_id>/`
-- Training ledger path: `artifacts/<competition_slug>/train/runs.csv`
-- Submission ledger path: `artifacts/<competition_slug>/train/submissions.csv`
+## Module Responsibilities
+- `main.py`: orchestration entrypoint for config loading, data fetch, EDA, preprocessing, training, and submission.
+- `src/tabular_shenanigans/config.py`: Pydantic-backed config schema and loading.
+- `src/tabular_shenanigans/data.py`: Kaggle metadata lookup, competition download, zip access, and target inference.
+- `src/tabular_shenanigans/eda.py`: numeric and schema-oriented EDA summaries written to CSV.
+- `src/tabular_shenanigans/preprocess.py`: feature frame preparation, column typing, and sklearn preprocessing pipelines.
+- `src/tabular_shenanigans/cv.py`: task-aware CV splitters and metric scoring helpers.
+- `src/tabular_shenanigans/train.py`: baseline model selection, fold training, artifact writing, and run ledger updates.
+- `src/tabular_shenanigans/submit.py`: submission schema validation, submission message creation, Kaggle submission, and submission ledger updates.
 
-Out of scope now:
-- `src/tabular_shenanigans/pipeline.py`
-- Plot generation and notebook-first workflows
-- Model stacking
-
-## Current Phase Rules (Functionality First)
-- Keep implementation simple.
-- Absolutely no overengineering.
-- One runtime config source only: a single `config.yaml`.
-- No config overrides via CLI or environment variables.
-- No multi-file config composition.
-- Assume Kaggle CLI is available and authenticated.
-- Assume secrets are valid and user has joined the configured competition.
-- Keep EDA numeric/script-driven (terminal summary + CSV reports), no plots.
-- Keep preprocessing output CSV-based for this MVP iteration.
-- Focus on working functionality over code quality conventions and polish.
-- Unit and integration tests are out of scope in this phase.
-- Avoid broad defensive `try/except` blocks; prefer direct failures during development unless minimal handling is required for core flow.
-- Keep validation and error messaging minimal: only what is needed to unblock usage and debugging.
-- Deterministic behavior is preferred when easy to keep, but iteration speed takes priority in this phase.
-- Ship small focused iterations.
-- After each iteration, provide a detailed explanation of changes and behavior.
-
-## Future Scalability Guardrails (CPU -> Cloud GPU)
-These are design guardrails for upcoming phases. They do not expand current Step 5.5 scope.
-
-- Stay CPU-first by default; treat GPU support as an optional backend path to add later.
-- Keep data and modeling logic behind small internal interfaces so backend swaps are localized.
-- Avoid scattering direct pandas/sklearn calls across many modules.
-- Prefer columnar/vectorized transformations over row-wise Python loops and heavy `DataFrame.apply` usage.
-- Use portable artifacts (`parquet`, `csv`, `json`) for interoperability across local and cloud environments.
-- Keep runs stateless and reproducible from config so jobs can move from local to cloud workers.
-- Plan dependencies as core CPU requirements plus optional GPU extras, not mandatory RAPIDS install.
-- When GPU backend is introduced, require CPU/GPU parity checks with explicit numeric tolerance.
-
-## Build Order (Step 5.5)
-1. Ensure data fetch (Step 2) and EDA (Step 3) run before preprocessing.
-2. Run preprocessing and persist CPU-friendly CSV artifacts.
-3. Resolve competition `task_type` and `primary_metric` from config/Kaggle metadata.
-4. Build deterministic CV splitter:
-   - Regression: 7-fold shuffled `KFold`
-   - Binary classification: 7-fold shuffled `StratifiedKFold`
-5. Train baseline linear model per fold with fold-local preprocessing:
-   - Regression: `ElasticNet`
-   - Binary classification: `LogisticRegression`
-6. Write fold metrics, CV summary, OOF predictions, test predictions, and append run ledger.
-7. Validate `test_predictions.csv` against `sample_submission.csv` and write `submission.csv`.
-8. Submit to Kaggle only when explicitly enabled; always append submission ledger entry.
-
-Preprocessing implementation details:
-   - Numeric: median imputation + `StandardScaler`
-   - Categorical: most-frequent imputation + `OneHotEncoder`
-
-## Interfaces (Current Phase)
+## Configuration Contract
 Input:
 - One config file: `config.yaml` (single source of truth)
 - Required key: `competition_slug`
@@ -96,7 +48,9 @@ Input:
   - `submit_enabled` (boolean, default false)
   - `submit_message_prefix` (string, optional)
 
-Output:
+The config is validated by Pydantic with `extra="forbid"`. Unknown keys, schema mismatches, and missing required fields are hard errors.
+
+## Artifact Contract
 - A validated in-memory config object from Pydantic
 - Competition files downloaded under `data/<competition_slug>/`
 - EDA summary printed to terminal
@@ -113,7 +67,18 @@ Output:
   - `submission.csv`
 - Append-only submission ledger at `artifacts/<competition_slug>/train/submissions.csv`
 
-Error contract:
+## Runtime Invariants And Failure Behavior
+- One runtime config source only: `config.yaml`
+- No config overrides via CLI or environment variables
+- Kaggle CLI and authentication are expected to be preconfigured
+- Competition zip contents are expected to include `train.csv`, `test.csv`, and `sample_submission.csv`
+- Target inference must resolve to exactly one column
+- Feature override columns must exist and cannot overlap between forced numeric and forced categorical sets
+- Metric resolution must produce a supported metric compatible with the resolved task type
+- Submission output must match the schema and row count of `sample_submission.csv`
+- Fail fast is the default behavior; errors are surfaced directly with minimal wrapping
+
+Hard-error cases include:
 - Missing config file -> hard error
 - Schema/type violation -> hard error
 - Any attempt to use additional config sources -> hard error
@@ -135,26 +100,19 @@ Error contract:
 - Submission schema mismatch against `sample_submission.csv` -> hard error
 - Kaggle submission command failure when `submit_enabled=true` -> hard error
 
-## Validation And Error Contract
-- Validation layer: Pydantic for config only, with minimal scope needed for current functionality.
-- Runtime assumptions: Kaggle CLI/auth/competition access are preconfigured by the user.
-- Runtime assumptions: Kaggle zip contains `train.csv`, `test.csv`, and `sample_submission.csv`.
-- Runtime assumptions: transformed feature matrices are small enough to persist as CSV in this MVP phase.
-- Error timing: fail fast; avoid extra preflight checks.
-- Error style: simple and direct; detailed/production-grade messaging is deferred.
+## Design Guardrails
+- Keep implementation simple and avoid speculative abstractions.
+- Stay CPU-first by default; treat GPU support as an optional later backend.
+- Keep data and modeling logic behind small internal interfaces so backend swaps stay localized.
+- Avoid scattering direct pandas/sklearn calls across many modules.
+- Prefer columnar and vectorized transformations over row-wise Python loops.
+- Use portable artifacts such as `csv` and `json`.
+- Keep runs reproducible from config and append-only ledgers.
+- Keep EDA script-driven and CSV-oriented rather than notebook- or plot-first.
 
-## Next Phases (Preview Only)
-- Expand baseline model bundle beyond linear defaults.
-- Kaggle workflow: slug-based storage, fetch-if-missing zip files, compact submission messages.
-- Model stacking for stronger CV/LB performance.
-
-## Iteration Reporting Template
-For every shipped iteration, provide:
-- Changed files
-- What behavior changed
-- Why the change was made
-- How to run it
-- Expected outputs and errors
-- Current limitations
-- Which shortcuts were intentionally taken in this phase (for example: no tests, minimal error handling)
-- Next immediate step
+## Extension Notes
+- New config keys should be added to `AppConfig` in `config.py` and documented in both this file and `README.md` when user-facing.
+- New metrics should be normalized and validated in `data.py`, then scored in `cv.py`.
+- New model families should be introduced in `train.py` with explicit task compatibility and matching artifact outputs.
+- New preprocessing modes should be added in `preprocess.py` without breaking the existing feature-frame contract.
+- New run or submission artifacts should be reflected in both the artifact contract above and the corresponding ledger rows.

@@ -5,23 +5,19 @@ Config-driven Python workflows for semi-automated participation in tabular Kaggl
 ## Project Overview
 - Focus area: tabular machine learning competitions.
 - Task scope: regression and binary classification.
-- Development style: small, incremental iterations with detailed explanations.
 - Scalability direction: CPU-first local workflow now, with a future path to cloud GPU execution (RAPIDS `cudf`/`cuml`) without rewriting the full pipeline.
 
-## Current Development Mode (Functionality First)
-- This is an active development process focused on shipping working behavior quickly.
-- Engineering polish is intentionally deprioritized in this phase.
-- Unit and integration tests are explicitly out of scope for now.
-- Avoid broad defensive `try/except` wrapping; let failures surface during development unless handling is required to keep core flow usable.
-- Refactoring for style, architecture hardening, and production-grade robustness are deferred to a later stabilization phase.
-
-## Current MVP Status
-- Step 1 (configuration pipeline) is complete.
-- Step 2 (Kaggle competition data fetch) is complete.
-- Step 3 (script-based exploratory data analysis) is complete.
-- Step 4 (preprocessing and feature engineering) is complete.
-- Step 5 (baseline training with CV) is complete.
-- Current implementation priority is submission workflow integration.
+## Current Capabilities
+- Load and validate a single repository-root `config.yaml`.
+- Fetch Kaggle competition data into `data/<competition_slug>/` when the zip is missing.
+- Infer `task_type` and `primary_metric` from config or Kaggle metadata.
+- Generate terminal and CSV EDA summaries under `reports/<competition_slug>/`.
+- Build preprocessing artifacts under `artifacts/<competition_slug>/preprocess/`.
+- Train baseline cross-validated models with fold-local preprocessing:
+  - regression: `ElasticNet`
+  - binary classification: `LogisticRegression`
+- Write fold metrics, CV summary, OOF predictions, test predictions, and a run manifest under `artifacts/<competition_slug>/train/<run_id>/`.
+- Validate predictions against `sample_submission.csv` and optionally submit to Kaggle.
 
 ## Tooling
 - Python for orchestration
@@ -29,45 +25,50 @@ Config-driven Python workflows for semi-automated participation in tabular Kaggl
 - `gh` CLI for repository management
 - `uv` for environment management
 
-## Quickstart (Current Stage)
-1. Keep a project `config.yaml` at repository root.
-2. Run the current Python entrypoint scripts directly from the repo.
-3. Ensure Kaggle CLI access is already configured for your user.
-4. Current run behavior: fetch competition zip if missing, generate EDA report CSVs, write preprocessing artifacts, run linear baseline CV training, then build a validated submission file from the latest run (validated against `sample_submission.csv`).
-5. Follow iteration notes and current development-mode rules in [`docs/TECHNICAL_GUIDE.md`](docs/TECHNICAL_GUIDE.md).
+## Quickstart
+1. Ensure Kaggle CLI access is already configured for your user.
+2. Install dependencies with `uv sync`.
+3. Keep a project `config.yaml` at repository root.
+4. Run `uv run python main.py`.
 
-### Optional preprocessing config
-`config.yaml` supports optional feature typing overrides used by preprocessing:
-- `force_categorical`: list of feature names to force into the categorical pipeline.
-- `force_numeric`: list of feature names to force into the numeric pipeline.
-- `drop_columns`: list of feature names to remove before preprocessing.
-- `low_cardinality_int_threshold`: if set, integer columns with unique values at or below this threshold are treated as categorical by default.
+The current pipeline fetches competition data if needed, runs EDA, writes preprocessing artifacts, trains a baseline CV model, writes prediction artifacts, and prepares a validated submission file.
 
-### Optional competition metadata config
-`config.yaml` also supports optional overrides for competition task + scoring:
+## Config Overview
+Required key:
+- `competition_slug`
+
+Optional competition metadata keys:
 - `task_type`: `regression` or `binary`
 - `primary_metric`: one of `rmse`, `rmsle`, `mae`, `roc_auc`, `log_loss`, `accuracy`
 
-If either key is missing, the pipeline tries to infer missing values from Kaggle competition metadata.
-If inference is partial or ambiguous, the run fails and requires explicit config values.
+Optional preprocessing keys:
+- `force_categorical`: list of feature names to force into the categorical pipeline
+- `force_numeric`: list of feature names to force into the numeric pipeline
+- `drop_columns`: list of feature names to remove before preprocessing
+- `low_cardinality_int_threshold`: integer columns at or below this unique-count threshold are treated as categorical by default
 
-### Optional CV config
-`config.yaml` also supports:
+Optional CV keys:
 - `cv_n_splits`: number of CV folds (default `7`)
 - `cv_shuffle`: whether to shuffle before splitting (default `true`)
 - `cv_random_state`: random seed for deterministic folds (default `42`)
 
-### Optional submission config
-`config.yaml` also supports:
+Optional submission keys:
 - `submit_enabled`: if `true`, submit to Kaggle after training (default `false`)
 - `submit_message_prefix`: optional prefix used in auto-generated submission messages
 
-When `submit_enabled` is `false`, the pipeline still validates submission schema and writes `submission.csv`, then logs a dry-run status.
+If competition metadata keys are omitted, the pipeline attempts inference from Kaggle metadata. Partial or ambiguous inference fails fast and requires explicit values in `config.yaml`.
 
-## Roadmap
-1. Robust config pipeline
-2. Kaggle data fetch
-3. Exploratory data analysis
-4. Preprocessing and feature engineering
-5. Baseline models
-6. Model stacking for stronger CV/LB performance
+## Outputs
+- Competition data: `data/<competition_slug>/`
+- EDA reports: `reports/<competition_slug>/`
+- Preprocessing artifacts: `artifacts/<competition_slug>/preprocess/`
+- Training artifacts: `artifacts/<competition_slug>/train/<run_id>/`
+- Run ledger: `artifacts/<competition_slug>/train/runs.csv`
+- Submission ledger: `artifacts/<competition_slug>/train/submissions.csv`
+
+## Current Assumptions
+- Kaggle CLI is installed, authenticated, and has access to the configured competition.
+- Competition zip contents include `train.csv`, `test.csv`, and `sample_submission.csv`.
+- A single target column can be inferred from the train/test schema difference.
+- Runtime config comes from `config.yaml` only; there are no CLI or environment overrides.
+- The current workflow is CPU-first and optimized for iteration speed over production hardening.
