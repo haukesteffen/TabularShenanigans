@@ -18,14 +18,15 @@ The repository is developed and manually verified primarily against these Playgr
 - Load and validate a single repository-root `config.yaml`.
 - Fetch Kaggle competition data into `data/<competition_slug>/` when the zip is missing.
 - Require explicit `task_type` and `primary_metric` in config.
+- Select one baseline model per run from config via `model_id`.
 - Infer Playground-style submission schema from dataset files:
   - `id_column` as the only column shared by `train.csv`, `test.csv`, and `sample_submission.csv`
   - `label_column` as the only column shared by `train.csv` and `sample_submission.csv` but not `test.csv`
 - Exclude the resolved `id_column` from modeled features by default; identifier columns are treated as metadata, not training signal.
 - Generate terminal and CSV EDA summaries under `reports/<competition_slug>/`, including missingness, categorical cardinality, target summary, and feature-type counts.
 - Train baseline cross-validated models with fold-local preprocessing:
-  - regression: `ElasticNet`
-  - binary classification: `LogisticRegression`
+  - regression: `elasticnet` (`ElasticNet`) or `random_forest` (`RandomForestRegressor`)
+  - binary classification: `logistic_regression` (`LogisticRegression`) or `random_forest` (`RandomForestClassifier`)
 - Write fold metrics, task-aware run diagnostics, OOF predictions, test predictions, and a canonical `run_manifest.json` under `artifacts/<competition_slug>/train/<run_id>/`.
 - Validate predictions against `sample_submission.csv`, including exact ID content and order, and optionally submit to Kaggle from the selected run artifact contract.
 
@@ -52,6 +53,11 @@ Required keys:
 Optional binary-classification key:
 - `positive_label`: explicit positive class for binary competitions; required unless the observed training labels follow one of the documented safe conventions: `[0, 1]`, `[False, True]`, or `["No", "Yes"]`
 
+Optional model-selection key:
+- `model_id`: baseline model preset for the configured task
+  - regression: `elasticnet` (default) or `random_forest`
+  - binary classification: `logistic_regression` (default) or `random_forest`
+
 Optional submission schema keys:
 - `id_column`: override for the inferred identifier column; the resolved ID column is excluded from modeled features by default
 - `label_column`: override for the inferred submission/target column
@@ -73,6 +79,8 @@ Optional submission keys:
 
 If `id_column` or `label_column` are omitted, the training pipeline infers them from `train.csv`, `test.csv`, and `sample_submission.csv`. The resolved `id_column` is preserved for prediction outputs and in `run_manifest.json`, but it is not part of the model feature matrix. Submission preparation consumes the selected run manifest as the schema/task source of truth and uses `sample_submission.csv` only for validation. Invalid overrides, ambiguous inference, a `sample_submission.csv` shape that does not exactly match `[id_column, label_column]`, or a submission ID column that differs from `sample_submission.csv` in values or ordering are hard errors.
 
+`model_id` is config-driven. If omitted, the workflow selects the current default baseline for the configured task: `elasticnet` for regression and `logistic_regression` for binary classification.
+
 `task_type` and `primary_metric` are always config-driven. The pipeline does not infer them from Kaggle metadata.
 
 ## Preferred Manual Verification Targets
@@ -87,6 +95,7 @@ Example binary config:
 competition_slug: playground-series-s5e12
 task_type: binary
 primary_metric: roc_auc
+# model_id: random_forest
 ```
 
 Example regression config:
@@ -95,6 +104,7 @@ Example regression config:
 competition_slug: playground-series-s5e10
 task_type: regression
 primary_metric: mse
+# model_id: random_forest
 ```
 
 Manual verification for each target:
@@ -118,6 +128,7 @@ Manual verification for each target:
 - The competition follows a simple two-column Playground submission contract: `sample_submission.csv` must be exactly `[id_column, label_column]`.
 - The resolved `id_column` is identifier metadata and is excluded from preprocessing and model fitting by default.
 - Submission uses `run_manifest.json` as the canonical source for `competition_slug`, `task_type`, `id_column`, and `label_column`.
+- Submission metadata includes the selected `model_id`.
 - Submission validation requires `test_predictions.csv[id_column]` to match `sample_submission.csv[id_column]` exactly in both values and row order.
 - Binary classification supports any two-class labels accepted by scikit-learn; probability outputs are aligned to the resolved positive class.
 - Binary classification requires an explicit positive-class contract. If `positive_label` is omitted, the workflow only auto-resolves the positive class for labels `[0, 1]`, `[False, True]`, or `["No", "Yes"]`; other two-class label pairs fail fast.

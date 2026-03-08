@@ -14,6 +14,8 @@ SUBMISSION_LEDGER_COLUMNS = [
     "timestamp_utc",
     "competition_slug",
     "run_id",
+    "model_id",
+    "model_name",
     "config_fingerprint",
     "submission_path",
     "submit_enabled",
@@ -27,6 +29,7 @@ class SubmissionRunContext:
     run_id: str
     competition_slug: str
     task_type: str
+    model_id: str
     id_column: str
     label_column: str
     config_fingerprint: str | None
@@ -111,6 +114,34 @@ def _require_manifest_value(manifest: dict[str, object], field_name: str) -> obj
     return field_value
 
 
+def _infer_legacy_model_id(task_type: str, model_name: object | None) -> str | None:
+    legacy_model_map = {
+        ("regression", "ElasticNet"): "elasticnet",
+        ("binary", "LogisticRegression"): "logistic_regression",
+    }
+    return legacy_model_map.get((task_type, str(model_name)))
+
+
+def _resolve_manifest_model_id(manifest: dict[str, object]) -> str:
+    model_id = manifest.get("model_id")
+    if model_id is None:
+        config_snapshot = manifest.get("config_snapshot", {})
+        if isinstance(config_snapshot, dict):
+            model_id = config_snapshot.get("model_id")
+    if model_id is not None:
+        return str(model_id)
+
+    task_type = str(_require_manifest_value(manifest, "task_type"))
+    legacy_model_id = _infer_legacy_model_id(task_type, manifest.get("model_name"))
+    if legacy_model_id is not None:
+        return legacy_model_id
+
+    raise ValueError(
+        "Run manifest is missing required submission field 'model_id'. "
+        "Submission requires a manifest-backed model selection contract."
+    )
+
+
 def _load_submission_run_context(run_dir: Path) -> SubmissionRunContext:
     manifest = _load_run_manifest(run_dir)
     run_id = str(manifest["run_id"])
@@ -118,6 +149,7 @@ def _load_submission_run_context(run_dir: Path) -> SubmissionRunContext:
         run_id=run_id,
         competition_slug=str(_require_manifest_value(manifest, "competition_slug")),
         task_type=str(_require_manifest_value(manifest, "task_type")),
+        model_id=_resolve_manifest_model_id(manifest),
         id_column=str(_require_manifest_value(manifest, "id_column")),
         label_column=str(_require_manifest_value(manifest, "label_column")),
         config_fingerprint=manifest.get("config_fingerprint"),
@@ -126,6 +158,7 @@ def _load_submission_run_context(run_dir: Path) -> SubmissionRunContext:
 
 def _load_run_metadata(run_dir: Path) -> dict[str, object]:
     manifest = _load_run_manifest(run_dir)
+    model_id = _resolve_manifest_model_id(manifest)
     model_name = manifest.get("model_name")
     cv_summary = manifest.get("cv_summary")
     if isinstance(cv_summary, dict):
@@ -136,6 +169,7 @@ def _load_run_metadata(run_dir: Path) -> dict[str, object]:
         if model_name is not None and metric_name is not None and metric_mean is not None:
             return {
                 "run_id": str(manifest["run_id"]),
+                "model_id": model_id,
                 "config_fingerprint": manifest.get("config_fingerprint"),
                 "model_name": str(model_name),
                 "metric_name": str(metric_name),
@@ -151,6 +185,7 @@ def _load_run_metadata(run_dir: Path) -> dict[str, object]:
     resolved_model_name = model_name if model_name is not None else legacy_summary["model_name"]
     return {
         "run_id": str(manifest["run_id"]),
+        "model_id": model_id,
         "config_fingerprint": manifest.get("config_fingerprint"),
         "model_name": str(resolved_model_name),
         "metric_name": str(legacy_summary["metric_name"]),
@@ -259,7 +294,7 @@ def build_submission_message(run_dir: Path, submit_message_prefix: str | None = 
     if submit_message_prefix:
         message_parts.append(submit_message_prefix.strip())
     message_parts.append(f"run={run_metadata['run_id']}")
-    message_parts.append(f"model={run_metadata['model_name']}")
+    message_parts.append(f"model={run_metadata['model_id']}")
     message_parts.append(f"{run_metadata['metric_name']}={run_metadata['metric_mean']:.6f}")
     return " | ".join(message_parts)
 
@@ -270,6 +305,7 @@ def run_submission(
     submit_message_prefix: str | None = None,
 ) -> tuple[Path, str]:
     run_context = _load_submission_run_context(run_dir)
+    run_metadata = _load_run_metadata(run_dir)
     submission_path = prepare_submission_file(run_dir=run_dir)
     message = build_submission_message(run_dir=run_dir, submit_message_prefix=submit_message_prefix)
 
@@ -303,6 +339,8 @@ def run_submission(
         "timestamp_utc": datetime.now(timezone.utc).isoformat(),
         "competition_slug": run_context.competition_slug,
         "run_id": run_context.run_id,
+        "model_id": run_context.model_id,
+        "model_name": run_metadata["model_name"],
         "config_fingerprint": run_context.config_fingerprint,
         "submission_path": str(submission_path),
         "submit_enabled": submit_enabled,
