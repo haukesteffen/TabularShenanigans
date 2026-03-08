@@ -50,6 +50,9 @@ Required keys:
 - `task_type`: `regression` or `binary`
 - `primary_metric`: one of `rmse`, `mse`, `rmsle`, `mae`, `roc_auc`, `log_loss`, `accuracy`
 
+Optional binary-classification key:
+- `positive_label`: explicit positive class for binary competitions; required unless the observed training labels follow one of the documented safe conventions: `[0, 1]`, `[False, True]`, or `["No", "Yes"]`
+
 Optional submission schema keys:
 - `id_column`: override for the inferred identifier column; the resolved ID column is excluded from modeled features by default
 - `label_column`: override for the inferred submission/target column
@@ -117,6 +120,7 @@ Manual verification for each target:
 - The resolved `id_column` is identifier metadata and is excluded from preprocessing and model fitting by default.
 - Submission validation requires `test_predictions.csv[id_column]` to match `sample_submission.csv[id_column]` exactly in both values and row order.
 - Binary classification supports any two-class labels accepted by scikit-learn; probability outputs are aligned to the resolved positive class.
+- Binary classification requires an explicit positive-class contract. If `positive_label` is omitted, the workflow only auto-resolves the positive class for labels `[0, 1]`, `[False, True]`, or `["No", "Yes"]`; other two-class label pairs fail fast.
 - `task_type` and `primary_metric` are explicitly configured for every run.
 - Runtime config comes from `config.yaml` only; there are no CLI or environment overrides.
 - The current workflow is CPU-first and optimized for iteration speed over production hardening.

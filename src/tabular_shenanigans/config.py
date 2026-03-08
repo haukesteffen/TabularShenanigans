@@ -17,6 +17,7 @@ class AppConfig(BaseModel):
     competition_slug: str = Field(min_length=1)
     task_type: Literal["regression", "binary"]
     primary_metric: str
+    positive_label: str | int | bool | None = None
     id_column: str | None = None
     label_column: str | None = None
     force_categorical: list[str] = Field(default_factory=list)
@@ -42,6 +43,8 @@ class AppConfig(BaseModel):
                 f"Configured primary_metric '{normalized_primary_metric}' is not valid for task_type '{self.task_type}'."
             )
         self.primary_metric = normalized_primary_metric
+        if self.task_type != "binary" and self.positive_label is not None:
+            raise ValueError("positive_label is only supported for binary task_type.")
         return self
 
 

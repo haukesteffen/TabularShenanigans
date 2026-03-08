@@ -1,6 +1,7 @@
 competition_slug: playground-series-s5e12
 task_type: binary
 primary_metric: roc_auc
+# positive_label: "Yes"
 # Optional runtime settings.
 # cv_n_splits: 7
 # cv_shuffle: true
