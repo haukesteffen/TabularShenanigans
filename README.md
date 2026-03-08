@@ -23,7 +23,6 @@ The repository is developed and manually verified primarily against these Playgr
   - `label_column` as the only column shared by `train.csv` and `sample_submission.csv` but not `test.csv`
 - Exclude the resolved `id_column` from modeled features by default; identifier columns are treated as metadata, not training signal.
 - Generate terminal and CSV EDA summaries under `reports/<competition_slug>/`, including missingness, categorical cardinality, target summary, and feature-type counts.
-- Build preprocessing artifacts under `artifacts/<competition_slug>/preprocess/`.
 - Train baseline cross-validated models with fold-local preprocessing:
   - regression: `ElasticNet`
   - binary classification: `LogisticRegression`
@@ -42,7 +41,7 @@ The repository is developed and manually verified primarily against these Playgr
 3. Keep a project `config.yaml` at repository root with explicit `competition_slug`, `task_type`, and `primary_metric`.
 4. Run `uv run python main.py`.
 
-The current pipeline fetches competition data if needed, runs config-aware EDA, writes preprocessing artifacts, trains a baseline CV model with task-aware diagnostics, writes prediction artifacts, and prepares a validated submission file.
+The current pipeline fetches competition data if needed, runs config-aware EDA, trains a baseline CV model with fold-local preprocessing and task-aware diagnostics, writes prediction artifacts, and prepares a validated submission file.
 
 ## Config Overview
 Required keys:
@@ -107,7 +106,6 @@ Manual verification for each target:
 ## Outputs
 - Competition data: `data/<competition_slug>/`
 - EDA reports: `reports/<competition_slug>/`
-- Preprocessing artifacts: `artifacts/<competition_slug>/preprocess/`
 - Training artifacts: `artifacts/<competition_slug>/train/<run_id>/`
   - includes `fold_metrics.csv`, `cv_summary.csv`, `run_diagnostics.csv`, `oof_predictions.csv`, `test_predictions.csv`, and `run_manifest.json`
 - Run ledger: `artifacts/<competition_slug>/train/runs.csv`
