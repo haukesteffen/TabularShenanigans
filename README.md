@@ -10,7 +10,8 @@ Config-driven Python workflows for semi-automated participation in tabular Kaggl
 
 ## Development Defaults
 The repository is developed and manually verified primarily against these Playground Series competitions:
-- default classification target: `playground-series-s6e3` with `primary_metric: roc_auc`
+- default classification development target: `playground-series-s5e12` with `primary_metric: roc_auc`
+- classification production target: `playground-series-s6e3` with `primary_metric: roc_auc`
 - default regression target: `playground-series-s5e10` with `primary_metric: mse`
 
 ## Current Capabilities
@@ -73,13 +74,14 @@ If `id_column` or `label_column` are omitted, the pipeline infers them from `tra
 
 ## Preferred Manual Verification Targets
 Use these Playground competitions as the primary smoke tests:
-- binary classification: `playground-series-s6e3` with `task_type: binary` and `primary_metric: roc_auc`
+- binary classification (dev): `playground-series-s5e12` with `task_type: binary` and `primary_metric: roc_auc`
+- binary classification (prod target): `playground-series-s6e3` with `task_type: binary` and `primary_metric: roc_auc`
 - regression: `playground-series-s5e10` with `task_type: regression` and `primary_metric: mse`
 
 Example binary config:
 
 ```yaml
-competition_slug: playground-series-s6e3
+competition_slug: playground-series-s5e12
 task_type: binary
 primary_metric: roc_auc
 ```
