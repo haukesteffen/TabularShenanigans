@@ -92,7 +92,11 @@ def load_config(path: str = "config.yaml") -> AppConfig:
     try:
         raw_data = yaml.safe_load(config_path.read_text(encoding="utf-8"))
     except FileNotFoundError as exc:
-        raise ConfigError(f"Config file not found: {config_path}") from exc
+        raise ConfigError(
+            f"Config file not found: {config_path}. "
+            "Create repository-root config.yaml from config.binary.example.yaml "
+            "or config.regression.example.yaml."
+        ) from exc
     except yaml.YAMLError as exc:
         raise ConfigError(f"Invalid YAML in config file: {exc}") from exc
 

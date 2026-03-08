@@ -1,0 +1,35 @@
+# Copy to repository-root config.yaml before running:
+# cp config.regression.example.yaml config.yaml
+competition_slug: playground-series-s5e10
+task_type: regression
+primary_metric: mse
+
+# Prefer model_ids for multi-model baselines. Swap to model_id for a single-model smoke test.
+model_ids:
+  - onehot_ridge
+  - onehot_elasticnet
+  - ordinal_lightgbm
+  - native_catboost
+  - ordinal_xgboost
+# model_id: onehot_elasticnet
+
+# Optional schema overrides when inference is ambiguous or the competition is not Playground-shaped.
+# id_column: id
+# label_column: target
+
+# Optional feature-typing overrides.
+# force_categorical:
+#   - some_integer_flag
+# force_numeric:
+#   - some_count_feature
+# drop_columns:
+#   - some_leaky_column
+# low_cardinality_int_threshold: 20
+
+# Optional CV settings.
+# cv_n_splits: 7
+# cv_shuffle: true
+# cv_random_state: 42
+
+submit_enabled: false
+# submit_message_prefix: s5e10-baseline

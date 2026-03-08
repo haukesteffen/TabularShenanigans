@@ -15,10 +15,11 @@ The repository is developed and manually verified primarily against these Playgr
 - default regression target: `playground-series-s5e10` with `primary_metric: mse`
 
 ## Current Capabilities
-- Load and validate a single repository-root `config.yaml`.
+- Load and validate a single local repository-root `config.yaml`.
 - Fetch Kaggle competition data into `data/<competition_slug>/` when the zip is missing.
 - Require explicit `task_type` and `primary_metric` in config.
 - Select one or more baseline or booster model recipes per run from config via `model_ids`, with `model_id` retained as the single-model shorthand.
+- Ship tracked binary and regression example configs that can be copied into the local runtime config.
 - Infer Playground-style submission schema from dataset files:
   - `id_column` as the only column shared by `train.csv`, `test.csv`, and `sample_submission.csv`
   - `label_column` as the only column shared by `train.csv` and `sample_submission.csv` but not `test.csv`
@@ -41,12 +42,29 @@ The repository is developed and manually verified primarily against these Playgr
 1. Ensure Kaggle CLI access is already configured for your user.
 2. Install dependencies with `uv sync`.
 3. If you want LightGBM, CatBoost, or XGBoost model recipes, install the optional booster dependencies with `uv sync --extra boosters`.
-4. Keep a project `config.yaml` at repository root with explicit `competition_slug`, `task_type`, and `primary_metric`.
+4. Copy a tracked example config to a local repository-root `config.yaml`.
 5. Run `uv run python main.py`.
+
+```bash
+cp config.binary.example.yaml config.yaml
+# or
+cp config.regression.example.yaml config.yaml
+```
+
+`config.yaml` is the only runtime config source. It is intentionally ignored by Git so you can keep local competition-specific settings without committing them.
 
 The current pipeline fetches competition data if needed, runs config-aware EDA, trains one or more CV model recipes with fold-local preprocessing and task-aware diagnostics, writes prediction artifacts, and prepares a validated submission file.
 
 ## Config Overview
+Tracked example configs:
+- `config.binary.example.yaml`: binary-classification starting point using the default dev smoke-test target
+- `config.regression.example.yaml`: regression starting point using the default regression smoke-test target
+
+Runtime config workflow:
+- copy one of the tracked examples to repository-root `config.yaml`
+- edit only `config.yaml` for local runs
+- keep `config.yaml` untracked; the application does not read the example files directly
+
 Required keys:
 - `competition_slug`
 - `task_type`: `regression` or `binary`
@@ -97,33 +115,12 @@ Use these Playground competitions as the primary smoke tests:
 - binary classification (prod target): `playground-series-s6e3` with `task_type: binary` and `primary_metric: roc_auc`
 - regression: `playground-series-s5e10` with `task_type: regression` and `primary_metric: mse`
 
-Example binary config:
-
-```yaml
-competition_slug: playground-series-s5e12
-task_type: binary
-primary_metric: roc_auc
-model_ids:
-  - onehot_logreg
-  - ordinal_lightgbm
-  - native_catboost
-  - ordinal_xgboost
-```
-
-Example regression config:
-
-```yaml
-competition_slug: playground-series-s5e10
-task_type: regression
-primary_metric: mse
-model_ids:
-  - onehot_ridge
-  - ordinal_lightgbm
-  - native_catboost
-  - ordinal_xgboost
-```
+Tracked example configs for those targets:
+- `config.binary.example.yaml`
+- `config.regression.example.yaml`
 
 Manual verification for each target:
+- copy the corresponding example file to `config.yaml`
 - confirm the competition archive includes `train.csv`, `test.csv`, and `sample_submission.csv`
 - confirm the pipeline infers `id_column` and `label_column` without overrides
 - confirm `artifacts/<competition_slug>/train/<run_id>/model_summary.csv` is written
@@ -154,5 +151,5 @@ Manual verification for each target:
 - Binary classification supports any two-class labels accepted by scikit-learn; probability outputs are aligned to the resolved positive class.
 - Binary classification requires an explicit positive-class contract. If `positive_label` is omitted, the workflow only auto-resolves the positive class for labels `[0, 1]`, `[False, True]`, or `["No", "Yes"]`; other two-class label pairs fail fast.
 - `task_type` and `primary_metric` are explicitly configured for every run.
-- Runtime config comes from `config.yaml` only; there are no CLI or environment overrides.
+- Runtime config comes from local repository-root `config.yaml` only; tracked example files are just starting points, and there are no CLI or environment overrides.
 - The current workflow is CPU-first and optimized for iteration speed over production hardening.
