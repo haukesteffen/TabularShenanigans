@@ -5,7 +5,7 @@ Technical reference for the current repository design. Use GitHub issues and pul
 The intended operating scope is Kaggle Playground Series tabular competitions. Current default development targets are `playground-series-s5e12` for binary classification with `primary_metric: roc_auc` and `playground-series-s5e10` for regression with `primary_metric: mse`. The current binary production target is `playground-series-s6e3` with `primary_metric: roc_auc`.
 
 ## System Flow
-1. Load and validate the repository-root `config.yaml`.
+1. Load and validate the local repository-root `config.yaml`.
 2. Use explicit `task_type` and `primary_metric` from config.
 3. Download the competition zip into `data/<competition_slug>/` when it is missing.
 4. Read `train.csv`, `test.csv`, and `sample_submission.csv` from the zip as needed.
@@ -35,7 +35,9 @@ The intended operating scope is Kaggle Playground Series tabular competitions. C
 
 ## Configuration Contract
 Input:
-- One config file: `config.yaml` (single source of truth)
+- One local runtime config file: `config.yaml` (single source of truth)
+- Tracked example configs: `config.binary.example.yaml` and `config.regression.example.yaml`
+- Expected workflow: copy one example file to `config.yaml`, then edit `config.yaml` for the local run
 - Required keys:
   - `competition_slug`
   - `task_type` (`regression` or `binary`)
@@ -74,6 +76,7 @@ LightGBM, CatBoost, and XGBoost require the optional booster dependencies instal
 - `playground-series-s5e10`: regression smoke test with `task_type: regression` and `primary_metric: mse`
 
 Manual verification steps for each target:
+- copy the corresponding tracked example config to `config.yaml`
 - verify the competition assets include `train.csv`, `test.csv`, and `sample_submission.csv`
 - run the workflow from a clean repo state with explicit `task_type`, `primary_metric`, and one or more selected models
 - confirm inferred `id_column` and `label_column`
@@ -108,8 +111,9 @@ Manual verification steps for each target:
 - Append-only submission ledger at `artifacts/<competition_slug>/train/submissions.csv` with submission event metadata only
 
 ## Runtime Invariants And Failure Behavior
-- One runtime config source only: `config.yaml`
+- One runtime config source only: local repository-root `config.yaml`
 - No config overrides via CLI or environment variables
+- Tracked example config files are documentation and starting points only; they are never read automatically at runtime
 - `task_type` and `primary_metric` must be present in config for every run
 - `model_ids` is the preferred model-selection interface; `model_id` remains the single-model shorthand and the two keys are mutually exclusive
 - `model_ids` must resolve to one or more supported presets for the configured task; if omitted, the task default is used
@@ -170,6 +174,7 @@ Hard-error cases include:
 
 ## Extension Notes
 - New config keys should be added to `AppConfig` in `config.py` and documented in both this file and `README.md` when user-facing.
+- If the user-facing config workflow changes, update `config.binary.example.yaml` and `config.regression.example.yaml` alongside the docs.
 - New metrics should be normalized and validated during config loading, then scored in `cv.py`.
 - New model families should be introduced in `models.py` with explicit task compatibility, canonical recipe IDs, and matching artifact outputs.
 - New preprocessing modes should be added in `preprocess.py` without breaking the existing feature-frame contract or the preprocessing-first recipe naming convention.
