@@ -6,7 +6,7 @@ from pathlib import Path
 import numpy as np
 import pandas as pd
 
-from tabular_shenanigans.data import find_competition_zip, read_csv_from_zip, resolve_id_and_label_columns
+from tabular_shenanigans.data import load_competition_dataset_context
 
 
 def _append_submission_ledger(ledger_path: Path, row: dict[str, object]) -> None:
@@ -98,17 +98,14 @@ def prepare_submission_file(
         raise ValueError(f"Missing test predictions file: {prediction_path}")
 
     prediction_df = pd.read_csv(prediction_path)
-    zip_path = find_competition_zip(competition_slug)
-    train_df = read_csv_from_zip(zip_path, "train.csv")
-    test_df = read_csv_from_zip(zip_path, "test.csv")
-    sample_submission_df = read_csv_from_zip(zip_path, "sample_submission.csv")
-    resolved_id_column, resolved_label_column = resolve_id_and_label_columns(
-        train_df=train_df,
-        test_df=test_df,
-        sample_submission_df=sample_submission_df,
+    dataset_context = load_competition_dataset_context(
+        competition_slug=competition_slug,
         configured_id_column=id_column,
         configured_label_column=label_column,
     )
+    sample_submission_df = dataset_context.sample_submission_df
+    resolved_id_column = dataset_context.id_column
+    resolved_label_column = dataset_context.label_column
 
     expected_columns = [resolved_id_column, resolved_label_column]
     actual_columns = prediction_df.columns.tolist()

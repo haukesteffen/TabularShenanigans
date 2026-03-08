@@ -8,7 +8,7 @@ import pandas as pd
 from sklearn.linear_model import ElasticNet, LogisticRegression
 
 from tabular_shenanigans.cv import build_splitter, is_higher_better, resolve_positive_label, score_predictions
-from tabular_shenanigans.data import find_competition_zip, read_csv_from_zip, resolve_id_and_label_columns
+from tabular_shenanigans.data import load_competition_dataset_context
 from tabular_shenanigans.preprocess import build_preprocessor, prepare_feature_frames
 
 
@@ -149,17 +149,15 @@ def run_training(
     cv_random_state: int = 42,
     positive_label: str | int | bool | None = None,
 ) -> Path:
-    zip_path = find_competition_zip(competition_slug)
-    train_df = read_csv_from_zip(zip_path, "train.csv")
-    test_df = read_csv_from_zip(zip_path, "test.csv")
-    sample_submission_df = read_csv_from_zip(zip_path, "sample_submission.csv")
-    id_column, label_column = resolve_id_and_label_columns(
-        train_df=train_df,
-        test_df=test_df,
-        sample_submission_df=sample_submission_df,
+    dataset_context = load_competition_dataset_context(
+        competition_slug=competition_slug,
         configured_id_column=id_column,
         configured_label_column=label_column,
     )
+    train_df = dataset_context.train_df
+    test_df = dataset_context.test_df
+    id_column = dataset_context.id_column
+    label_column = dataset_context.label_column
 
     x_train_raw, x_test_raw, y_train = prepare_feature_frames(
         train_df=train_df,
