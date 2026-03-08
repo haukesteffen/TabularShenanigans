@@ -43,6 +43,7 @@ def main() -> None:
         competition_slug=config.competition_slug,
         task_type=config.task_type,
         primary_metric=config.primary_metric,
+        positive_label=config.positive_label,
         id_column=config.id_column,
         label_column=config.label_column,
         force_categorical=config.force_categorical,

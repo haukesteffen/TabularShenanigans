@@ -3,6 +3,7 @@ import subprocess
 from datetime import datetime, timezone
 from pathlib import Path
 
+import numpy as np
 import pandas as pd
 
 from tabular_shenanigans.data import find_competition_zip, read_csv_from_zip, resolve_id_and_label_columns
@@ -34,6 +35,13 @@ def _load_run_metadata(run_dir: Path) -> tuple[str, str, str, float]:
     metric_name = str(summary_df.loc[0, "metric_name"])
     metric_mean = float(summary_df.loc[0, "metric_mean"])
     return run_id, model_name, metric_name, metric_mean
+
+
+def _load_run_manifest(run_dir: Path) -> dict[str, object]:
+    manifest_path = run_dir / "run_manifest.json"
+    if not manifest_path.exists():
+        raise ValueError(f"Missing run manifest: {manifest_path}")
+    return json.loads(manifest_path.read_text(encoding="utf-8"))
 
 
 def _validate_submission_ids(
@@ -115,6 +123,22 @@ def prepare_submission_file(
             "Submission row count does not match sample_submission.csv. "
             f"Expected {sample_submission_df.shape[0]}, got {prediction_df.shape[0]}"
         )
+    manifest = _load_run_manifest(run_dir)
+    task_type = manifest.get("task_type")
+    if task_type is None:
+        config_snapshot = manifest.get("config_snapshot", {})
+        if isinstance(config_snapshot, dict):
+            task_type = config_snapshot.get("task_type")
+    if task_type == "binary":
+        prediction_values = prediction_df[resolved_label_column]
+        if not pd.api.types.is_numeric_dtype(prediction_values):
+            raise ValueError("Binary submission predictions must be numeric probabilities.")
+        if not prediction_values.map(pd.notna).all():
+            raise ValueError("Binary submission predictions contain missing values.")
+        if not np.isfinite(prediction_values.to_numpy(dtype=float)).all():
+            raise ValueError("Binary submission predictions must be finite.")
+        if ((prediction_values < 0.0) | (prediction_values > 1.0)).any():
+            raise ValueError("Binary submission predictions must be within [0, 1].")
     _validate_submission_ids(
         prediction_df=prediction_df,
         sample_submission_df=sample_submission_df,
@@ -192,6 +216,9 @@ def run_submission(
         "metric_name": metric_name,
         "metric_mean": metric_mean,
     }
+    manifest = _load_run_manifest(run_dir)
+    ledger_row["positive_label"] = manifest.get("positive_label")
+    ledger_row["negative_label"] = manifest.get("negative_label")
     ledger_path = Path("artifacts") / competition_slug / "train" / "submissions.csv"
     _append_submission_ledger(ledger_path=ledger_path, row=ledger_row)
 

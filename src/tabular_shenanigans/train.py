@@ -7,7 +7,7 @@ import numpy as np
 import pandas as pd
 from sklearn.linear_model import ElasticNet, LogisticRegression
 
-from tabular_shenanigans.cv import build_splitter, is_higher_better, resolve_binary_labels, score_predictions
+from tabular_shenanigans.cv import build_splitter, is_higher_better, resolve_positive_label, score_predictions
 from tabular_shenanigans.data import find_competition_zip, read_csv_from_zip, resolve_id_and_label_columns
 from tabular_shenanigans.preprocess import build_preprocessor, prepare_feature_frames
 
@@ -48,7 +48,13 @@ def _append_run_ledger(ledger_path: Path, row: dict[str, object]) -> None:
     ledger_df.to_csv(ledger_path, index=False)
 
 
-def _build_target_summary(task_type: str, y_train: pd.Series) -> dict[str, object]:
+def _build_target_summary(
+    task_type: str,
+    y_train: pd.Series,
+    positive_label: object | None = None,
+    negative_label: object | None = None,
+    observed_label_pair: tuple[object, object] | None = None,
+) -> dict[str, object]:
     if task_type == "regression":
         return {
             "target_mean": float(y_train.mean()),
@@ -58,11 +64,15 @@ def _build_target_summary(task_type: str, y_train: pd.Series) -> dict[str, objec
         }
 
     if task_type == "binary":
-        _, positive_label = resolve_binary_labels(y_train)
+        if positive_label is None or negative_label is None or observed_label_pair is None:
+            raise ValueError("Binary target summary requires resolved label metadata.")
         positive_count = int((y_train == positive_label).sum())
         row_count = int(y_train.shape[0])
         negative_count = row_count - positive_count
         return {
+            "observed_label_1": str(observed_label_pair[0]),
+            "observed_label_2": str(observed_label_pair[1]),
+            "negative_label": str(negative_label),
             "positive_label": str(positive_label),
             "positive_count": positive_count,
             "negative_count": negative_count,
@@ -137,6 +147,7 @@ def run_training(
     cv_n_splits: int = 7,
     cv_shuffle: bool = True,
     cv_random_state: int = 42,
+    positive_label: str | int | bool | None = None,
 ) -> Path:
     zip_path = find_competition_zip(competition_slug)
     train_df = read_csv_from_zip(zip_path, "train.csv")
@@ -159,9 +170,13 @@ def run_training(
         force_numeric=force_numeric,
         drop_columns=drop_columns,
     )
-    positive_label = None
+    observed_label_pair = None
+    negative_label = None
     if task_type == "binary":
-        _, positive_label = resolve_binary_labels(y_train)
+        negative_label, positive_label, observed_label_pair = resolve_positive_label(
+            y_values=y_train,
+            configured_positive_label=positive_label,
+        )
 
     model_name, _, model_params = _build_model(task_type, cv_random_state)
     splitter = build_splitter(
@@ -228,6 +243,8 @@ def run_training(
         if task_type == "binary":
             if positive_label is None:
                 raise ValueError("Binary training requires positive_label.")
+            if negative_label is None:
+                raise ValueError("Binary training requires negative_label.")
             positive_class_index = list(model.classes_).index(positive_label)
             fold_valid_predictions = model.predict_proba(x_fold_valid_processed)[:, positive_class_index]
             fold_test_predictions = model.predict_proba(x_test_processed)[:, positive_class_index]
@@ -268,7 +285,13 @@ def run_training(
     run_diagnostics_df = pd.DataFrame(run_diagnostics)
     cv_mean = float(fold_metrics_df["metric_value"].mean())
     cv_std = float(fold_metrics_df["metric_value"].std(ddof=0))
-    target_summary = _build_target_summary(task_type=task_type, y_train=y_train)
+    target_summary = _build_target_summary(
+        task_type=task_type,
+        y_train=y_train,
+        positive_label=positive_label,
+        negative_label=negative_label,
+        observed_label_pair=observed_label_pair,
+    )
 
     run_id = _make_run_id()
     run_dir = Path("artifacts") / competition_slug / "train" / run_id
@@ -313,6 +336,7 @@ def run_training(
         "competition_slug": competition_slug,
         "task_type": task_type,
         "primary_metric": primary_metric,
+        "positive_label": positive_label,
         "id_column": id_column,
         "label_column": label_column,
         "force_categorical": force_categorical or [],
@@ -339,8 +363,14 @@ def run_training(
     run_manifest = {
         "run_id": run_id,
         "generated_at_utc": datetime.now(timezone.utc).isoformat(),
+        "competition_slug": competition_slug,
+        "task_type": task_type,
+        "primary_metric": primary_metric,
         "config_fingerprint": config_fingerprint,
         "config_snapshot": config_snapshot,
+        "observed_label_pair": list(observed_label_pair) if observed_label_pair is not None else None,
+        "negative_label": negative_label,
+        "positive_label": positive_label,
         "id_column": id_column,
         "label_column": label_column,
         "target_summary": target_summary,

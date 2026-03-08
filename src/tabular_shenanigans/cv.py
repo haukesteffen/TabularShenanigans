@@ -21,15 +21,42 @@ def build_splitter(task_type: str, n_splits: int, shuffle: bool, random_state: i
     raise ValueError(f"Unsupported task_type for CV splitter: {task_type}")
 
 
-def resolve_binary_labels(y_values: pd.Series) -> tuple[object, object]:
+def resolve_binary_label_pair(y_values: pd.Series) -> tuple[object, object]:
     unique_labels = pd.unique(y_values)
     if len(unique_labels) != 2:
         raise ValueError(f"Binary tasks require exactly two unique labels, got {len(unique_labels)}: {list(unique_labels)}")
+    return unique_labels[0], unique_labels[1]
 
-    ordered_labels = sorted(unique_labels.tolist())
-    negative_label = ordered_labels[0]
-    positive_label = ordered_labels[1]
-    return negative_label, positive_label
+
+def resolve_positive_label(
+    y_values: pd.Series,
+    configured_positive_label: object | None = None,
+) -> tuple[object, object, object]:
+    first_label, second_label = resolve_binary_label_pair(y_values)
+    label_pair = (first_label, second_label)
+
+    if configured_positive_label is not None:
+        if configured_positive_label not in label_pair:
+            raise ValueError(
+                "Configured positive_label does not match the observed training labels. "
+                f"Configured value: {configured_positive_label!r}; observed labels: {list(label_pair)!r}"
+            )
+        negative_label = second_label if configured_positive_label == first_label else first_label
+        return negative_label, configured_positive_label, label_pair
+
+    safe_pairs = [
+        (0, 1),
+        (False, True),
+        ("No", "Yes"),
+    ]
+    for negative_label, positive_label in safe_pairs:
+        if set(label_pair) == {negative_label, positive_label}:
+            return negative_label, positive_label, label_pair
+
+    raise ValueError(
+        "Binary competitions require an explicit positive_label unless training labels follow a documented safe "
+        f"convention. Observed labels: {list(label_pair)!r}. Supported implicit pairs: {[list(pair) for pair in safe_pairs]!r}"
+    )
 
 
 def score_predictions(
@@ -58,7 +85,8 @@ def score_predictions(
         y_pred_array = np.asarray(y_pred)
         if positive_label is None:
             raise ValueError("Binary scoring requires positive_label.")
-        negative_label, _ = resolve_binary_labels(y_true)
+        first_label, second_label = resolve_binary_label_pair(y_true)
+        negative_label = second_label if positive_label == first_label else first_label
         if primary_metric == "roc_auc":
             y_true_binary = (y_true == positive_label).astype(int).to_numpy()
             return float(roc_auc_score(y_true_binary, y_pred_array))
