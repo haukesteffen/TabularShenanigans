@@ -21,6 +21,7 @@ The repository is developed and manually verified primarily against these Playgr
 - Infer Playground-style submission schema from dataset files:
   - `id_column` as the only column shared by `train.csv`, `test.csv`, and `sample_submission.csv`
   - `label_column` as the only column shared by `train.csv` and `sample_submission.csv` but not `test.csv`
+- Exclude the resolved `id_column` from modeled features by default; identifier columns are treated as metadata, not training signal.
 - Generate terminal and CSV EDA summaries under `reports/<competition_slug>/`, including missingness, categorical cardinality, target summary, and feature-type counts.
 - Build preprocessing artifacts under `artifacts/<competition_slug>/preprocess/`.
 - Train baseline cross-validated models with fold-local preprocessing:
@@ -50,13 +51,13 @@ Required keys:
 - `primary_metric`: one of `rmse`, `mse`, `rmsle`, `mae`, `roc_auc`, `log_loss`, `accuracy`
 
 Optional submission schema keys:
-- `id_column`: override for the inferred identifier column
+- `id_column`: override for the inferred identifier column; the resolved ID column is excluded from modeled features by default
 - `label_column`: override for the inferred submission/target column
 
 Optional preprocessing keys:
 - `force_categorical`: list of feature names to force into the categorical pipeline
 - `force_numeric`: list of feature names to force into the numeric pipeline
-- `drop_columns`: list of feature names to remove before preprocessing
+- `drop_columns`: additional feature names to remove before preprocessing after the ID column is already excluded by default
 - `low_cardinality_int_threshold`: integer columns at or below this unique-count threshold are treated as categorical by default
 
 Optional CV keys:
@@ -68,7 +69,7 @@ Optional submission keys:
 - `submit_enabled`: if `true`, submit to Kaggle after training (default `false`)
 - `submit_message_prefix`: optional prefix used in auto-generated submission messages
 
-If `id_column` or `label_column` are omitted, the pipeline infers them from `train.csv`, `test.csv`, and `sample_submission.csv`. Invalid overrides, ambiguous inference, or a `sample_submission.csv` shape that does not exactly match `[id_column, label_column]` are hard errors.
+If `id_column` or `label_column` are omitted, the pipeline infers them from `train.csv`, `test.csv`, and `sample_submission.csv`. The resolved `id_column` is preserved for prediction outputs and submission validation, but it is not part of the model feature matrix. Invalid overrides, ambiguous inference, or a `sample_submission.csv` shape that does not exactly match `[id_column, label_column]` are hard errors.
 
 `task_type` and `primary_metric` are always config-driven. The pipeline does not infer them from Kaggle metadata.
 
@@ -113,6 +114,7 @@ Manual verification for each target:
 - Kaggle CLI is installed, authenticated, and has access to the configured competition.
 - Competition zip contents include `train.csv`, `test.csv`, and `sample_submission.csv`.
 - The competition follows a simple two-column Playground submission contract: `sample_submission.csv` must be exactly `[id_column, label_column]`.
+- The resolved `id_column` is identifier metadata and is excluded from preprocessing and model fitting by default.
 - Binary classification supports any two-class labels accepted by scikit-learn; probability outputs are aligned to the resolved positive class.
 - `task_type` and `primary_metric` are explicitly configured for every run.
 - Runtime config comes from `config.yaml` only; there are no CLI or environment overrides.
