@@ -1,13 +1,14 @@
 import csv
 import json
 import subprocess
+from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
 
 import numpy as np
 import pandas as pd
 
-from tabular_shenanigans.data import load_competition_dataset_context
+from tabular_shenanigans.data import load_sample_submission_template, validate_sample_submission_schema
 
 SUBMISSION_LEDGER_COLUMNS = [
     "timestamp_utc",
@@ -19,6 +20,16 @@ SUBMISSION_LEDGER_COLUMNS = [
     "status",
     "message",
 ]
+
+
+@dataclass(frozen=True)
+class SubmissionRunContext:
+    run_id: str
+    competition_slug: str
+    task_type: str
+    id_column: str
+    label_column: str
+    config_fingerprint: str | None
 
 
 def _read_submission_ledger(ledger_path: Path) -> pd.DataFrame:
@@ -82,6 +93,35 @@ def _load_run_manifest(run_dir: Path) -> dict[str, object]:
     if not manifest_path.exists():
         raise ValueError(f"Missing run manifest: {manifest_path}")
     return json.loads(manifest_path.read_text(encoding="utf-8"))
+
+
+def _require_manifest_value(manifest: dict[str, object], field_name: str) -> object:
+    field_value = manifest.get(field_name)
+    if field_value is not None:
+        return field_value
+
+    config_snapshot = manifest.get("config_snapshot", {})
+    if isinstance(config_snapshot, dict):
+        field_value = config_snapshot.get(field_name)
+    if field_value is None:
+        raise ValueError(
+            f"Run manifest is missing required submission field '{field_name}'. "
+            "Submission requires a manifest-backed artifact contract."
+        )
+    return field_value
+
+
+def _load_submission_run_context(run_dir: Path) -> SubmissionRunContext:
+    manifest = _load_run_manifest(run_dir)
+    run_id = str(manifest["run_id"])
+    return SubmissionRunContext(
+        run_id=run_id,
+        competition_slug=str(_require_manifest_value(manifest, "competition_slug")),
+        task_type=str(_require_manifest_value(manifest, "task_type")),
+        id_column=str(_require_manifest_value(manifest, "id_column")),
+        label_column=str(_require_manifest_value(manifest, "label_column")),
+        config_fingerprint=manifest.get("config_fingerprint"),
+    )
 
 
 def _load_run_metadata(run_dir: Path) -> dict[str, object]:
@@ -164,26 +204,22 @@ def _validate_submission_ids(
 
 
 def prepare_submission_file(
-    competition_slug: str,
     run_dir: Path,
-    id_column: str | None = None,
-    label_column: str | None = None,
 ) -> Path:
     prediction_path = run_dir / "test_predictions.csv"
     if not prediction_path.exists():
         raise ValueError(f"Missing test predictions file: {prediction_path}")
 
     prediction_df = pd.read_csv(prediction_path)
-    dataset_context = load_competition_dataset_context(
-        competition_slug=competition_slug,
-        configured_id_column=id_column,
-        configured_label_column=label_column,
+    run_context = _load_submission_run_context(run_dir)
+    sample_submission_df = load_sample_submission_template(run_context.competition_slug)
+    validate_sample_submission_schema(
+        sample_submission_df=sample_submission_df,
+        id_column=run_context.id_column,
+        label_column=run_context.label_column,
     )
-    sample_submission_df = dataset_context.sample_submission_df
-    resolved_id_column = dataset_context.id_column
-    resolved_label_column = dataset_context.label_column
 
-    expected_columns = [resolved_id_column, resolved_label_column]
+    expected_columns = [run_context.id_column, run_context.label_column]
     actual_columns = prediction_df.columns.tolist()
 
     if actual_columns != expected_columns:
@@ -196,14 +232,8 @@ def prepare_submission_file(
             "Submission row count does not match sample_submission.csv. "
             f"Expected {sample_submission_df.shape[0]}, got {prediction_df.shape[0]}"
         )
-    manifest = _load_run_manifest(run_dir)
-    task_type = manifest.get("task_type")
-    if task_type is None:
-        config_snapshot = manifest.get("config_snapshot", {})
-        if isinstance(config_snapshot, dict):
-            task_type = config_snapshot.get("task_type")
-    if task_type == "binary":
-        prediction_values = prediction_df[resolved_label_column]
+    if run_context.task_type == "binary":
+        prediction_values = prediction_df[run_context.label_column]
         if not pd.api.types.is_numeric_dtype(prediction_values):
             raise ValueError("Binary submission predictions must be numeric probabilities.")
         if not prediction_values.map(pd.notna).all():
@@ -215,7 +245,7 @@ def prepare_submission_file(
     _validate_submission_ids(
         prediction_df=prediction_df,
         sample_submission_df=sample_submission_df,
-        id_column=resolved_id_column,
+        id_column=run_context.id_column,
     )
 
     submission_path = run_dir / "submission.csv"
@@ -235,21 +265,13 @@ def build_submission_message(run_dir: Path, submit_message_prefix: str | None = 
 
 
 def run_submission(
-    competition_slug: str,
     run_dir: Path,
     submit_enabled: bool,
     submit_message_prefix: str | None = None,
-    id_column: str | None = None,
-    label_column: str | None = None,
 ) -> tuple[Path, str]:
-    submission_path = prepare_submission_file(
-        competition_slug=competition_slug,
-        run_dir=run_dir,
-        id_column=id_column,
-        label_column=label_column,
-    )
+    run_context = _load_submission_run_context(run_dir)
+    submission_path = prepare_submission_file(run_dir=run_dir)
     message = build_submission_message(run_dir=run_dir, submit_message_prefix=submit_message_prefix)
-    run_metadata = _load_run_metadata(run_dir)
 
     if submit_enabled:
         completed = subprocess.run(
@@ -258,7 +280,7 @@ def run_submission(
                 "competitions",
                 "submit",
                 "-c",
-                competition_slug,
+                run_context.competition_slug,
                 "-f",
                 str(submission_path),
                 "-m",
@@ -279,15 +301,15 @@ def run_submission(
 
     ledger_row = {
         "timestamp_utc": datetime.now(timezone.utc).isoformat(),
-        "competition_slug": competition_slug,
-        "run_id": run_metadata["run_id"],
-        "config_fingerprint": run_metadata["config_fingerprint"],
+        "competition_slug": run_context.competition_slug,
+        "run_id": run_context.run_id,
+        "config_fingerprint": run_context.config_fingerprint,
         "submission_path": str(submission_path),
         "submit_enabled": submit_enabled,
         "status": status,
         "message": message,
     }
-    ledger_path = Path("artifacts") / competition_slug / "train" / "submissions.csv"
+    ledger_path = Path("artifacts") / run_context.competition_slug / "train" / "submissions.csv"
     _append_submission_ledger(ledger_path=ledger_path, row=ledger_row)
 
     return submission_path, status

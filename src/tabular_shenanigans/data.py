@@ -72,6 +72,25 @@ def read_csv_from_zip(zip_path: Path, member_name: str) -> pd.DataFrame:
             return pd.read_csv(f)
 
 
+def load_sample_submission_template(competition_slug: str) -> pd.DataFrame:
+    zip_path = find_competition_zip(competition_slug)
+    return read_csv_from_zip(zip_path, "sample_submission.csv")
+
+
+def validate_sample_submission_schema(
+    sample_submission_df: pd.DataFrame,
+    id_column: str,
+    label_column: str,
+) -> None:
+    expected_submission_columns = [id_column, label_column]
+    sample_submission_columns = sample_submission_df.columns.tolist()
+    if sample_submission_columns != expected_submission_columns:
+        raise ValueError(
+            "sample_submission.csv must match the resolved schema exactly. "
+            f"Expected columns {expected_submission_columns}, got {sample_submission_columns}"
+        )
+
+
 @dataclass(frozen=True)
 class CompetitionDatasetContext:
     train_df: pd.DataFrame
@@ -137,12 +156,11 @@ def resolve_id_and_label_columns(
             )
         label_column = label_candidates[0]
 
-    expected_submission_columns = [id_column, label_column]
-    if sample_submission_columns != expected_submission_columns:
-        raise ValueError(
-            "sample_submission.csv must match the resolved schema exactly. "
-            f"Expected columns {expected_submission_columns}, got {sample_submission_columns}"
-        )
+    validate_sample_submission_schema(
+        sample_submission_df=sample_submission_df,
+        id_column=id_column,
+        label_column=label_column,
+    )
 
     return id_column, label_column
 
@@ -155,7 +173,7 @@ def load_competition_dataset_context(
     zip_path = find_competition_zip(competition_slug)
     train_df = read_csv_from_zip(zip_path, "train.csv")
     test_df = read_csv_from_zip(zip_path, "test.csv")
-    sample_submission_df = read_csv_from_zip(zip_path, "sample_submission.csv")
+    sample_submission_df = load_sample_submission_template(competition_slug)
     id_column, label_column = resolve_id_and_label_columns(
         train_df=train_df,
         test_df=test_df,

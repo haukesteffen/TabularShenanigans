@@ -45,12 +45,9 @@ def main() -> None:
     )
     print(f"Training artifacts ready: {train_dir}")
     submission_path, submission_status = run_submission(
-        competition_slug=config.competition_slug,
         run_dir=train_dir,
         submit_enabled=config.submit_enabled,
         submit_message_prefix=config.submit_message_prefix,
-        id_column=config.id_column,
-        label_column=config.label_column,
     )
     print(f"Submission file ready: {submission_path} ({submission_status})")
 

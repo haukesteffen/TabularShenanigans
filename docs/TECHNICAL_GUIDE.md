@@ -18,12 +18,12 @@ The intended operating scope is Kaggle Playground Series tabular competitions. C
    - regression: `ElasticNet`
    - binary classification: `LogisticRegression`
 9. Write fold metrics, task-aware run diagnostics, OOF predictions, test predictions, and a canonical `run_manifest.json` under `artifacts/<competition_slug>/train/<run_id>/`.
-10. Validate predictions against `sample_submission.csv`, including exact ID content and order, write `submission.csv`, and optionally submit to Kaggle.
+10. Validate predictions against `sample_submission.csv`, including exact ID content and order, using `run_manifest.json` as the submission metadata contract, write `submission.csv`, and optionally submit to Kaggle.
 
 ## Module Responsibilities
 - `main.py`: orchestration entrypoint for config loading, data fetch, EDA, training, and submission.
 - `src/tabular_shenanigans/config.py`: Pydantic-backed config schema, metric normalization, and runtime contract validation.
-- `src/tabular_shenanigans/data.py`: competition download, zip access, metric helpers, and dataset schema resolution.
+- `src/tabular_shenanigans/data.py`: competition download, zip access, metric helpers, dataset schema resolution, and sample-submission template loading.
 - `src/tabular_shenanigans/eda.py`: competition-scan EDA summaries written to CSV, including missingness, categorical cardinality, target summary, and feature-type counts.
 - `src/tabular_shenanigans/preprocess.py`: feature frame preparation, column typing, and sklearn preprocessing pipelines.
 - `src/tabular_shenanigans/cv.py`: task-aware CV splitters and metric scoring helpers.
@@ -105,6 +105,7 @@ Manual verification steps for each target:
 - `id_column` inference must resolve to exactly one column present in `train.csv`, `test.csv`, and `sample_submission.csv`
 - The resolved `id_column` is identifier metadata and must be excluded from preprocessing and model fitting by default
 - `label_column` inference must resolve to exactly one column present in `train.csv` and `sample_submission.csv` but not `test.csv`
+- Submission must resolve `competition_slug`, `task_type`, `id_column`, and `label_column` from `run_manifest.json` rather than re-inferring them from raw train/test data
 - `sample_submission.csv` must match the resolved schema exactly as `[id_column, label_column]`
 - `test_predictions.csv[id_column]` must match `sample_submission.csv[id_column]` exactly in both values and row order
 - Feature override columns must exist and cannot overlap between forced numeric and forced categorical sets
