@@ -18,17 +18,17 @@ The repository is developed and manually verified primarily against these Playgr
 - Load and validate a single repository-root `config.yaml`.
 - Fetch Kaggle competition data into `data/<competition_slug>/` when the zip is missing.
 - Require explicit `task_type` and `primary_metric` in config.
-- Select one baseline model per run from config via `model_id`.
+- Select one or more baseline models per run from config via `model_ids`, with `model_id` retained as the single-model shorthand.
 - Infer Playground-style submission schema from dataset files:
   - `id_column` as the only column shared by `train.csv`, `test.csv`, and `sample_submission.csv`
   - `label_column` as the only column shared by `train.csv` and `sample_submission.csv` but not `test.csv`
 - Exclude the resolved `id_column` from modeled features by default; identifier columns are treated as metadata, not training signal.
 - Generate terminal and CSV EDA summaries under `reports/<competition_slug>/`, including missingness, categorical cardinality, target summary, and feature-type counts.
-- Train baseline cross-validated models with fold-local preprocessing:
+- Train one or more baseline cross-validated models with fold-local preprocessing:
   - regression: `elasticnet` (`ElasticNet`) or `random_forest` (`RandomForestRegressor`)
   - binary classification: `logistic_regression` (`LogisticRegression`) or `random_forest` (`RandomForestClassifier`)
-- Write fold metrics, task-aware run diagnostics, OOF predictions, test predictions, and a canonical `run_manifest.json` under `artifacts/<competition_slug>/train/<run_id>/`.
-- Validate predictions against `sample_submission.csv`, including exact ID content and order, and optionally submit to Kaggle from the selected run artifact contract.
+- Write a run-root `model_summary.csv`, task-aware run diagnostics, and a canonical `run_manifest.json` under `artifacts/<competition_slug>/train/<run_id>/`, with per-model prediction artifacts under `<run_id>/<model_id>/`.
+- Validate predictions against `sample_submission.csv`, including exact ID content and order, and optionally submit to Kaggle from the best model in the run or an explicitly selected model artifact.
 
 ## Tooling
 - Python for orchestration
@@ -54,9 +54,10 @@ Optional binary-classification key:
 - `positive_label`: explicit positive class for binary competitions; required unless the observed training labels follow one of the documented safe conventions: `[0, 1]`, `[False, True]`, or `["No", "Yes"]`
 
 Optional model-selection key:
-- `model_id`: baseline model preset for the configured task
-  - regression: `elasticnet` (default) or `random_forest`
-  - binary classification: `logistic_regression` (default) or `random_forest`
+- `model_ids`: ordered list of baseline model presets for the configured task
+- `model_id`: single-model shorthand retained for backward compatibility; mutually exclusive with `model_ids`
+  - regression: `elasticnet` (default), `random_forest`
+  - binary classification: `logistic_regression` (default), `random_forest`
 
 Optional submission schema keys:
 - `id_column`: override for the inferred identifier column; the resolved ID column is excluded from modeled features by default
@@ -79,7 +80,7 @@ Optional submission keys:
 
 If `id_column` or `label_column` are omitted, the training pipeline infers them from `train.csv`, `test.csv`, and `sample_submission.csv`. The resolved `id_column` is preserved for prediction outputs and in `run_manifest.json`, but it is not part of the model feature matrix. Submission preparation consumes the selected run manifest as the schema/task source of truth and uses `sample_submission.csv` only for validation. Invalid overrides, ambiguous inference, a `sample_submission.csv` shape that does not exactly match `[id_column, label_column]`, or a submission ID column that differs from `sample_submission.csv` in values or ordering are hard errors.
 
-`model_id` is config-driven. If omitted, the workflow selects the current default baseline for the configured task: `elasticnet` for regression and `logistic_regression` for binary classification.
+`model_ids` is the preferred config-driven model interface. If both `model_id` and `model_ids` are omitted, the workflow selects the current default baseline for the configured task: `elasticnet` for regression and `logistic_regression` for binary classification. If `model_id` is provided, it resolves to a single-entry `model_ids` list.
 
 `task_type` and `primary_metric` are always config-driven. The pipeline does not infer them from Kaggle metadata.
 
@@ -95,7 +96,9 @@ Example binary config:
 competition_slug: playground-series-s5e12
 task_type: binary
 primary_metric: roc_auc
-# model_id: random_forest
+model_ids:
+  - logistic_regression
+  - random_forest
 ```
 
 Example regression config:
@@ -104,20 +107,25 @@ Example regression config:
 competition_slug: playground-series-s5e10
 task_type: regression
 primary_metric: mse
-# model_id: random_forest
+model_ids:
+  - elasticnet
+  - random_forest
 ```
 
 Manual verification for each target:
 - confirm the competition archive includes `train.csv`, `test.csv`, and `sample_submission.csv`
 - confirm the pipeline infers `id_column` and `label_column` without overrides
-- confirm `artifacts/<competition_slug>/train/<run_id>/test_predictions.csv` is written
-- confirm `artifacts/<competition_slug>/train/<run_id>/submission.csv` is written and validated against `sample_submission.csv`, including exact ID values and order
+- confirm `artifacts/<competition_slug>/train/<run_id>/model_summary.csv` is written
+- confirm `artifacts/<competition_slug>/train/<run_id>/<model_id>/test_predictions.csv` is written for each selected model
+- confirm `artifacts/<competition_slug>/train/<run_id>/<model_id>/submission.csv` is written and validated against `sample_submission.csv`, including exact ID values and order, for the submitted model
 
 ## Outputs
 - Competition data: `data/<competition_slug>/`
 - EDA reports: `reports/<competition_slug>/`
 - Training artifacts: `artifacts/<competition_slug>/train/<run_id>/`
-  - includes `fold_metrics.csv`, `run_diagnostics.csv`, `oof_predictions.csv`, `test_predictions.csv`, and `run_manifest.json`
+  - includes `run_diagnostics.csv`, `model_summary.csv`, and `run_manifest.json`
+  - includes per-model subdirectories `artifacts/<competition_slug>/train/<run_id>/<model_id>/`
+  - each model subdirectory includes `fold_metrics.csv`, `oof_predictions.csv`, `test_predictions.csv`, and `submission.csv` when prepared or submitted
   - `run_manifest.json` is the canonical per-run metadata source
 - Run ledger: `artifacts/<competition_slug>/train/runs.csv` as a compact comparison/history table
 - Submission ledger: `artifacts/<competition_slug>/train/submissions.csv` as an append-only submission event table
@@ -128,8 +136,8 @@ Manual verification for each target:
 - The competition follows a simple two-column Playground submission contract: `sample_submission.csv` must be exactly `[id_column, label_column]`.
 - The resolved `id_column` is identifier metadata and is excluded from preprocessing and model fitting by default.
 - Submission uses `run_manifest.json` as the canonical source for `competition_slug`, `task_type`, `id_column`, and `label_column`.
-- Submission metadata includes the selected `model_id`.
-- Submission validation requires `test_predictions.csv[id_column]` to match `sample_submission.csv[id_column]` exactly in both values and row order.
+- Submission metadata includes the selected `model_id`; when no model is selected explicitly, submission defaults to the run manifest `best_model_id`.
+- Submission validation requires the selected model artifact `test_predictions.csv[id_column]` to match `sample_submission.csv[id_column]` exactly in both values and row order.
 - Binary classification supports any two-class labels accepted by scikit-learn; probability outputs are aligned to the resolved positive class.
 - Binary classification requires an explicit positive-class contract. If `positive_label` is omitted, the workflow only auto-resolves the positive class for labels `[0, 1]`, `[False, True]`, or `["No", "Yes"]`; other two-class label pairs fail fast.
 - `task_type` and `primary_metric` are explicitly configured for every run.

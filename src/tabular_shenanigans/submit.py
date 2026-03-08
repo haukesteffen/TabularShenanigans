@@ -122,7 +122,16 @@ def _infer_legacy_model_id(task_type: str, model_name: object | None) -> str | N
     return legacy_model_map.get((task_type, str(model_name)))
 
 
-def _resolve_manifest_model_id(manifest: dict[str, object]) -> str:
+def _load_manifest_models(manifest: dict[str, object]) -> list[dict[str, object]]:
+    manifest_models = manifest.get("models")
+    if manifest_models is None:
+        return []
+    if not isinstance(manifest_models, list) or not all(isinstance(model, dict) for model in manifest_models):
+        raise ValueError("Run manifest models must be a list of mappings.")
+    return manifest_models
+
+
+def _resolve_legacy_manifest_model_id(manifest: dict[str, object]) -> str:
     model_id = manifest.get("model_id")
     if model_id is None:
         config_snapshot = manifest.get("config_snapshot", {})
@@ -142,23 +151,88 @@ def _resolve_manifest_model_id(manifest: dict[str, object]) -> str:
     )
 
 
-def _load_submission_run_context(run_dir: Path) -> SubmissionRunContext:
+def _resolve_selected_model_id(
+    manifest: dict[str, object],
+    requested_model_id: str | None = None,
+) -> str:
+    manifest_models = _load_manifest_models(manifest)
+    if manifest_models:
+        available_model_ids = [str(model["model_id"]) for model in manifest_models]
+        if requested_model_id is not None:
+            if requested_model_id not in available_model_ids:
+                raise ValueError(
+                    f"Requested model_id '{requested_model_id}' is not present in the run manifest. "
+                    f"Available model_ids: {available_model_ids}"
+                )
+            return requested_model_id
+
+        best_model_id = manifest.get("best_model_id")
+        if best_model_id is None and len(available_model_ids) == 1:
+            return available_model_ids[0]
+        if best_model_id not in available_model_ids:
+            raise ValueError(
+                "Run manifest best_model_id must match one of the available model entries. "
+                f"Available model_ids: {available_model_ids}"
+            )
+        return str(best_model_id)
+
+    resolved_model_id = _resolve_legacy_manifest_model_id(manifest)
+    if requested_model_id is not None and requested_model_id != resolved_model_id:
+        raise ValueError(
+            f"Requested model_id '{requested_model_id}' does not match the legacy run model_id '{resolved_model_id}'."
+        )
+    return resolved_model_id
+
+
+def _load_submission_run_context(
+    run_dir: Path,
+    model_id: str | None = None,
+) -> SubmissionRunContext:
     manifest = _load_run_manifest(run_dir)
     run_id = str(manifest["run_id"])
+    selected_model_id = _resolve_selected_model_id(manifest, requested_model_id=model_id)
     return SubmissionRunContext(
         run_id=run_id,
         competition_slug=str(_require_manifest_value(manifest, "competition_slug")),
         task_type=str(_require_manifest_value(manifest, "task_type")),
-        model_id=_resolve_manifest_model_id(manifest),
+        model_id=selected_model_id,
         id_column=str(_require_manifest_value(manifest, "id_column")),
         label_column=str(_require_manifest_value(manifest, "label_column")),
         config_fingerprint=manifest.get("config_fingerprint"),
     )
 
 
-def _load_run_metadata(run_dir: Path) -> dict[str, object]:
+def _load_run_metadata(
+    run_dir: Path,
+    model_id: str | None = None,
+) -> dict[str, object]:
     manifest = _load_run_manifest(run_dir)
-    model_id = _resolve_manifest_model_id(manifest)
+    selected_model_id = _resolve_selected_model_id(manifest, requested_model_id=model_id)
+    manifest_models = _load_manifest_models(manifest)
+
+    if manifest_models:
+        selected_model = next(
+            (model for model in manifest_models if str(model["model_id"]) == selected_model_id),
+            None,
+        )
+        if selected_model is None:
+            raise ValueError(
+                f"Requested model_id '{selected_model_id}' is missing from the run manifest model entries."
+            )
+        cv_summary = selected_model.get("cv_summary")
+        if not isinstance(cv_summary, dict):
+            raise ValueError("Run manifest model cv_summary must be a mapping.")
+        return {
+            "run_id": str(manifest["run_id"]),
+            "model_id": selected_model_id,
+            "config_fingerprint": manifest.get("config_fingerprint"),
+            "model_name": str(selected_model["model_name"]),
+            "metric_name": str(cv_summary["metric_name"]),
+            "metric_mean": float(cv_summary["metric_mean"]),
+            "metric_std": float(cv_summary["metric_std"]) if cv_summary.get("metric_std") is not None else None,
+            "higher_is_better": cv_summary.get("higher_is_better"),
+        }
+
     model_name = manifest.get("model_name")
     cv_summary = manifest.get("cv_summary")
     if isinstance(cv_summary, dict):
@@ -169,7 +243,7 @@ def _load_run_metadata(run_dir: Path) -> dict[str, object]:
         if model_name is not None and metric_name is not None and metric_mean is not None:
             return {
                 "run_id": str(manifest["run_id"]),
-                "model_id": model_id,
+                "model_id": selected_model_id,
                 "config_fingerprint": manifest.get("config_fingerprint"),
                 "model_name": str(model_name),
                 "metric_name": str(metric_name),
@@ -185,7 +259,7 @@ def _load_run_metadata(run_dir: Path) -> dict[str, object]:
     resolved_model_name = model_name if model_name is not None else legacy_summary["model_name"]
     return {
         "run_id": str(manifest["run_id"]),
-        "model_id": model_id,
+        "model_id": selected_model_id,
         "config_fingerprint": manifest.get("config_fingerprint"),
         "model_name": str(resolved_model_name),
         "metric_name": str(legacy_summary["metric_name"]),
@@ -193,6 +267,26 @@ def _load_run_metadata(run_dir: Path) -> dict[str, object]:
         "metric_std": float(legacy_summary["metric_std"]),
         "higher_is_better": legacy_summary["higher_is_better"],
     }
+
+
+def _resolve_prediction_path(
+    run_dir: Path,
+    model_id: str,
+) -> Path:
+    manifest = _load_run_manifest(run_dir)
+    manifest_models = _load_manifest_models(manifest)
+    model_prediction_path = run_dir / model_id / "test_predictions.csv"
+    if model_prediction_path.exists():
+        return model_prediction_path
+
+    legacy_prediction_path = run_dir / "test_predictions.csv"
+    if not manifest_models and legacy_prediction_path.exists():
+        return legacy_prediction_path
+
+    raise ValueError(
+        "Missing test predictions file for submission. "
+        f"Checked {model_prediction_path} and {legacy_prediction_path}"
+    )
 
 
 def _validate_submission_ids(
@@ -240,13 +334,11 @@ def _validate_submission_ids(
 
 def prepare_submission_file(
     run_dir: Path,
+    model_id: str | None = None,
 ) -> Path:
-    prediction_path = run_dir / "test_predictions.csv"
-    if not prediction_path.exists():
-        raise ValueError(f"Missing test predictions file: {prediction_path}")
-
+    run_context = _load_submission_run_context(run_dir=run_dir, model_id=model_id)
+    prediction_path = _resolve_prediction_path(run_dir=run_dir, model_id=run_context.model_id)
     prediction_df = pd.read_csv(prediction_path)
-    run_context = _load_submission_run_context(run_dir)
     sample_submission_df = load_sample_submission_template(run_context.competition_slug)
     validate_sample_submission_schema(
         sample_submission_df=sample_submission_df,
@@ -283,13 +375,17 @@ def prepare_submission_file(
         id_column=run_context.id_column,
     )
 
-    submission_path = run_dir / "submission.csv"
+    submission_path = prediction_path.parent / "submission.csv"
     prediction_df.to_csv(submission_path, index=False)
     return submission_path
 
 
-def build_submission_message(run_dir: Path, submit_message_prefix: str | None = None) -> str:
-    run_metadata = _load_run_metadata(run_dir)
+def build_submission_message(
+    run_dir: Path,
+    submit_message_prefix: str | None = None,
+    model_id: str | None = None,
+) -> str:
+    run_metadata = _load_run_metadata(run_dir=run_dir, model_id=model_id)
     message_parts = []
     if submit_message_prefix:
         message_parts.append(submit_message_prefix.strip())
@@ -303,11 +399,16 @@ def run_submission(
     run_dir: Path,
     submit_enabled: bool,
     submit_message_prefix: str | None = None,
+    model_id: str | None = None,
 ) -> tuple[Path, str]:
-    run_context = _load_submission_run_context(run_dir)
-    run_metadata = _load_run_metadata(run_dir)
-    submission_path = prepare_submission_file(run_dir=run_dir)
-    message = build_submission_message(run_dir=run_dir, submit_message_prefix=submit_message_prefix)
+    run_context = _load_submission_run_context(run_dir=run_dir, model_id=model_id)
+    run_metadata = _load_run_metadata(run_dir=run_dir, model_id=model_id)
+    submission_path = prepare_submission_file(run_dir=run_dir, model_id=model_id)
+    message = build_submission_message(
+        run_dir=run_dir,
+        submit_message_prefix=submit_message_prefix,
+        model_id=model_id,
+    )
 
     if submit_enabled:
         completed = subprocess.run(

@@ -14,7 +14,7 @@ def main() -> None:
     config = load_config()
     print(
         "Resolved competition setup: "
-        f"task_type={config.task_type}, primary_metric={config.primary_metric}, model_id={config.model_id}"
+        f"task_type={config.task_type}, primary_metric={config.primary_metric}, model_ids={config.model_ids}"
     )
     data_dir = fetch_competition_data(config.competition_slug)
     print(f"Data ready: {data_dir}")
@@ -32,7 +32,7 @@ def main() -> None:
         competition_slug=config.competition_slug,
         task_type=config.task_type,
         primary_metric=config.primary_metric,
-        model_id=config.model_id,
+        model_ids=config.model_ids,
         positive_label=config.positive_label,
         id_column=config.id_column,
         label_column=config.label_column,
