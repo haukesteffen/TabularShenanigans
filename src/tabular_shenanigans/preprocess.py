@@ -1,15 +1,30 @@
+from dataclasses import dataclass
+from typing import Callable
+
 import pandas as pd
 from sklearn.compose import ColumnTransformer
 from sklearn.impute import SimpleImputer
 from sklearn.pipeline import Pipeline
-from sklearn.preprocessing import FunctionTransformer
-from sklearn.preprocessing import OneHotEncoder, StandardScaler
+from sklearn.preprocessing import FunctionTransformer, OneHotEncoder, OrdinalEncoder, StandardScaler
+
+PreprocessorBuilder = Callable[[list[str], list[str]], ColumnTransformer]
+
+
+@dataclass(frozen=True)
+class PreprocessingDefinition:
+    scheme_id: str
+    scheme_name: str
+    builder: PreprocessorBuilder
 
 
 def _validate_column_names(config_name: str, columns: list[str], available_columns: list[str]) -> None:
     missing_columns = [column for column in columns if column not in available_columns]
     if missing_columns:
         raise ValueError(f"{config_name} has unknown columns: {missing_columns}")
+
+
+def _coerce_object(frame: pd.DataFrame) -> pd.DataFrame:
+    return frame.astype(object)
 
 
 def _resolve_feature_types(
@@ -74,7 +89,92 @@ def prepare_feature_frames(
     return x_train_raw, x_test_raw, y_train
 
 
+def _build_linear_onehot_preprocessor(
+    numeric_columns: list[str],
+    categorical_columns: list[str],
+) -> ColumnTransformer:
+    numeric_pipeline = Pipeline(
+        steps=[
+            ("imputer", SimpleImputer(strategy="median")),
+            ("scaler", StandardScaler()),
+        ]
+    )
+
+    categorical_pipeline = Pipeline(
+        steps=[
+            ("coerce_object", FunctionTransformer(_coerce_object, feature_names_out="one-to-one")),
+            ("imputer", SimpleImputer(strategy="most_frequent")),
+            ("onehot", OneHotEncoder(handle_unknown="ignore", sparse_output=False)),
+        ]
+    )
+
+    transformers = []
+    if numeric_columns:
+        transformers.append(("num", numeric_pipeline, numeric_columns))
+    if categorical_columns:
+        transformers.append(("cat", categorical_pipeline, categorical_columns))
+    return ColumnTransformer(transformers=transformers, remainder="drop")
+
+
+def _build_ordinal_preprocessor(
+    numeric_columns: list[str],
+    categorical_columns: list[str],
+) -> ColumnTransformer:
+    numeric_pipeline = Pipeline(
+        steps=[
+            ("imputer", SimpleImputer(strategy="median")),
+        ]
+    )
+
+    categorical_pipeline = Pipeline(
+        steps=[
+            ("coerce_object", FunctionTransformer(_coerce_object, feature_names_out="one-to-one")),
+            ("imputer", SimpleImputer(strategy="most_frequent")),
+            (
+                "ordinal",
+                OrdinalEncoder(
+                    handle_unknown="use_encoded_value",
+                    unknown_value=-1,
+                    encoded_missing_value=-1,
+                ),
+            ),
+        ]
+    )
+
+    transformers = []
+    if numeric_columns:
+        transformers.append(("num", numeric_pipeline, numeric_columns))
+    if categorical_columns:
+        transformers.append(("cat", categorical_pipeline, categorical_columns))
+    return ColumnTransformer(transformers=transformers, remainder="drop")
+
+
+PREPROCESSING_REGISTRY = {
+    "onehot": PreprocessingDefinition(
+        scheme_id="onehot",
+        scheme_name="OneHotLinear",
+        builder=_build_linear_onehot_preprocessor,
+    ),
+    "ordinal": PreprocessingDefinition(
+        scheme_id="ordinal",
+        scheme_name="OrdinalTree",
+        builder=_build_ordinal_preprocessor,
+    ),
+}
+
+
+def get_preprocessing_definition(scheme_id: str) -> PreprocessingDefinition:
+    try:
+        return PREPROCESSING_REGISTRY[scheme_id]
+    except KeyError as exc:
+        supported_scheme_ids = sorted(PREPROCESSING_REGISTRY)
+        raise ValueError(
+            f"Unsupported preprocessing scheme '{scheme_id}'. Supported values: {supported_scheme_ids}"
+        ) from exc
+
+
 def build_preprocessor(
+    scheme_id: str,
     x_train_raw: pd.DataFrame,
     force_categorical: list[str] | None = None,
     force_numeric: list[str] | None = None,
@@ -90,36 +190,11 @@ def build_preprocessor(
         low_cardinality_int_threshold=low_cardinality_int_threshold,
     )
 
-    numeric_pipeline = Pipeline(
-        steps=[
-            ("imputer", SimpleImputer(strategy="median")),
-            ("scaler", StandardScaler()),
-        ]
-    )
-
-    categorical_pipeline = Pipeline(
-        steps=[
-            (
-                "coerce_object",
-                FunctionTransformer(
-                    lambda frame: frame.astype(object),
-                    feature_names_out="one-to-one",
-                ),
-            ),
-            ("imputer", SimpleImputer(strategy="most_frequent")),
-            ("onehot", OneHotEncoder(handle_unknown="ignore", sparse_output=False)),
-        ]
-    )
-
-    transformers = []
-    if numeric_columns:
-        transformers.append(("num", numeric_pipeline, numeric_columns))
-    if categorical_columns:
-        transformers.append(("cat", categorical_pipeline, categorical_columns))
-    if not transformers:
+    if not numeric_columns and not categorical_columns:
         raise ValueError("No modeled features remain after excluding id_column and applying drop_columns.")
 
-    preprocessor = ColumnTransformer(transformers=transformers, remainder="drop")
+    preprocessing_definition = get_preprocessing_definition(scheme_id)
+    preprocessor = preprocessing_definition.builder(numeric_columns, categorical_columns)
     return preprocessor, numeric_columns, categorical_columns
 
 

@@ -11,12 +11,12 @@ The intended operating scope is Kaggle Playground Series tabular competitions. C
 4. Read `train.csv`, `test.csv`, and `sample_submission.csv` from the zip as needed.
 5. Run EDA and write report CSVs under `reports/<competition_slug>/`.
 6. Resolve `id_column` and `label_column` from `train.csv`, `test.csv`, and `sample_submission.csv`, then prepare raw feature frames from the train/test data with the resolved `id_column` excluded from modeled features.
-7. During training, build fold-local preprocessing for the selected feature types:
-   - numeric: median imputation + `StandardScaler`
-   - categorical: most-frequent imputation + `OneHotEncoder`
+7. During training, build fold-local preprocessing from the selected model recipe:
+   - `onehot`: numeric median imputation + `StandardScaler`; categorical most-frequent imputation + `OneHotEncoder`
+   - `ordinal`: numeric median imputation; categorical most-frequent imputation + `OrdinalEncoder`
 8. Train the configured baseline model or models from the resolved `model_ids` list:
-   - regression: `elasticnet` (`ElasticNet`) or `random_forest` (`RandomForestRegressor`)
-   - binary classification: `logistic_regression` (`LogisticRegression`) or `random_forest` (`RandomForestClassifier`)
+   - regression: `onehot_ridge`, `onehot_elasticnet`, `ordinal_randomforest`, `ordinal_extratrees`, `ordinal_hgb`
+   - binary classification: `onehot_logreg`, `ordinal_randomforest`, `ordinal_extratrees`, `ordinal_hgb`
 9. Write run-level diagnostics, `model_summary.csv`, and a canonical `run_manifest.json` under `artifacts/<competition_slug>/train/<run_id>/`.
 10. Write per-model fold metrics, OOF predictions, and test predictions under `artifacts/<competition_slug>/train/<run_id>/<model_id>/`.
 11. Validate predictions against `sample_submission.csv`, including exact ID content and order, using `run_manifest.json` as the submission metadata contract, write `submission.csv` in the selected model directory, and optionally submit to Kaggle.
@@ -26,8 +26,8 @@ The intended operating scope is Kaggle Playground Series tabular competitions. C
 - `src/tabular_shenanigans/config.py`: Pydantic-backed config schema, metric normalization, and runtime contract validation.
 - `src/tabular_shenanigans/data.py`: competition download, zip access, metric helpers, dataset schema resolution, and sample-submission template loading.
 - `src/tabular_shenanigans/eda.py`: competition-scan EDA summaries written to CSV, including missingness, categorical cardinality, target summary, and feature-type counts.
-- `src/tabular_shenanigans/models.py`: single-model registry and estimator construction for supported baseline presets.
-- `src/tabular_shenanigans/preprocess.py`: feature frame preparation, column typing, and sklearn preprocessing pipelines.
+- `src/tabular_shenanigans/models.py`: model-recipe registry, compatibility alias resolution, and estimator construction for supported baseline presets.
+- `src/tabular_shenanigans/preprocess.py`: feature frame preparation, column typing, and scheme-specific sklearn preprocessing pipelines.
 - `src/tabular_shenanigans/cv.py`: task-aware CV splitters and metric scoring helpers.
 - `src/tabular_shenanigans/train.py`: config-selected multi-model training, shared split handling, artifact writing, and run ledger updates.
 - `src/tabular_shenanigans/submit.py`: submission schema validation, model-artifact selection, submission message creation, Kaggle submission, and submission ledger updates.
@@ -40,10 +40,11 @@ Input:
   - `task_type` (`regression` or `binary`)
   - `primary_metric` (`rmse`, `mse`, `rmsle`, `mae`, `roc_auc`, `log_loss`, `accuracy`)
 - Optional model-selection key:
-  - `model_ids` (ordered list of baseline model presets for the configured task)
+  - `model_ids` (ordered list of baseline model recipes for the configured task)
   - `model_id` (single-model shorthand; mutually exclusive with `model_ids`)
-    - regression: `elasticnet`, `random_forest`
-    - binary classification: `logistic_regression`, `random_forest`
+    - regression: `onehot_ridge`, `onehot_elasticnet`, `ordinal_randomforest`, `ordinal_extratrees`, `ordinal_hgb`
+    - binary classification: `onehot_logreg`, `ordinal_randomforest`, `ordinal_extratrees`, `ordinal_hgb`
+    - compatibility aliases accepted during transition: `elasticnet`, `logistic_regression`, `random_forest`
 - Optional binary-classification key:
   - `positive_label` (explicit positive class for binary competitions; required unless observed labels match one of the documented safe conventions `[0, 1]`, `[False, True]`, or `["No", "Yes"]`)
 - Optional submission schema keys:
@@ -100,6 +101,7 @@ Manual verification steps for each target:
     - `test_predictions.csv`
     - `submission.csv` when prepared or submitted
 - `run_manifest.json` is the canonical per-run metadata source
+- Each model entry in `model_summary.csv` and `run_manifest.json` records the resolved `preprocessing_scheme_id`
 - Training ledger at `artifacts/<competition_slug>/train/runs.csv` with compact comparison fields and task-aware target summary fields
 - Append-only submission ledger at `artifacts/<competition_slug>/train/submissions.csv` with submission event metadata only
 
@@ -109,6 +111,7 @@ Manual verification steps for each target:
 - `task_type` and `primary_metric` must be present in config for every run
 - `model_ids` is the preferred model-selection interface; `model_id` remains the single-model shorthand and the two keys are mutually exclusive
 - `model_ids` must resolve to one or more supported presets for the configured task; if omitted, the task default is used
+- Configured model IDs are normalized to canonical preprocessing-first recipe IDs during config loading
 - Kaggle CLI and authentication are expected to be preconfigured
 - Competition zip contents are expected to include `train.csv`, `test.csv`, and `sample_submission.csv`
 - Binary classification supports any two-class target labels; the positive class is resolved from the training target and used consistently for diagnostics, scoring, and probability extraction
@@ -165,6 +168,6 @@ Hard-error cases include:
 ## Extension Notes
 - New config keys should be added to `AppConfig` in `config.py` and documented in both this file and `README.md` when user-facing.
 - New metrics should be normalized and validated during config loading, then scored in `cv.py`.
-- New model families should be introduced in `models.py` with explicit task compatibility and matching artifact outputs.
-- New preprocessing modes should be added in `preprocess.py` without breaking the existing feature-frame contract.
+- New model families should be introduced in `models.py` with explicit task compatibility, canonical recipe IDs, and matching artifact outputs.
+- New preprocessing modes should be added in `preprocess.py` without breaking the existing feature-frame contract or the preprocessing-first recipe naming convention.
 - New run or submission artifacts should be reflected in both the artifact contract above and the corresponding ledger rows.
