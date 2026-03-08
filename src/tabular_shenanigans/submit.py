@@ -36,6 +36,49 @@ def _load_run_metadata(run_dir: Path) -> tuple[str, str, str, float]:
     return run_id, model_name, metric_name, metric_mean
 
 
+def _validate_submission_ids(
+    prediction_df: pd.DataFrame,
+    sample_submission_df: pd.DataFrame,
+    id_column: str,
+) -> None:
+    prediction_ids = prediction_df[id_column]
+    sample_ids = sample_submission_df[id_column]
+
+    if prediction_ids.duplicated().any():
+        duplicate_ids = prediction_ids[prediction_ids.duplicated(keep=False)].unique().tolist()
+        raise ValueError(
+            "Submission ID column contains duplicate values in test_predictions.csv. "
+            f"Duplicate IDs: {duplicate_ids[:10]}"
+        )
+
+    if sample_ids.duplicated().any():
+        duplicate_ids = sample_ids[sample_ids.duplicated(keep=False)].unique().tolist()
+        raise ValueError(
+            "sample_submission.csv ID column contains duplicate values. "
+            f"Duplicate IDs: {duplicate_ids[:10]}"
+        )
+
+    prediction_id_list = prediction_ids.tolist()
+    sample_id_list = sample_ids.tolist()
+    if prediction_id_list == sample_id_list:
+        return
+
+    prediction_id_set = set(prediction_id_list)
+    sample_id_set = set(sample_id_list)
+    if prediction_id_set == sample_id_set:
+        raise ValueError(
+            "Submission ID order does not match sample_submission.csv. "
+            "IDs contain the same values but appear in a different order."
+        )
+
+    missing_ids = sorted(sample_id_set - prediction_id_set)
+    extra_ids = sorted(prediction_id_set - sample_id_set)
+    raise ValueError(
+        "Submission ID values do not match sample_submission.csv. "
+        f"Missing IDs: {missing_ids[:10]}; extra IDs: {extra_ids[:10]}"
+    )
+
+
 def prepare_submission_file(
     competition_slug: str,
     run_dir: Path,
@@ -72,6 +115,11 @@ def prepare_submission_file(
             "Submission row count does not match sample_submission.csv. "
             f"Expected {sample_submission_df.shape[0]}, got {prediction_df.shape[0]}"
         )
+    _validate_submission_ids(
+        prediction_df=prediction_df,
+        sample_submission_df=sample_submission_df,
+        id_column=resolved_id_column,
+    )
 
     submission_path = run_dir / "submission.csv"
     prediction_df.to_csv(submission_path, index=False)

@@ -28,7 +28,7 @@ The repository is developed and manually verified primarily against these Playgr
   - regression: `ElasticNet`
   - binary classification: `LogisticRegression`
 - Write fold metrics, CV summary, task-aware run diagnostics, OOF predictions, test predictions, and a run manifest under `artifacts/<competition_slug>/train/<run_id>/`.
-- Validate predictions against `sample_submission.csv` and optionally submit to Kaggle.
+- Validate predictions against `sample_submission.csv`, including exact ID content and order, and optionally submit to Kaggle.
 
 ## Tooling
 - Python for orchestration
@@ -69,7 +69,7 @@ Optional submission keys:
 - `submit_enabled`: if `true`, submit to Kaggle after training (default `false`)
 - `submit_message_prefix`: optional prefix used in auto-generated submission messages
 
-If `id_column` or `label_column` are omitted, the pipeline infers them from `train.csv`, `test.csv`, and `sample_submission.csv`. The resolved `id_column` is preserved for prediction outputs and submission validation, but it is not part of the model feature matrix. Invalid overrides, ambiguous inference, or a `sample_submission.csv` shape that does not exactly match `[id_column, label_column]` are hard errors.
+If `id_column` or `label_column` are omitted, the pipeline infers them from `train.csv`, `test.csv`, and `sample_submission.csv`. The resolved `id_column` is preserved for prediction outputs and submission validation, but it is not part of the model feature matrix. Invalid overrides, ambiguous inference, a `sample_submission.csv` shape that does not exactly match `[id_column, label_column]`, or a submission ID column that differs from `sample_submission.csv` in values or ordering are hard errors.
 
 `task_type` and `primary_metric` are always config-driven. The pipeline does not infer them from Kaggle metadata.
 
@@ -99,7 +99,7 @@ Manual verification for each target:
 - confirm the competition archive includes `train.csv`, `test.csv`, and `sample_submission.csv`
 - confirm the pipeline infers `id_column` and `label_column` without overrides
 - confirm `artifacts/<competition_slug>/train/<run_id>/test_predictions.csv` is written
-- confirm `artifacts/<competition_slug>/train/<run_id>/submission.csv` is written and validated against `sample_submission.csv`
+- confirm `artifacts/<competition_slug>/train/<run_id>/submission.csv` is written and validated against `sample_submission.csv`, including exact ID values and order
 
 ## Outputs
 - Competition data: `data/<competition_slug>/`
@@ -115,6 +115,7 @@ Manual verification for each target:
 - Competition zip contents include `train.csv`, `test.csv`, and `sample_submission.csv`.
 - The competition follows a simple two-column Playground submission contract: `sample_submission.csv` must be exactly `[id_column, label_column]`.
 - The resolved `id_column` is identifier metadata and is excluded from preprocessing and model fitting by default.
+- Submission validation requires `test_predictions.csv[id_column]` to match `sample_submission.csv[id_column]` exactly in both values and row order.
 - Binary classification supports any two-class labels accepted by scikit-learn; probability outputs are aligned to the resolved positive class.
 - `task_type` and `primary_metric` are explicitly configured for every run.
 - Runtime config comes from `config.yaml` only; there are no CLI or environment overrides.
