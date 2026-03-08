@@ -27,7 +27,7 @@ The repository is developed and manually verified primarily against these Playgr
   - regression: `ElasticNet`
   - binary classification: `LogisticRegression`
 - Write fold metrics, task-aware run diagnostics, OOF predictions, test predictions, and a canonical `run_manifest.json` under `artifacts/<competition_slug>/train/<run_id>/`.
-- Validate predictions against `sample_submission.csv`, including exact ID content and order, and optionally submit to Kaggle.
+- Validate predictions against `sample_submission.csv`, including exact ID content and order, and optionally submit to Kaggle from the selected run artifact contract.
 
 ## Tooling
 - Python for orchestration
@@ -71,7 +71,7 @@ Optional submission keys:
 - `submit_enabled`: if `true`, submit to Kaggle after training (default `false`)
 - `submit_message_prefix`: optional prefix used in auto-generated submission messages
 
-If `id_column` or `label_column` are omitted, the pipeline infers them from `train.csv`, `test.csv`, and `sample_submission.csv`. The resolved `id_column` is preserved for prediction outputs and submission validation, but it is not part of the model feature matrix. Invalid overrides, ambiguous inference, a `sample_submission.csv` shape that does not exactly match `[id_column, label_column]`, or a submission ID column that differs from `sample_submission.csv` in values or ordering are hard errors.
+If `id_column` or `label_column` are omitted, the training pipeline infers them from `train.csv`, `test.csv`, and `sample_submission.csv`. The resolved `id_column` is preserved for prediction outputs and in `run_manifest.json`, but it is not part of the model feature matrix. Submission preparation consumes the selected run manifest as the schema/task source of truth and uses `sample_submission.csv` only for validation. Invalid overrides, ambiguous inference, a `sample_submission.csv` shape that does not exactly match `[id_column, label_column]`, or a submission ID column that differs from `sample_submission.csv` in values or ordering are hard errors.
 
 `task_type` and `primary_metric` are always config-driven. The pipeline does not infer them from Kaggle metadata.
 
@@ -117,6 +117,7 @@ Manual verification for each target:
 - Competition zip contents include `train.csv`, `test.csv`, and `sample_submission.csv`.
 - The competition follows a simple two-column Playground submission contract: `sample_submission.csv` must be exactly `[id_column, label_column]`.
 - The resolved `id_column` is identifier metadata and is excluded from preprocessing and model fitting by default.
+- Submission uses `run_manifest.json` as the canonical source for `competition_slug`, `task_type`, `id_column`, and `label_column`.
 - Submission validation requires `test_predictions.csv[id_column]` to match `sample_submission.csv[id_column]` exactly in both values and row order.
 - Binary classification supports any two-class labels accepted by scikit-learn; probability outputs are aligned to the resolved positive class.
 - Binary classification requires an explicit positive-class contract. If `positive_label` is omitted, the workflow only auto-resolves the positive class for labels `[0, 1]`, `[False, True]`, or `["No", "Yes"]`; other two-class label pairs fail fast.
