@@ -1,3 +1,4 @@
+import csv
 import json
 import subprocess
 from datetime import datetime, timezone
@@ -8,33 +9,72 @@ import pandas as pd
 
 from tabular_shenanigans.data import load_competition_dataset_context
 
+SUBMISSION_LEDGER_COLUMNS = [
+    "timestamp_utc",
+    "competition_slug",
+    "run_id",
+    "config_fingerprint",
+    "submission_path",
+    "submit_enabled",
+    "status",
+    "message",
+]
+
+
+def _read_submission_ledger(ledger_path: Path) -> pd.DataFrame:
+    with ledger_path.open(encoding="utf-8", newline="") as ledger_file:
+        rows = list(csv.reader(ledger_file))
+
+    if not rows:
+        return pd.DataFrame()
+
+    header = rows[0]
+    if not header:
+        return pd.DataFrame()
+
+    max_column_count = max(len(row) for row in rows[1:]) if len(rows) > 1 else len(header)
+    normalized_header = header.copy()
+    legacy_extra_columns = ["positive_label", "negative_label"]
+    while len(normalized_header) < max_column_count:
+        extra_index = len(normalized_header) - len(header)
+        if extra_index < len(legacy_extra_columns):
+            normalized_header.append(legacy_extra_columns[extra_index])
+        else:
+            normalized_header.append(f"extra_col_{extra_index - len(legacy_extra_columns) + 1}")
+
+    normalized_rows = []
+    for row in rows[1:]:
+        padded_row = row + [""] * (len(normalized_header) - len(row))
+        normalized_rows.append(dict(zip(normalized_header, padded_row)))
+    return pd.DataFrame(normalized_rows, columns=normalized_header)
+
 
 def _append_submission_ledger(ledger_path: Path, row: dict[str, object]) -> None:
     ledger_df = pd.DataFrame([row])
+    ledger_df = ledger_df.reindex(columns=SUBMISSION_LEDGER_COLUMNS)
     if ledger_path.exists():
-        ledger_df.to_csv(ledger_path, mode="a", header=False, index=False)
+        existing_df = _read_submission_ledger(ledger_path)
+        merged_df = pd.concat([existing_df, ledger_df], ignore_index=True, sort=False)
+        merged_df = merged_df.reindex(columns=SUBMISSION_LEDGER_COLUMNS)
+        merged_df.to_csv(ledger_path, index=False)
         return
     ledger_df.to_csv(ledger_path, index=False)
 
 
-def _load_run_metadata(run_dir: Path) -> tuple[str, str, str, float]:
-    manifest_path = run_dir / "run_manifest.json"
-    if not manifest_path.exists():
-        raise ValueError(f"Missing run manifest: {manifest_path}")
-    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
-    run_id = str(manifest["run_id"])
-
+def _load_legacy_cv_summary(run_dir: Path) -> dict[str, object]:
     summary_path = run_dir / "cv_summary.csv"
     if not summary_path.exists():
         raise ValueError(f"Missing CV summary: {summary_path}")
     summary_df = pd.read_csv(summary_path)
     if summary_df.shape[0] != 1:
         raise ValueError(f"Expected exactly one row in CV summary, got {summary_df.shape[0]}")
-
-    model_name = str(summary_df.loc[0, "model_name"])
-    metric_name = str(summary_df.loc[0, "metric_name"])
-    metric_mean = float(summary_df.loc[0, "metric_mean"])
-    return run_id, model_name, metric_name, metric_mean
+    return {
+        "model_name": str(summary_df.loc[0, "model_name"]),
+        "metric_name": str(summary_df.loc[0, "metric_name"]),
+        "metric_mean": float(summary_df.loc[0, "metric_mean"]),
+        "metric_std": float(summary_df.loc[0, "metric_std"]),
+        "higher_is_better": bool(summary_df.loc[0, "higher_is_better"]),
+    }
 
 
 def _load_run_manifest(run_dir: Path) -> dict[str, object]:
@@ -42,6 +82,42 @@ def _load_run_manifest(run_dir: Path) -> dict[str, object]:
     if not manifest_path.exists():
         raise ValueError(f"Missing run manifest: {manifest_path}")
     return json.loads(manifest_path.read_text(encoding="utf-8"))
+
+
+def _load_run_metadata(run_dir: Path) -> dict[str, object]:
+    manifest = _load_run_manifest(run_dir)
+    model_name = manifest.get("model_name")
+    cv_summary = manifest.get("cv_summary")
+    if isinstance(cv_summary, dict):
+        metric_name = cv_summary.get("metric_name")
+        metric_mean = cv_summary.get("metric_mean")
+        metric_std = cv_summary.get("metric_std")
+        higher_is_better = cv_summary.get("higher_is_better")
+        if model_name is not None and metric_name is not None and metric_mean is not None:
+            return {
+                "run_id": str(manifest["run_id"]),
+                "config_fingerprint": manifest.get("config_fingerprint"),
+                "model_name": str(model_name),
+                "metric_name": str(metric_name),
+                "metric_mean": float(metric_mean),
+                "metric_std": float(metric_std) if metric_std is not None else None,
+                "higher_is_better": higher_is_better,
+            }
+
+    config_snapshot = manifest.get("config_snapshot", {})
+    if model_name is None and isinstance(config_snapshot, dict):
+        model_name = config_snapshot.get("model_name")
+    legacy_summary = _load_legacy_cv_summary(run_dir)
+    resolved_model_name = model_name if model_name is not None else legacy_summary["model_name"]
+    return {
+        "run_id": str(manifest["run_id"]),
+        "config_fingerprint": manifest.get("config_fingerprint"),
+        "model_name": str(resolved_model_name),
+        "metric_name": str(legacy_summary["metric_name"]),
+        "metric_mean": float(legacy_summary["metric_mean"]),
+        "metric_std": float(legacy_summary["metric_std"]),
+        "higher_is_better": legacy_summary["higher_is_better"],
+    }
 
 
 def _validate_submission_ids(
@@ -148,13 +224,13 @@ def prepare_submission_file(
 
 
 def build_submission_message(run_dir: Path, submit_message_prefix: str | None = None) -> str:
-    run_id, model_name, metric_name, metric_mean = _load_run_metadata(run_dir)
+    run_metadata = _load_run_metadata(run_dir)
     message_parts = []
     if submit_message_prefix:
         message_parts.append(submit_message_prefix.strip())
-    message_parts.append(f"run={run_id}")
-    message_parts.append(f"model={model_name}")
-    message_parts.append(f"{metric_name}={metric_mean:.6f}")
+    message_parts.append(f"run={run_metadata['run_id']}")
+    message_parts.append(f"model={run_metadata['model_name']}")
+    message_parts.append(f"{run_metadata['metric_name']}={run_metadata['metric_mean']:.6f}")
     return " | ".join(message_parts)
 
 
@@ -173,7 +249,7 @@ def run_submission(
         label_column=label_column,
     )
     message = build_submission_message(run_dir=run_dir, submit_message_prefix=submit_message_prefix)
-    run_id, model_name, metric_name, metric_mean = _load_run_metadata(run_dir)
+    run_metadata = _load_run_metadata(run_dir)
 
     if submit_enabled:
         completed = subprocess.run(
@@ -204,18 +280,13 @@ def run_submission(
     ledger_row = {
         "timestamp_utc": datetime.now(timezone.utc).isoformat(),
         "competition_slug": competition_slug,
-        "run_id": run_id,
+        "run_id": run_metadata["run_id"],
+        "config_fingerprint": run_metadata["config_fingerprint"],
         "submission_path": str(submission_path),
         "submit_enabled": submit_enabled,
         "status": status,
         "message": message,
-        "model_name": model_name,
-        "metric_name": metric_name,
-        "metric_mean": metric_mean,
     }
-    manifest = _load_run_manifest(run_dir)
-    ledger_row["positive_label"] = manifest.get("positive_label")
-    ledger_row["negative_label"] = manifest.get("negative_label")
     ledger_path = Path("artifacts") / competition_slug / "train" / "submissions.csv"
     _append_submission_ledger(ledger_path=ledger_path, row=ledger_row)
 
