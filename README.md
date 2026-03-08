@@ -18,15 +18,16 @@ The repository is developed and manually verified primarily against these Playgr
 - Load and validate a single repository-root `config.yaml`.
 - Fetch Kaggle competition data into `data/<competition_slug>/` when the zip is missing.
 - Require explicit `task_type` and `primary_metric` in config.
-- Select one or more baseline model recipes per run from config via `model_ids`, with `model_id` retained as the single-model shorthand.
+- Select one or more baseline or booster model recipes per run from config via `model_ids`, with `model_id` retained as the single-model shorthand.
 - Infer Playground-style submission schema from dataset files:
   - `id_column` as the only column shared by `train.csv`, `test.csv`, and `sample_submission.csv`
   - `label_column` as the only column shared by `train.csv` and `sample_submission.csv` but not `test.csv`
 - Exclude the resolved `id_column` from modeled features by default; identifier columns are treated as metadata, not training signal.
 - Generate terminal and CSV EDA summaries under `reports/<competition_slug>/`, including missingness, categorical cardinality, target summary, and feature-type counts.
-- Train one or more baseline cross-validated model recipes with fold-local, model-specific preprocessing:
+- Train one or more cross-validated model recipes with fold-local, model-specific preprocessing:
   - `onehot` preprocessing: `onehot_ridge`, `onehot_elasticnet`, `onehot_logreg`
-  - `ordinal` preprocessing: `ordinal_randomforest`, `ordinal_extratrees`, `ordinal_hgb`
+  - `ordinal` preprocessing: `ordinal_randomforest`, `ordinal_extratrees`, `ordinal_hgb`, `ordinal_lightgbm`, `ordinal_xgboost`
+  - `native` preprocessing: `native_catboost`
 - Write a run-root `model_summary.csv`, task-aware run diagnostics, and a canonical `run_manifest.json` under `artifacts/<competition_slug>/train/<run_id>/`, with per-model prediction artifacts under `<run_id>/<model_id>/`.
 - Validate predictions against `sample_submission.csv`, including exact ID content and order, and optionally submit to Kaggle from the best model in the run or an explicitly selected model artifact.
 
@@ -39,10 +40,11 @@ The repository is developed and manually verified primarily against these Playgr
 ## Quickstart
 1. Ensure Kaggle CLI access is already configured for your user.
 2. Install dependencies with `uv sync`.
-3. Keep a project `config.yaml` at repository root with explicit `competition_slug`, `task_type`, and `primary_metric`.
-4. Run `uv run python main.py`.
+3. If you want LightGBM, CatBoost, or XGBoost model recipes, install the optional booster dependencies with `uv sync --extra boosters`.
+4. Keep a project `config.yaml` at repository root with explicit `competition_slug`, `task_type`, and `primary_metric`.
+5. Run `uv run python main.py`.
 
-The current pipeline fetches competition data if needed, runs config-aware EDA, trains one or more baseline CV model recipes with fold-local preprocessing and task-aware diagnostics, writes prediction artifacts, and prepares a validated submission file.
+The current pipeline fetches competition data if needed, runs config-aware EDA, trains one or more CV model recipes with fold-local preprocessing and task-aware diagnostics, writes prediction artifacts, and prepares a validated submission file.
 
 ## Config Overview
 Required keys:
@@ -56,9 +58,9 @@ Optional binary-classification key:
 Optional model-selection key:
 - `model_ids`: ordered list of baseline model recipes for the configured task
 - `model_id`: single-model shorthand retained for backward compatibility; mutually exclusive with `model_ids`
-  - regression: `onehot_ridge`, `onehot_elasticnet` (default), `ordinal_randomforest`, `ordinal_extratrees`, `ordinal_hgb`
-  - binary classification: `onehot_logreg` (default), `ordinal_randomforest`, `ordinal_extratrees`, `ordinal_hgb`
-  - compatibility aliases accepted during transition: `elasticnet`, `logistic_regression`, `random_forest`
+  - regression: `onehot_ridge`, `onehot_elasticnet` (default), `ordinal_randomforest`, `ordinal_extratrees`, `ordinal_hgb`, `ordinal_lightgbm`, `native_catboost`, `ordinal_xgboost`
+  - binary classification: `onehot_logreg` (default), `ordinal_randomforest`, `ordinal_extratrees`, `ordinal_hgb`, `ordinal_lightgbm`, `native_catboost`, `ordinal_xgboost`
+  - compatibility aliases accepted during transition: `elasticnet`, `logistic_regression`, `random_forest`, `lightgbm`, `catboost`, `xgb`
 
 Optional submission schema keys:
 - `id_column`: override for the inferred identifier column; the resolved ID column is excluded from modeled features by default
@@ -69,6 +71,10 @@ Optional preprocessing keys:
 - `force_numeric`: list of feature names to force into the numeric pipeline
 - `drop_columns`: additional feature names to remove before preprocessing after the ID column is already excluded by default
 - `low_cardinality_int_threshold`: integer columns at or below this unique-count threshold are treated as categorical by default
+
+Model preprocessing notes:
+- `native_catboost` preserves a pandas feature frame and uses CatBoost native categorical handling.
+- `ordinal_lightgbm` and `ordinal_xgboost` reuse the repository ordinal categorical path.
 
 Optional CV keys:
 - `cv_n_splits`: number of CV folds (default `7`)
@@ -99,8 +105,9 @@ task_type: binary
 primary_metric: roc_auc
 model_ids:
   - onehot_logreg
-  - ordinal_hgb
-  - ordinal_randomforest
+  - ordinal_lightgbm
+  - native_catboost
+  - ordinal_xgboost
 ```
 
 Example regression config:
@@ -111,8 +118,9 @@ task_type: regression
 primary_metric: mse
 model_ids:
   - onehot_ridge
-  - onehot_elasticnet
-  - ordinal_hgb
+  - ordinal_lightgbm
+  - native_catboost
+  - ordinal_xgboost
 ```
 
 Manual verification for each target:

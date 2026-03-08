@@ -7,7 +7,7 @@ from sklearn.impute import SimpleImputer
 from sklearn.pipeline import Pipeline
 from sklearn.preprocessing import FunctionTransformer, OneHotEncoder, OrdinalEncoder, StandardScaler
 
-PreprocessorBuilder = Callable[[list[str], list[str]], ColumnTransformer]
+PreprocessorBuilder = Callable[[list[str], list[str], list[str]], object]
 
 
 @dataclass(frozen=True)
@@ -54,6 +54,55 @@ def _resolve_feature_types(
     return ordered_numeric_columns, categorical_columns
 
 
+class NativeFramePreprocessor:
+    CATEGORICAL_MISSING_VALUE = "__missing__"
+
+    def __init__(
+        self,
+        feature_columns: list[str],
+        numeric_columns: list[str],
+        categorical_columns: list[str],
+    ) -> None:
+        self.feature_columns = feature_columns
+        self.numeric_columns = numeric_columns
+        self.categorical_columns = categorical_columns
+        self.numeric_fill_values: pd.Series | None = None
+
+    def fit(self, frame: pd.DataFrame) -> "NativeFramePreprocessor":
+        if self.numeric_columns:
+            self.numeric_fill_values = frame.loc[:, self.numeric_columns].median()
+        else:
+            self.numeric_fill_values = pd.Series(dtype=float)
+        return self
+
+    def transform(self, frame: pd.DataFrame) -> pd.DataFrame:
+        transformed_frame = frame.loc[:, self.feature_columns].copy()
+
+        if self.numeric_columns:
+            transformed_frame.loc[:, self.numeric_columns] = transformed_frame.loc[:, self.numeric_columns].fillna(
+                self.numeric_fill_values
+            )
+
+        if self.categorical_columns:
+            transformed_frame = transformed_frame.astype(
+                {column: object for column in self.categorical_columns},
+                copy=False,
+            )
+            categorical_frame = transformed_frame.loc[:, self.categorical_columns].astype(object)
+            categorical_frame = categorical_frame.where(
+                categorical_frame.notna(),
+                self.CATEGORICAL_MISSING_VALUE,
+            )
+            categorical_frame = categorical_frame.astype(str)
+            for column in self.categorical_columns:
+                transformed_frame.loc[:, column] = categorical_frame.loc[:, column]
+
+        return transformed_frame
+
+    def fit_transform(self, frame: pd.DataFrame) -> pd.DataFrame:
+        return self.fit(frame).transform(frame)
+
+
 def prepare_feature_frames(
     train_df: pd.DataFrame,
     test_df: pd.DataFrame,
@@ -90,9 +139,11 @@ def prepare_feature_frames(
 
 
 def _build_linear_onehot_preprocessor(
+    feature_columns: list[str],
     numeric_columns: list[str],
     categorical_columns: list[str],
 ) -> ColumnTransformer:
+    del feature_columns
     numeric_pipeline = Pipeline(
         steps=[
             ("imputer", SimpleImputer(strategy="median")),
@@ -117,9 +168,11 @@ def _build_linear_onehot_preprocessor(
 
 
 def _build_ordinal_preprocessor(
+    feature_columns: list[str],
     numeric_columns: list[str],
     categorical_columns: list[str],
 ) -> ColumnTransformer:
+    del feature_columns
     numeric_pipeline = Pipeline(
         steps=[
             ("imputer", SimpleImputer(strategy="median")),
@@ -149,6 +202,18 @@ def _build_ordinal_preprocessor(
     return ColumnTransformer(transformers=transformers, remainder="drop")
 
 
+def _build_native_preprocessor(
+    feature_columns: list[str],
+    numeric_columns: list[str],
+    categorical_columns: list[str],
+) -> NativeFramePreprocessor:
+    return NativeFramePreprocessor(
+        feature_columns=feature_columns,
+        numeric_columns=numeric_columns,
+        categorical_columns=categorical_columns,
+    )
+
+
 PREPROCESSING_REGISTRY = {
     "onehot": PreprocessingDefinition(
         scheme_id="onehot",
@@ -159,6 +224,11 @@ PREPROCESSING_REGISTRY = {
         scheme_id="ordinal",
         scheme_name="OrdinalTree",
         builder=_build_ordinal_preprocessor,
+    ),
+    "native": PreprocessingDefinition(
+        scheme_id="native",
+        scheme_name="NativeFrame",
+        builder=_build_native_preprocessor,
     ),
 }
 
@@ -194,7 +264,11 @@ def build_preprocessor(
         raise ValueError("No modeled features remain after excluding id_column and applying drop_columns.")
 
     preprocessing_definition = get_preprocessing_definition(scheme_id)
-    preprocessor = preprocessing_definition.builder(numeric_columns, categorical_columns)
+    preprocessor = preprocessing_definition.builder(
+        x_train_raw.columns.tolist(),
+        numeric_columns,
+        categorical_columns,
+    )
     return preprocessor, numeric_columns, categorical_columns
 
 
