@@ -1,13 +1,9 @@
-from datetime import datetime, timezone
-from pathlib import Path
-
 import pandas as pd
 from sklearn.compose import ColumnTransformer
 from sklearn.impute import SimpleImputer
 from sklearn.pipeline import Pipeline
 from sklearn.preprocessing import FunctionTransformer
 from sklearn.preprocessing import OneHotEncoder, StandardScaler
-from tabular_shenanigans.data import find_competition_zip, read_csv_from_zip, resolve_id_and_label_columns
 
 
 def _validate_column_names(config_name: str, columns: list[str], available_columns: list[str]) -> None:
@@ -150,83 +146,3 @@ def summarize_feature_types(
             {"feature_type": "total", "feature_count": int(x_train_raw.shape[1])},
         ]
     )
-
-
-def run_preprocessing(
-    competition_slug: str,
-    id_column: str | None = None,
-    label_column: str | None = None,
-    force_categorical: list[str] | None = None,
-    force_numeric: list[str] | None = None,
-    drop_columns: list[str] | None = None,
-    low_cardinality_int_threshold: int | None = None,
-) -> Path:
-    zip_path = find_competition_zip(competition_slug)
-    train_df = read_csv_from_zip(zip_path, "train.csv")
-    test_df = read_csv_from_zip(zip_path, "test.csv")
-    sample_submission_df = read_csv_from_zip(zip_path, "sample_submission.csv")
-    id_column, label_column = resolve_id_and_label_columns(
-        train_df=train_df,
-        test_df=test_df,
-        sample_submission_df=sample_submission_df,
-        configured_id_column=id_column,
-        configured_label_column=label_column,
-    )
-
-    force_categorical = force_categorical or []
-    force_numeric = force_numeric or []
-    drop_columns = drop_columns or []
-
-    x_train_raw, x_test_raw, y_train = prepare_feature_frames(
-        train_df=train_df,
-        test_df=test_df,
-        id_column=id_column,
-        label_column=label_column,
-        force_categorical=force_categorical,
-        force_numeric=force_numeric,
-        drop_columns=drop_columns,
-    )
-
-    preprocessor, numeric_columns, categorical_columns = build_preprocessor(
-        x_train_raw=x_train_raw,
-        force_categorical=force_categorical,
-        force_numeric=force_numeric,
-        low_cardinality_int_threshold=low_cardinality_int_threshold,
-    )
-
-    x_train_processed = preprocessor.fit_transform(x_train_raw)
-    x_test_processed = preprocessor.transform(x_test_raw)
-    feature_names = preprocessor.get_feature_names_out().tolist()
-
-    artifact_dir = Path("artifacts") / competition_slug / "preprocess"
-    artifact_dir.mkdir(parents=True, exist_ok=True)
-
-    x_train_df = pd.DataFrame(x_train_processed, columns=feature_names)
-    x_test_df = pd.DataFrame(x_test_processed, columns=feature_names)
-
-    x_train_df.to_csv(artifact_dir / "X_train_processed.csv", index=False)
-    x_test_df.to_csv(artifact_dir / "X_test_processed.csv", index=False)
-    y_train.to_frame(name=label_column).to_csv(artifact_dir / "y_train.csv", index=False)
-
-    summary_df = pd.DataFrame(
-        [
-            {"metric": "generated_at_utc", "value": datetime.now(timezone.utc).isoformat()},
-            {"metric": "id_column", "value": id_column},
-            {"metric": "label_column", "value": label_column},
-            {"metric": "train_rows", "value": int(x_train_df.shape[0])},
-            {"metric": "train_cols", "value": int(x_train_df.shape[1])},
-            {"metric": "test_rows", "value": int(x_test_df.shape[0])},
-            {"metric": "test_cols", "value": int(x_test_df.shape[1])},
-            {"metric": "numeric_feature_count", "value": len(numeric_columns)},
-            {"metric": "categorical_feature_count", "value": len(categorical_columns)},
-            {"metric": "model_feature_count", "value": int(x_train_raw.shape[1])},
-            {"metric": "config_drop_column_count", "value": len(drop_columns)},
-            {"metric": "excluded_id_column", "value": id_column},
-        ]
-    )
-    summary_df.to_csv(artifact_dir / "preprocess_summary.csv", index=False)
-
-    print(f"Preprocessed train shape: {x_train_df.shape[0]} rows x {x_train_df.shape[1]} cols")
-    print(f"Preprocessed test shape: {x_test_df.shape[0]} rows x {x_test_df.shape[1]} cols")
-
-    return artifact_dir

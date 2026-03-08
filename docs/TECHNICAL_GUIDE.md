@@ -11,17 +11,17 @@ The intended operating scope is Kaggle Playground Series tabular competitions. C
 4. Read `train.csv`, `test.csv`, and `sample_submission.csv` from the zip as needed.
 5. Run EDA and write report CSVs under `reports/<competition_slug>/`.
 6. Resolve `id_column` and `label_column` from `train.csv`, `test.csv`, and `sample_submission.csv`, then prepare raw feature frames from the train/test data with the resolved `id_column` excluded from modeled features.
-7. Build preprocessing for the selected feature types:
+7. During training, build fold-local preprocessing for the selected feature types:
    - numeric: median imputation + `StandardScaler`
    - categorical: most-frequent imputation + `OneHotEncoder`
-8. Train the baseline model with fold-local preprocessing:
+8. Train the baseline model:
    - regression: `ElasticNet`
    - binary classification: `LogisticRegression`
 9. Write fold metrics, CV summary, task-aware run diagnostics, OOF predictions, test predictions, and a run manifest under `artifacts/<competition_slug>/train/<run_id>/`.
 10. Validate predictions against `sample_submission.csv`, including exact ID content and order, write `submission.csv`, and optionally submit to Kaggle.
 
 ## Module Responsibilities
-- `main.py`: orchestration entrypoint for config loading, data fetch, EDA, preprocessing, training, and submission.
+- `main.py`: orchestration entrypoint for config loading, data fetch, EDA, training, and submission.
 - `src/tabular_shenanigans/config.py`: Pydantic-backed config schema, metric normalization, and runtime contract validation.
 - `src/tabular_shenanigans/data.py`: competition download, zip access, metric helpers, and dataset schema resolution.
 - `src/tabular_shenanigans/eda.py`: competition-scan EDA summaries written to CSV, including missingness, categorical cardinality, target summary, and feature-type counts.
@@ -82,7 +82,6 @@ Manual verification steps for each target:
   - `target_summary.csv`
   - `feature_type_counts.csv`
   - `run_summary.csv`
-- Preprocessed feature/target CSV files under `artifacts/<competition_slug>/preprocess/`
 - Training artifacts under `artifacts/<competition_slug>/train/<run_id>/`:
   - `fold_metrics.csv`
   - `cv_summary.csv`
