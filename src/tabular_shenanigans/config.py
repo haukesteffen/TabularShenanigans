@@ -19,6 +19,7 @@ class AppConfig(BaseModel):
     task_type: Literal["regression", "binary"]
     primary_metric: str
     model_id: str | None = None
+    model_ids: list[str] | None = None
     positive_label: str | int | bool | None = None
     id_column: str | None = None
     label_column: str | None = None
@@ -45,14 +46,35 @@ class AppConfig(BaseModel):
                 f"Configured primary_metric '{normalized_primary_metric}' is not valid for task_type '{self.task_type}'."
             )
         self.primary_metric = normalized_primary_metric
-        resolved_model_id = self.model_id or get_default_model_id(self.task_type)
-        if not is_model_id_valid_for_task(self.task_type, resolved_model_id):
-            supported_model_ids = get_supported_model_ids(self.task_type)
+
+        if self.model_id is not None and self.model_ids is not None:
+            raise ValueError("model_id and model_ids are mutually exclusive. Use only one of them.")
+
+        if self.model_ids is not None:
+            if not self.model_ids:
+                raise ValueError("model_ids must contain at least one model_id.")
+            resolved_model_ids = self.model_ids
+        elif self.model_id is not None:
+            resolved_model_ids = [self.model_id]
+        else:
+            resolved_model_ids = [get_default_model_id(self.task_type)]
+
+        if len(set(resolved_model_ids)) != len(resolved_model_ids):
+            raise ValueError(f"model_ids must not contain duplicates: {resolved_model_ids}")
+
+        supported_model_ids = get_supported_model_ids(self.task_type)
+        invalid_model_ids = [
+            model_id for model_id in resolved_model_ids if not is_model_id_valid_for_task(self.task_type, model_id)
+        ]
+        if invalid_model_ids:
             raise ValueError(
-                f"Configured model_id '{resolved_model_id}' is not valid for task_type '{self.task_type}'. "
+                f"Configured model_ids {invalid_model_ids} are not valid for task_type '{self.task_type}'. "
                 f"Supported model_ids: {supported_model_ids}"
             )
-        self.model_id = resolved_model_id
+
+        self.model_ids = resolved_model_ids
+        self.model_id = resolved_model_ids[0] if len(resolved_model_ids) == 1 else None
+
         if self.task_type != "binary" and self.positive_label is not None:
             raise ValueError("positive_label is only supported for binary task_type.")
         return self

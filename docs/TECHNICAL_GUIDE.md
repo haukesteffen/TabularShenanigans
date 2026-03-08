@@ -14,11 +14,12 @@ The intended operating scope is Kaggle Playground Series tabular competitions. C
 7. During training, build fold-local preprocessing for the selected feature types:
    - numeric: median imputation + `StandardScaler`
    - categorical: most-frequent imputation + `OneHotEncoder`
-8. Train the configured baseline model:
+8. Train the configured baseline model or models from the resolved `model_ids` list:
    - regression: `elasticnet` (`ElasticNet`) or `random_forest` (`RandomForestRegressor`)
    - binary classification: `logistic_regression` (`LogisticRegression`) or `random_forest` (`RandomForestClassifier`)
-9. Write fold metrics, task-aware run diagnostics, OOF predictions, test predictions, and a canonical `run_manifest.json` under `artifacts/<competition_slug>/train/<run_id>/`.
-10. Validate predictions against `sample_submission.csv`, including exact ID content and order, using `run_manifest.json` as the submission metadata contract, write `submission.csv`, and optionally submit to Kaggle.
+9. Write run-level diagnostics, `model_summary.csv`, and a canonical `run_manifest.json` under `artifacts/<competition_slug>/train/<run_id>/`.
+10. Write per-model fold metrics, OOF predictions, and test predictions under `artifacts/<competition_slug>/train/<run_id>/<model_id>/`.
+11. Validate predictions against `sample_submission.csv`, including exact ID content and order, using `run_manifest.json` as the submission metadata contract, write `submission.csv` in the selected model directory, and optionally submit to Kaggle.
 
 ## Module Responsibilities
 - `main.py`: orchestration entrypoint for config loading, data fetch, EDA, training, and submission.
@@ -28,8 +29,8 @@ The intended operating scope is Kaggle Playground Series tabular competitions. C
 - `src/tabular_shenanigans/models.py`: single-model registry and estimator construction for supported baseline presets.
 - `src/tabular_shenanigans/preprocess.py`: feature frame preparation, column typing, and sklearn preprocessing pipelines.
 - `src/tabular_shenanigans/cv.py`: task-aware CV splitters and metric scoring helpers.
-- `src/tabular_shenanigans/train.py`: config-selected model training, fold training, artifact writing, and run ledger updates.
-- `src/tabular_shenanigans/submit.py`: submission schema validation, submission message creation, Kaggle submission, and submission ledger updates.
+- `src/tabular_shenanigans/train.py`: config-selected multi-model training, shared split handling, artifact writing, and run ledger updates.
+- `src/tabular_shenanigans/submit.py`: submission schema validation, model-artifact selection, submission message creation, Kaggle submission, and submission ledger updates.
 
 ## Configuration Contract
 Input:
@@ -39,7 +40,8 @@ Input:
   - `task_type` (`regression` or `binary`)
   - `primary_metric` (`rmse`, `mse`, `rmsle`, `mae`, `roc_auc`, `log_loss`, `accuracy`)
 - Optional model-selection key:
-  - `model_id` (baseline model preset for the configured task; defaults to `elasticnet` for regression and `logistic_regression` for binary classification)
+  - `model_ids` (ordered list of baseline model presets for the configured task)
+  - `model_id` (single-model shorthand; mutually exclusive with `model_ids`)
     - regression: `elasticnet`, `random_forest`
     - binary classification: `logistic_regression`, `random_forest`
 - Optional binary-classification key:
@@ -70,10 +72,11 @@ Configured metrics are normalized to the internal metric names during config val
 
 Manual verification steps for each target:
 - verify the competition assets include `train.csv`, `test.csv`, and `sample_submission.csv`
-- run the workflow from a clean repo state with explicit `task_type` and `primary_metric`
+- run the workflow from a clean repo state with explicit `task_type`, `primary_metric`, and one or more selected models
 - confirm inferred `id_column` and `label_column`
-- confirm `test_predictions.csv` is generated in the run directory
-- confirm `submission.csv` validates against `sample_submission.csv`, including exact ID values and order
+- confirm `model_summary.csv` is generated in the run directory
+- confirm `test_predictions.csv` is generated in each model directory
+- confirm `submission.csv` validates against `sample_submission.csv`, including exact ID values and order, for the selected model directory
 
 ## Artifact Contract
 - A validated in-memory config object from Pydantic
@@ -88,22 +91,24 @@ Manual verification steps for each target:
   - `feature_type_counts.csv`
   - `run_summary.csv`
 - Training artifacts under `artifacts/<competition_slug>/train/<run_id>/`:
-  - `fold_metrics.csv`
   - `run_diagnostics.csv`
-  - `oof_predictions.csv`
-  - `test_predictions.csv`
+  - `model_summary.csv`
   - `run_manifest.json`
+  - per-model subdirectories `artifacts/<competition_slug>/train/<run_id>/<model_id>/` containing:
+    - `fold_metrics.csv`
+    - `oof_predictions.csv`
+    - `test_predictions.csv`
+    - `submission.csv` when prepared or submitted
 - `run_manifest.json` is the canonical per-run metadata source
 - Training ledger at `artifacts/<competition_slug>/train/runs.csv` with compact comparison fields and task-aware target summary fields
-- Submission artifact in each run dir:
-  - `submission.csv`
 - Append-only submission ledger at `artifacts/<competition_slug>/train/submissions.csv` with submission event metadata only
 
 ## Runtime Invariants And Failure Behavior
 - One runtime config source only: `config.yaml`
 - No config overrides via CLI or environment variables
 - `task_type` and `primary_metric` must be present in config for every run
-- `model_id` must resolve to a supported preset for the configured task; if omitted, the task default is used
+- `model_ids` is the preferred model-selection interface; `model_id` remains the single-model shorthand and the two keys are mutually exclusive
+- `model_ids` must resolve to one or more supported presets for the configured task; if omitted, the task default is used
 - Kaggle CLI and authentication are expected to be preconfigured
 - Competition zip contents are expected to include `train.csv`, `test.csv`, and `sample_submission.csv`
 - Binary classification supports any two-class target labels; the positive class is resolved from the training target and used consistently for diagnostics, scoring, and probability extraction
@@ -112,8 +117,9 @@ Manual verification steps for each target:
 - The resolved `id_column` is identifier metadata and must be excluded from preprocessing and model fitting by default
 - `label_column` inference must resolve to exactly one column present in `train.csv` and `sample_submission.csv` but not `test.csv`
 - Submission must resolve `competition_slug`, `task_type`, `id_column`, and `label_column` from `run_manifest.json` rather than re-inferring them from raw train/test data
+- Multi-model submission must default to `best_model_id` unless a specific `model_id` is requested explicitly
 - `sample_submission.csv` must match the resolved schema exactly as `[id_column, label_column]`
-- `test_predictions.csv[id_column]` must match `sample_submission.csv[id_column]` exactly in both values and row order
+- The selected model artifact `test_predictions.csv[id_column]` must match `sample_submission.csv[id_column]` exactly in both values and row order
 - Feature override columns must exist and cannot overlap between forced numeric and forced categorical sets
 - Configured metric must normalize to a supported metric compatible with the configured task type
 - CV splitter construction must support both `cv_shuffle=true` and `cv_shuffle=false`
@@ -128,7 +134,8 @@ Hard-error cases include:
 - Missing `task_type` or `primary_metric` -> hard error
 - Unknown/unsupported configured `primary_metric` -> hard error
 - Invalid task/metric pairing (for example `binary` + `rmse`) -> hard error
-- Invalid `model_id` for the configured task -> hard error
+- Invalid `model_id` or `model_ids` for the configured task -> hard error
+- Empty or duplicate `model_ids` -> hard error
 - Missing/invalid competition zip contents -> hard error
 - `id_column` inference not exactly one column -> hard error
 - `label_column` inference not exactly one column -> hard error
@@ -141,6 +148,7 @@ Hard-error cases include:
 - Unsupported metric for chosen task -> hard error
 - Any CV/training fit or scoring failure -> hard error
 - Fold assignment gaps in OOF generation -> hard error
+- Requested submission `model_id` not present in the run manifest -> hard error
 - Submission schema or ID mismatch against `sample_submission.csv` -> hard error
 - Kaggle submission command failure when `submit_enabled=true` -> hard error
 

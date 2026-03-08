@@ -1,6 +1,9 @@
 competition_slug: playground-series-s5e12
 task_type: binary
 primary_metric: roc_auc
+# model_ids:
+#   - logistic_regression
+#   - random_forest
 # model_id: random_forest
 # positive_label: "Yes"
 # Optional runtime settings.
