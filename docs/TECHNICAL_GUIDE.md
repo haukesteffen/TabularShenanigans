@@ -14,9 +14,10 @@ The intended operating scope is Kaggle Playground Series tabular competitions. C
 7. During training, build fold-local preprocessing from the selected model recipe:
    - `onehot`: numeric median imputation + `StandardScaler`; categorical most-frequent imputation + `OneHotEncoder`
    - `ordinal`: numeric median imputation; categorical most-frequent imputation + `OrdinalEncoder`
+   - `native`: numeric median imputation inside a pandas frame; categorical missing-value fill with native categorical columns preserved for CatBoost
 8. Train the configured baseline model or models from the resolved `model_ids` list:
-   - regression: `onehot_ridge`, `onehot_elasticnet`, `ordinal_randomforest`, `ordinal_extratrees`, `ordinal_hgb`
-   - binary classification: `onehot_logreg`, `ordinal_randomforest`, `ordinal_extratrees`, `ordinal_hgb`
+   - regression: `onehot_ridge`, `onehot_elasticnet`, `ordinal_randomforest`, `ordinal_extratrees`, `ordinal_hgb`, `ordinal_lightgbm`, `native_catboost`, `ordinal_xgboost`
+   - binary classification: `onehot_logreg`, `ordinal_randomforest`, `ordinal_extratrees`, `ordinal_hgb`, `ordinal_lightgbm`, `native_catboost`, `ordinal_xgboost`
 9. Write run-level diagnostics, `model_summary.csv`, and a canonical `run_manifest.json` under `artifacts/<competition_slug>/train/<run_id>/`.
 10. Write per-model fold metrics, OOF predictions, and test predictions under `artifacts/<competition_slug>/train/<run_id>/<model_id>/`.
 11. Validate predictions against `sample_submission.csv`, including exact ID content and order, using `run_manifest.json` as the submission metadata contract, write `submission.csv` in the selected model directory, and optionally submit to Kaggle.
@@ -26,8 +27,8 @@ The intended operating scope is Kaggle Playground Series tabular competitions. C
 - `src/tabular_shenanigans/config.py`: Pydantic-backed config schema, metric normalization, and runtime contract validation.
 - `src/tabular_shenanigans/data.py`: competition download, zip access, metric helpers, dataset schema resolution, and sample-submission template loading.
 - `src/tabular_shenanigans/eda.py`: competition-scan EDA summaries written to CSV, including missingness, categorical cardinality, target summary, and feature-type counts.
-- `src/tabular_shenanigans/models.py`: model-recipe registry, compatibility alias resolution, and estimator construction for supported baseline presets.
-- `src/tabular_shenanigans/preprocess.py`: feature frame preparation, column typing, and scheme-specific sklearn preprocessing pipelines.
+- `src/tabular_shenanigans/models.py`: model-recipe registry, compatibility alias resolution, optional booster loading, and estimator construction for supported presets.
+- `src/tabular_shenanigans/preprocess.py`: feature frame preparation, column typing, and scheme-specific preprocessing pipelines, including native-frame support for CatBoost.
 - `src/tabular_shenanigans/cv.py`: task-aware CV splitters and metric scoring helpers.
 - `src/tabular_shenanigans/train.py`: config-selected multi-model training, shared split handling, artifact writing, and run ledger updates.
 - `src/tabular_shenanigans/submit.py`: submission schema validation, model-artifact selection, submission message creation, Kaggle submission, and submission ledger updates.
@@ -42,9 +43,9 @@ Input:
 - Optional model-selection key:
   - `model_ids` (ordered list of baseline model recipes for the configured task)
   - `model_id` (single-model shorthand; mutually exclusive with `model_ids`)
-    - regression: `onehot_ridge`, `onehot_elasticnet`, `ordinal_randomforest`, `ordinal_extratrees`, `ordinal_hgb`
-    - binary classification: `onehot_logreg`, `ordinal_randomforest`, `ordinal_extratrees`, `ordinal_hgb`
-    - compatibility aliases accepted during transition: `elasticnet`, `logistic_regression`, `random_forest`
+    - regression: `onehot_ridge`, `onehot_elasticnet`, `ordinal_randomforest`, `ordinal_extratrees`, `ordinal_hgb`, `ordinal_lightgbm`, `native_catboost`, `ordinal_xgboost`
+    - binary classification: `onehot_logreg`, `ordinal_randomforest`, `ordinal_extratrees`, `ordinal_hgb`, `ordinal_lightgbm`, `native_catboost`, `ordinal_xgboost`
+    - compatibility aliases accepted during transition: `elasticnet`, `logistic_regression`, `random_forest`, `lightgbm`, `catboost`, `xgb`
 - Optional binary-classification key:
   - `positive_label` (explicit positive class for binary competitions; required unless observed labels match one of the documented safe conventions `[0, 1]`, `[False, True]`, or `["No", "Yes"]`)
 - Optional submission schema keys:
@@ -65,6 +66,7 @@ Input:
 
 The config is validated by Pydantic with `extra="forbid"`. Unknown keys, schema mismatches, and missing required fields are hard errors.
 Configured metrics are normalized to the internal metric names during config validation.
+LightGBM, CatBoost, and XGBoost require the optional booster dependencies installed via `uv sync --extra boosters`.
 
 ## Preferred Verification Targets
 - `playground-series-s5e12`: binary development smoke test with `task_type: binary` and `primary_metric: roc_auc`
@@ -112,6 +114,7 @@ Manual verification steps for each target:
 - `model_ids` is the preferred model-selection interface; `model_id` remains the single-model shorthand and the two keys are mutually exclusive
 - `model_ids` must resolve to one or more supported presets for the configured task; if omitted, the task default is used
 - Configured model IDs are normalized to canonical preprocessing-first recipe IDs during config loading
+- `native_catboost` must preserve categorical feature positions through preprocessing so CatBoost can receive `cat_features`
 - Kaggle CLI and authentication are expected to be preconfigured
 - Competition zip contents are expected to include `train.csv`, `test.csv`, and `sample_submission.csv`
 - Binary classification supports any two-class target labels; the positive class is resolved from the training target and used consistently for diagnostics, scoring, and probability extraction

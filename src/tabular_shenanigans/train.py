@@ -8,7 +8,7 @@ import pandas as pd
 
 from tabular_shenanigans.cv import build_splitter, is_higher_better, resolve_positive_label, score_predictions
 from tabular_shenanigans.data import load_competition_dataset_context
-from tabular_shenanigans.models import build_model
+from tabular_shenanigans.models import build_model, build_model_fit_kwargs
 from tabular_shenanigans.preprocess import build_preprocessor, prepare_feature_frames
 
 RUN_LEDGER_COLUMNS = [
@@ -270,6 +270,7 @@ def _train_single_model(
     oof_predictions = np.zeros(x_train_raw.shape[0], dtype=float)
     test_predictions_per_fold: list[np.ndarray] = []
     fold_metrics: list[dict[str, object]] = []
+    use_named_columns = model_name.startswith("LGBM")
 
     for fold_index, train_idx, valid_idx in split_indices:
         x_fold_train = x_train_raw.iloc[train_idx]
@@ -277,19 +278,32 @@ def _train_single_model(
         y_fold_train = y_train.iloc[train_idx]
         y_fold_valid = y_train.iloc[valid_idx]
 
-        preprocessor, _, _ = build_preprocessor(
+        preprocessor, numeric_columns, categorical_columns = build_preprocessor(
             scheme_id=preprocessing_scheme_id,
             x_train_raw=x_fold_train,
             force_categorical=force_categorical,
             force_numeric=force_numeric,
             low_cardinality_int_threshold=low_cardinality_int_threshold,
         )
+        if use_named_columns and hasattr(preprocessor, "set_output"):
+            preprocessor.set_output(transform="pandas")
         x_fold_train_processed = preprocessor.fit_transform(x_fold_train)
         x_fold_valid_processed = preprocessor.transform(x_fold_valid)
         x_test_processed = preprocessor.transform(x_test_raw)
 
+        if preprocessing_scheme_id != "native" and not use_named_columns:
+            x_fold_train_processed = np.asarray(x_fold_train_processed)
+            x_fold_valid_processed = np.asarray(x_fold_valid_processed)
+            x_test_processed = np.asarray(x_test_processed)
+
         _, model, _ = build_model(task_type, resolved_model_id, cv_random_state)
-        model.fit(x_fold_train_processed, y_fold_train)
+        model_fit_kwargs = build_model_fit_kwargs(
+            model_definition=model_definition,
+            x_train_processed=x_fold_train_processed,
+            numeric_columns=numeric_columns,
+            categorical_columns=categorical_columns,
+        )
+        model.fit(x_fold_train_processed, y_fold_train, **model_fit_kwargs)
 
         if task_type == "binary":
             if positive_label is None or negative_label is None:

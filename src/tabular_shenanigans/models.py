@@ -1,6 +1,9 @@
 from dataclasses import dataclass
 from typing import Callable
 
+import numpy as np
+import pandas as pd
+
 from sklearn.ensemble import (
     ExtraTreesClassifier,
     ExtraTreesRegressor,
@@ -12,6 +15,7 @@ from sklearn.ensemble import (
 from sklearn.linear_model import ElasticNet, LogisticRegression, Ridge
 
 ModelBuilder = Callable[[int], tuple[object, dict[str, object]]]
+FitKwargsBuilder = Callable[[object, list[str], list[str]], dict[str, object]]
 
 
 @dataclass(frozen=True)
@@ -20,6 +24,39 @@ class ModelDefinition:
     model_name: str
     preprocessing_scheme_id: str
     builder: ModelBuilder
+    fit_kwargs_builder: FitKwargsBuilder | None = None
+
+
+class BinaryLabelEncodingClassifier:
+    def __init__(self, estimator: object) -> None:
+        self.estimator = estimator
+        self.classes_: np.ndarray | None = None
+        self._class_to_encoded_value: dict[object, int] = {}
+
+    def fit(self, x_train: object, y_train: pd.Series, **fit_kwargs: object) -> "BinaryLabelEncodingClassifier":
+        observed_classes = pd.unique(y_train)
+        if len(observed_classes) != 2:
+            raise ValueError(
+                "BinaryLabelEncodingClassifier requires exactly two unique labels. "
+                f"Observed labels: {list(observed_classes)!r}"
+            )
+        self.classes_ = np.asarray(observed_classes, dtype=object)
+        self._class_to_encoded_value = {
+            class_value: encoded_value for encoded_value, class_value in enumerate(self.classes_)
+        }
+        encoded_labels = y_train.map(self._class_to_encoded_value).astype(int)
+        self.estimator.fit(x_train, encoded_labels, **fit_kwargs)
+        return self
+
+    def predict(self, x_values: object) -> np.ndarray:
+        if self.classes_ is None:
+            raise ValueError("BinaryLabelEncodingClassifier must be fit before predict.")
+        predicted_labels = self.estimator.predict(x_values)
+        predicted_indices = np.asarray(predicted_labels, dtype=int)
+        return self.classes_[predicted_indices]
+
+    def predict_proba(self, x_values: object) -> np.ndarray:
+        return self.estimator.predict_proba(x_values)
 
 
 def _build_ridge(random_state: int) -> tuple[Ridge, dict[str, object]]:
@@ -82,6 +119,152 @@ def _build_hist_gradient_boosting_classifier(
     return HistGradientBoostingClassifier(**params), params
 
 
+def _build_lightgbm_regressor(random_state: int) -> tuple[object, dict[str, object]]:
+    try:
+        from lightgbm import LGBMRegressor
+    except ImportError as exc:
+        raise ImportError(
+            "LightGBM support requires the optional boosters dependencies. "
+            "Install them with `uv sync --extra boosters`."
+        ) from exc
+
+    params = {
+        "colsample_bytree": 0.8,
+        "learning_rate": 0.05,
+        "n_estimators": 500,
+        "n_jobs": -1,
+        "random_state": random_state,
+        "subsample": 0.8,
+        "verbosity": -1,
+    }
+    return LGBMRegressor(**params), params
+
+
+def _build_lightgbm_classifier(random_state: int) -> tuple[object, dict[str, object]]:
+    try:
+        from lightgbm import LGBMClassifier
+    except ImportError as exc:
+        raise ImportError(
+            "LightGBM support requires the optional boosters dependencies. "
+            "Install them with `uv sync --extra boosters`."
+        ) from exc
+
+    params = {
+        "colsample_bytree": 0.8,
+        "learning_rate": 0.05,
+        "n_estimators": 500,
+        "n_jobs": -1,
+        "random_state": random_state,
+        "subsample": 0.8,
+        "verbosity": -1,
+    }
+    return LGBMClassifier(**params), params
+
+
+def _build_catboost_regressor(random_state: int) -> tuple[object, dict[str, object]]:
+    try:
+        from catboost import CatBoostRegressor
+    except ImportError as exc:
+        raise ImportError(
+            "CatBoost support requires the optional boosters dependencies. "
+            "Install them with `uv sync --extra boosters`."
+        ) from exc
+
+    params = {
+        "allow_writing_files": False,
+        "depth": 6,
+        "iterations": 500,
+        "learning_rate": 0.05,
+        "loss_function": "RMSE",
+        "random_seed": random_state,
+        "thread_count": -1,
+        "verbose": False,
+    }
+    return CatBoostRegressor(**params), params
+
+
+def _build_catboost_classifier(random_state: int) -> tuple[object, dict[str, object]]:
+    try:
+        from catboost import CatBoostClassifier
+    except ImportError as exc:
+        raise ImportError(
+            "CatBoost support requires the optional boosters dependencies. "
+            "Install them with `uv sync --extra boosters`."
+        ) from exc
+
+    params = {
+        "allow_writing_files": False,
+        "depth": 6,
+        "iterations": 500,
+        "learning_rate": 0.05,
+        "loss_function": "Logloss",
+        "random_seed": random_state,
+        "thread_count": -1,
+        "verbose": False,
+    }
+    return CatBoostClassifier(**params), params
+
+
+def _build_xgboost_regressor(random_state: int) -> tuple[object, dict[str, object]]:
+    try:
+        from xgboost import XGBRegressor
+    except ImportError as exc:
+        raise ImportError(
+            "XGBoost support requires the optional boosters dependencies. "
+            "Install them with `uv sync --extra boosters`."
+        ) from exc
+
+    params = {
+        "colsample_bytree": 0.8,
+        "eval_metric": "rmse",
+        "learning_rate": 0.05,
+        "max_depth": 6,
+        "n_estimators": 500,
+        "n_jobs": -1,
+        "objective": "reg:squarederror",
+        "random_state": random_state,
+        "subsample": 0.8,
+        "tree_method": "hist",
+    }
+    return XGBRegressor(**params), params
+
+
+def _build_xgboost_classifier(random_state: int) -> tuple[object, dict[str, object]]:
+    try:
+        from xgboost import XGBClassifier
+    except ImportError as exc:
+        raise ImportError(
+            "XGBoost support requires the optional boosters dependencies. "
+            "Install them with `uv sync --extra boosters`."
+        ) from exc
+
+    params = {
+        "colsample_bytree": 0.8,
+        "eval_metric": "logloss",
+        "learning_rate": 0.05,
+        "max_depth": 6,
+        "n_estimators": 500,
+        "n_jobs": -1,
+        "objective": "binary:logistic",
+        "random_state": random_state,
+        "subsample": 0.8,
+        "tree_method": "hist",
+    }
+    return BinaryLabelEncodingClassifier(XGBClassifier(**params)), params
+
+
+def _build_catboost_fit_kwargs(
+    x_train_processed: object,
+    numeric_columns: list[str],
+    categorical_columns: list[str],
+) -> dict[str, object]:
+    del numeric_columns
+    if not isinstance(x_train_processed, pd.DataFrame):
+        raise ValueError("CatBoost native preprocessing must produce a pandas DataFrame.")
+    cat_feature_indices = [x_train_processed.columns.get_loc(column) for column in categorical_columns]
+    return {"cat_features": cat_feature_indices}
+
+
 DEFAULT_MODEL_ID_BY_TASK = {
     "regression": "onehot_elasticnet",
     "binary": "onehot_logreg",
@@ -119,6 +302,25 @@ MODEL_REGISTRY: dict[str, dict[str, ModelDefinition]] = {
             preprocessing_scheme_id="ordinal",
             builder=_build_hist_gradient_boosting_regressor,
         ),
+        "ordinal_lightgbm": ModelDefinition(
+            model_id="ordinal_lightgbm",
+            model_name="LGBMRegressor",
+            preprocessing_scheme_id="ordinal",
+            builder=_build_lightgbm_regressor,
+        ),
+        "native_catboost": ModelDefinition(
+            model_id="native_catboost",
+            model_name="CatBoostRegressor",
+            preprocessing_scheme_id="native",
+            builder=_build_catboost_regressor,
+            fit_kwargs_builder=_build_catboost_fit_kwargs,
+        ),
+        "ordinal_xgboost": ModelDefinition(
+            model_id="ordinal_xgboost",
+            model_name="XGBRegressor",
+            preprocessing_scheme_id="ordinal",
+            builder=_build_xgboost_regressor,
+        ),
     },
     "binary": {
         "onehot_logreg": ModelDefinition(
@@ -145,17 +347,46 @@ MODEL_REGISTRY: dict[str, dict[str, ModelDefinition]] = {
             preprocessing_scheme_id="ordinal",
             builder=_build_hist_gradient_boosting_classifier,
         ),
+        "ordinal_lightgbm": ModelDefinition(
+            model_id="ordinal_lightgbm",
+            model_name="LGBMClassifier",
+            preprocessing_scheme_id="ordinal",
+            builder=_build_lightgbm_classifier,
+        ),
+        "native_catboost": ModelDefinition(
+            model_id="native_catboost",
+            model_name="CatBoostClassifier",
+            preprocessing_scheme_id="native",
+            builder=_build_catboost_classifier,
+            fit_kwargs_builder=_build_catboost_fit_kwargs,
+        ),
+        "ordinal_xgboost": ModelDefinition(
+            model_id="ordinal_xgboost",
+            model_name="XGBClassifier",
+            preprocessing_scheme_id="ordinal",
+            builder=_build_xgboost_classifier,
+        ),
     },
 }
 
 MODEL_ID_ALIASES: dict[str, dict[str, str]] = {
     "regression": {
+        "catboost": "native_catboost",
+        "catboost_native": "native_catboost",
         "elasticnet": "onehot_elasticnet",
+        "lightgbm": "ordinal_lightgbm",
         "random_forest": "ordinal_randomforest",
+        "xgb": "ordinal_xgboost",
+        "xgboost": "ordinal_xgboost",
     },
     "binary": {
+        "catboost": "native_catboost",
+        "catboost_native": "native_catboost",
+        "lightgbm": "ordinal_lightgbm",
         "logistic_regression": "onehot_logreg",
         "random_forest": "ordinal_randomforest",
+        "xgb": "ordinal_xgboost",
+        "xgboost": "ordinal_xgboost",
     },
 }
 
@@ -225,3 +456,14 @@ def build_model(
     model_definition = get_model_definition(task_type, model_id)
     estimator, explicit_params = model_definition.builder(random_state)
     return model_definition, estimator, explicit_params
+
+
+def build_model_fit_kwargs(
+    model_definition: ModelDefinition,
+    x_train_processed: object,
+    numeric_columns: list[str],
+    categorical_columns: list[str],
+) -> dict[str, object]:
+    if model_definition.fit_kwargs_builder is None:
+        return {}
+    return model_definition.fit_kwargs_builder(x_train_processed, numeric_columns, categorical_columns)
