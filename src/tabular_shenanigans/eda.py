@@ -2,7 +2,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 import pandas as pd
-from tabular_shenanigans.data import find_competition_zip, read_csv_from_zip, resolve_id_and_label_columns
+from tabular_shenanigans.data import load_competition_dataset_context
 from tabular_shenanigans.preprocess import prepare_feature_frames, summarize_feature_types
 
 
@@ -87,17 +87,16 @@ def run_eda(
     drop_columns: list[str] | None = None,
     low_cardinality_int_threshold: int | None = None,
 ) -> Path:
-    zip_path = find_competition_zip(competition_slug)
-    train_df = read_csv_from_zip(zip_path, "train.csv")
-    test_df = read_csv_from_zip(zip_path, "test.csv")
-    sample_submission_df = read_csv_from_zip(zip_path, "sample_submission.csv")
-    id_column, label_column = resolve_id_and_label_columns(
-        train_df=train_df,
-        test_df=test_df,
-        sample_submission_df=sample_submission_df,
+    dataset_context = load_competition_dataset_context(
+        competition_slug=competition_slug,
         configured_id_column=id_column,
         configured_label_column=label_column,
     )
+    train_df = dataset_context.train_df
+    test_df = dataset_context.test_df
+    id_column = dataset_context.id_column
+    label_column = dataset_context.label_column
+
     x_train_raw, _, _ = prepare_feature_frames(
         train_df=train_df,
         test_df=test_df,

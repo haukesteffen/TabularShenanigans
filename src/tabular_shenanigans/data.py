@@ -1,3 +1,4 @@
+from dataclasses import dataclass
 from pathlib import Path
 import subprocess
 import zipfile
@@ -71,6 +72,15 @@ def read_csv_from_zip(zip_path: Path, member_name: str) -> pd.DataFrame:
             return pd.read_csv(f)
 
 
+@dataclass(frozen=True)
+class CompetitionDatasetContext:
+    train_df: pd.DataFrame
+    test_df: pd.DataFrame
+    sample_submission_df: pd.DataFrame
+    id_column: str
+    label_column: str
+
+
 def resolve_id_and_label_columns(
     train_df: pd.DataFrame,
     test_df: pd.DataFrame,
@@ -135,3 +145,28 @@ def resolve_id_and_label_columns(
         )
 
     return id_column, label_column
+
+
+def load_competition_dataset_context(
+    competition_slug: str,
+    configured_id_column: str | None = None,
+    configured_label_column: str | None = None,
+) -> CompetitionDatasetContext:
+    zip_path = find_competition_zip(competition_slug)
+    train_df = read_csv_from_zip(zip_path, "train.csv")
+    test_df = read_csv_from_zip(zip_path, "test.csv")
+    sample_submission_df = read_csv_from_zip(zip_path, "sample_submission.csv")
+    id_column, label_column = resolve_id_and_label_columns(
+        train_df=train_df,
+        test_df=test_df,
+        sample_submission_df=sample_submission_df,
+        configured_id_column=configured_id_column,
+        configured_label_column=configured_label_column,
+    )
+    return CompetitionDatasetContext(
+        train_df=train_df,
+        test_df=test_df,
+        sample_submission_df=sample_submission_df,
+        id_column=id_column,
+        label_column=label_column,
+    )
