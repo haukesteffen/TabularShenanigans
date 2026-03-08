@@ -262,7 +262,10 @@ def _train_single_model(
     positive_label: object | None,
     negative_label: object | None,
 ) -> dict[str, object]:
-    resolved_model_id, model_name, _, model_params = build_model(task_type, model_id, cv_random_state)
+    model_definition, _, model_params = build_model(task_type, model_id, cv_random_state)
+    resolved_model_id = model_definition.model_id
+    model_name = model_definition.model_name
+    preprocessing_scheme_id = model_definition.preprocessing_scheme_id
 
     oof_predictions = np.zeros(x_train_raw.shape[0], dtype=float)
     test_predictions_per_fold: list[np.ndarray] = []
@@ -275,6 +278,7 @@ def _train_single_model(
         y_fold_valid = y_train.iloc[valid_idx]
 
         preprocessor, _, _ = build_preprocessor(
+            scheme_id=preprocessing_scheme_id,
             x_train_raw=x_fold_train,
             force_categorical=force_categorical,
             force_numeric=force_numeric,
@@ -284,7 +288,7 @@ def _train_single_model(
         x_fold_valid_processed = preprocessor.transform(x_fold_valid)
         x_test_processed = preprocessor.transform(x_test_raw)
 
-        _, _, model, _ = build_model(task_type, resolved_model_id, cv_random_state)
+        _, model, _ = build_model(task_type, resolved_model_id, cv_random_state)
         model.fit(x_fold_train_processed, y_fold_train)
 
         if task_type == "binary":
@@ -353,6 +357,7 @@ def _train_single_model(
         "competition_slug": competition_slug,
         "model_id": resolved_model_id,
         "model_name": model_name,
+        "preprocessing_scheme_id": preprocessing_scheme_id,
         "model_params": model_params,
         "cv_mean": float(fold_metrics_df["metric_value"].mean()),
         "cv_std": float(fold_metrics_df["metric_value"].std(ddof=0)),
@@ -391,6 +396,7 @@ def _build_model_summary_rows(
             {
                 "model_id": result["model_id"],
                 "model_name": result["model_name"],
+                "preprocessing_scheme_id": result["preprocessing_scheme_id"],
                 "metric_name": primary_metric,
                 "cv_mean": result["cv_mean"],
                 "cv_std": result["cv_std"],
@@ -451,6 +457,7 @@ def _build_run_manifest(
         single_model = models[0]
         run_manifest["model_id"] = single_model["model_id"]
         run_manifest["model_name"] = single_model["model_name"]
+        run_manifest["preprocessing_scheme_id"] = single_model["preprocessing_scheme_id"]
         run_manifest["model_params"] = single_model["model_params"]
         run_manifest["cv_summary"] = single_model["cv_summary"]
 
@@ -600,6 +607,7 @@ def run_training(
         model_results.append(model_result)
         print(
             f"Training model: {model_result['model_id']} ({model_result['model_name']}) | "
+            f"preprocessing={model_result['preprocessing_scheme_id']} | "
             f"CV {primary_metric}: mean={model_result['cv_mean']:.6f}, std={model_result['cv_std']:.6f}"
         )
 
@@ -615,6 +623,7 @@ def run_training(
             {
                 "model_id": result["model_id"],
                 "model_name": result["model_name"],
+                "preprocessing_scheme_id": result["preprocessing_scheme_id"],
                 "model_params": result["model_params"],
                 "cv_summary": {
                     "metric_name": primary_metric,

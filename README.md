@@ -18,15 +18,15 @@ The repository is developed and manually verified primarily against these Playgr
 - Load and validate a single repository-root `config.yaml`.
 - Fetch Kaggle competition data into `data/<competition_slug>/` when the zip is missing.
 - Require explicit `task_type` and `primary_metric` in config.
-- Select one or more baseline models per run from config via `model_ids`, with `model_id` retained as the single-model shorthand.
+- Select one or more baseline model recipes per run from config via `model_ids`, with `model_id` retained as the single-model shorthand.
 - Infer Playground-style submission schema from dataset files:
   - `id_column` as the only column shared by `train.csv`, `test.csv`, and `sample_submission.csv`
   - `label_column` as the only column shared by `train.csv` and `sample_submission.csv` but not `test.csv`
 - Exclude the resolved `id_column` from modeled features by default; identifier columns are treated as metadata, not training signal.
 - Generate terminal and CSV EDA summaries under `reports/<competition_slug>/`, including missingness, categorical cardinality, target summary, and feature-type counts.
-- Train one or more baseline cross-validated models with fold-local preprocessing:
-  - regression: `elasticnet` (`ElasticNet`) or `random_forest` (`RandomForestRegressor`)
-  - binary classification: `logistic_regression` (`LogisticRegression`) or `random_forest` (`RandomForestClassifier`)
+- Train one or more baseline cross-validated model recipes with fold-local, model-specific preprocessing:
+  - `onehot` preprocessing: `onehot_ridge`, `onehot_elasticnet`, `onehot_logreg`
+  - `ordinal` preprocessing: `ordinal_randomforest`, `ordinal_extratrees`, `ordinal_hgb`
 - Write a run-root `model_summary.csv`, task-aware run diagnostics, and a canonical `run_manifest.json` under `artifacts/<competition_slug>/train/<run_id>/`, with per-model prediction artifacts under `<run_id>/<model_id>/`.
 - Validate predictions against `sample_submission.csv`, including exact ID content and order, and optionally submit to Kaggle from the best model in the run or an explicitly selected model artifact.
 
@@ -42,7 +42,7 @@ The repository is developed and manually verified primarily against these Playgr
 3. Keep a project `config.yaml` at repository root with explicit `competition_slug`, `task_type`, and `primary_metric`.
 4. Run `uv run python main.py`.
 
-The current pipeline fetches competition data if needed, runs config-aware EDA, trains a baseline CV model with fold-local preprocessing and task-aware diagnostics, writes prediction artifacts, and prepares a validated submission file.
+The current pipeline fetches competition data if needed, runs config-aware EDA, trains one or more baseline CV model recipes with fold-local preprocessing and task-aware diagnostics, writes prediction artifacts, and prepares a validated submission file.
 
 ## Config Overview
 Required keys:
@@ -54,10 +54,11 @@ Optional binary-classification key:
 - `positive_label`: explicit positive class for binary competitions; required unless the observed training labels follow one of the documented safe conventions: `[0, 1]`, `[False, True]`, or `["No", "Yes"]`
 
 Optional model-selection key:
-- `model_ids`: ordered list of baseline model presets for the configured task
+- `model_ids`: ordered list of baseline model recipes for the configured task
 - `model_id`: single-model shorthand retained for backward compatibility; mutually exclusive with `model_ids`
-  - regression: `elasticnet` (default), `random_forest`
-  - binary classification: `logistic_regression` (default), `random_forest`
+  - regression: `onehot_ridge`, `onehot_elasticnet` (default), `ordinal_randomforest`, `ordinal_extratrees`, `ordinal_hgb`
+  - binary classification: `onehot_logreg` (default), `ordinal_randomforest`, `ordinal_extratrees`, `ordinal_hgb`
+  - compatibility aliases accepted during transition: `elasticnet`, `logistic_regression`, `random_forest`
 
 Optional submission schema keys:
 - `id_column`: override for the inferred identifier column; the resolved ID column is excluded from modeled features by default
@@ -80,7 +81,7 @@ Optional submission keys:
 
 If `id_column` or `label_column` are omitted, the training pipeline infers them from `train.csv`, `test.csv`, and `sample_submission.csv`. The resolved `id_column` is preserved for prediction outputs and in `run_manifest.json`, but it is not part of the model feature matrix. Submission preparation consumes the selected run manifest as the schema/task source of truth and uses `sample_submission.csv` only for validation. Invalid overrides, ambiguous inference, a `sample_submission.csv` shape that does not exactly match `[id_column, label_column]`, or a submission ID column that differs from `sample_submission.csv` in values or ordering are hard errors.
 
-`model_ids` is the preferred config-driven model interface. If both `model_id` and `model_ids` are omitted, the workflow selects the current default baseline for the configured task: `elasticnet` for regression and `logistic_regression` for binary classification. If `model_id` is provided, it resolves to a single-entry `model_ids` list.
+`model_ids` is the preferred config-driven model interface. If both `model_id` and `model_ids` are omitted, the workflow selects the current default recipe for the configured task: `onehot_elasticnet` for regression and `onehot_logreg` for binary classification. If `model_id` is provided, it resolves to a single-entry `model_ids` list. Backward-compatible aliases are normalized to the canonical preprocessing-first IDs during config loading, so run artifacts always use the canonical IDs.
 
 `task_type` and `primary_metric` are always config-driven. The pipeline does not infer them from Kaggle metadata.
 
@@ -97,8 +98,9 @@ competition_slug: playground-series-s5e12
 task_type: binary
 primary_metric: roc_auc
 model_ids:
-  - logistic_regression
-  - random_forest
+  - onehot_logreg
+  - ordinal_hgb
+  - ordinal_randomforest
 ```
 
 Example regression config:
@@ -108,8 +110,9 @@ competition_slug: playground-series-s5e10
 task_type: regression
 primary_metric: mse
 model_ids:
-  - elasticnet
-  - random_forest
+  - onehot_ridge
+  - onehot_elasticnet
+  - ordinal_hgb
 ```
 
 Manual verification for each target:
@@ -127,6 +130,7 @@ Manual verification for each target:
   - includes per-model subdirectories `artifacts/<competition_slug>/train/<run_id>/<model_id>/`
   - each model subdirectory includes `fold_metrics.csv`, `oof_predictions.csv`, `test_predictions.csv`, and `submission.csv` when prepared or submitted
   - `run_manifest.json` is the canonical per-run metadata source
+  - each model summary/manifest entry records the resolved `preprocessing_scheme_id`
 - Run ledger: `artifacts/<competition_slug>/train/runs.csv` as a compact comparison/history table
 - Submission ledger: `artifacts/<competition_slug>/train/submissions.csv` as an append-only submission event table
 
@@ -135,6 +139,7 @@ Manual verification for each target:
 - Competition zip contents include `train.csv`, `test.csv`, and `sample_submission.csv`.
 - The competition follows a simple two-column Playground submission contract: `sample_submission.csv` must be exactly `[id_column, label_column]`.
 - The resolved `id_column` is identifier metadata and is excluded from preprocessing and model fitting by default.
+- Model IDs resolve to preprocessing-aware training recipes; run artifacts record the canonical `model_id` and `preprocessing_scheme_id`.
 - Submission uses `run_manifest.json` as the canonical source for `competition_slug`, `task_type`, `id_column`, and `label_column`.
 - Submission metadata includes the selected `model_id`; when no model is selected explicitly, submission defaults to the run manifest `best_model_id`.
 - Submission validation requires the selected model artifact `test_predictions.csv[id_column]` to match `sample_submission.csv[id_column]` exactly in both values and row order.

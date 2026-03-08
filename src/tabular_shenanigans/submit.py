@@ -117,14 +117,28 @@ def _require_manifest_value(manifest: dict[str, object], field_name: str) -> obj
 def _infer_legacy_model_id(task_type: str, model_name: object | None) -> str | None:
     resolved_model_name = str(model_name).strip()
     legacy_model_map = {
-        ("regression", "ElasticNet"): "elasticnet",
-        ("regression", "RandomForestRegressor"): "random_forest",
-        ("binary", "LogisticRegression"): "logistic_regression",
-        ("binary", "RandomForestClassifier"): "random_forest",
-        ("regression", "elasticnet"): "elasticnet",
-        ("regression", "random_forest"): "random_forest",
-        ("binary", "logistic_regression"): "logistic_regression",
-        ("binary", "random_forest"): "random_forest",
+        ("regression", "Ridge"): "onehot_ridge",
+        ("regression", "ElasticNet"): "onehot_elasticnet",
+        ("regression", "RandomForestRegressor"): "ordinal_randomforest",
+        ("regression", "ExtraTreesRegressor"): "ordinal_extratrees",
+        ("regression", "HistGradientBoostingRegressor"): "ordinal_hgb",
+        ("binary", "LogisticRegression"): "onehot_logreg",
+        ("binary", "RandomForestClassifier"): "ordinal_randomforest",
+        ("binary", "ExtraTreesClassifier"): "ordinal_extratrees",
+        ("binary", "HistGradientBoostingClassifier"): "ordinal_hgb",
+        ("regression", "onehot_ridge"): "onehot_ridge",
+        ("regression", "onehot_elasticnet"): "onehot_elasticnet",
+        ("regression", "ordinal_randomforest"): "ordinal_randomforest",
+        ("regression", "ordinal_extratrees"): "ordinal_extratrees",
+        ("regression", "ordinal_hgb"): "ordinal_hgb",
+        ("binary", "onehot_logreg"): "onehot_logreg",
+        ("binary", "ordinal_randomforest"): "ordinal_randomforest",
+        ("binary", "ordinal_extratrees"): "ordinal_extratrees",
+        ("binary", "ordinal_hgb"): "ordinal_hgb",
+        ("regression", "elasticnet"): "onehot_elasticnet",
+        ("regression", "random_forest"): "ordinal_randomforest",
+        ("binary", "logistic_regression"): "onehot_logreg",
+        ("binary", "random_forest"): "ordinal_randomforest",
     }
     return legacy_model_map.get((task_type, resolved_model_name))
 

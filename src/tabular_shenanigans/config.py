@@ -5,7 +5,12 @@ import yaml
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from tabular_shenanigans.data import SUPPORTED_PRIMARY_METRICS, is_metric_valid_for_task, normalize_primary_metric
-from tabular_shenanigans.models import get_default_model_id, get_supported_model_ids, is_model_id_valid_for_task
+from tabular_shenanigans.models import (
+    get_default_model_id,
+    get_supported_model_ids,
+    is_model_id_valid_for_task,
+    resolve_model_id,
+)
 
 
 class ConfigError(ValueError):
@@ -59,10 +64,7 @@ class AppConfig(BaseModel):
         else:
             resolved_model_ids = [get_default_model_id(self.task_type)]
 
-        if len(set(resolved_model_ids)) != len(resolved_model_ids):
-            raise ValueError(f"model_ids must not contain duplicates: {resolved_model_ids}")
-
-        supported_model_ids = get_supported_model_ids(self.task_type)
+        supported_model_ids = get_supported_model_ids(self.task_type, include_aliases=True)
         invalid_model_ids = [
             model_id for model_id in resolved_model_ids if not is_model_id_valid_for_task(self.task_type, model_id)
         ]
@@ -72,8 +74,12 @@ class AppConfig(BaseModel):
                 f"Supported model_ids: {supported_model_ids}"
             )
 
-        self.model_ids = resolved_model_ids
-        self.model_id = resolved_model_ids[0] if len(resolved_model_ids) == 1 else None
+        canonical_model_ids = [resolve_model_id(self.task_type, model_id) for model_id in resolved_model_ids]
+        if len(set(canonical_model_ids)) != len(canonical_model_ids):
+            raise ValueError(f"model_ids must not contain duplicates after alias resolution: {canonical_model_ids}")
+
+        self.model_ids = canonical_model_ids
+        self.model_id = canonical_model_ids[0] if len(canonical_model_ids) == 1 else None
 
         if self.task_type != "binary" and self.positive_label is not None:
             raise ValueError("positive_label is only supported for binary task_type.")
