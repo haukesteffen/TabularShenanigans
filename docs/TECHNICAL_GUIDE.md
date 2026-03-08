@@ -10,7 +10,7 @@ The intended operating scope is Kaggle Playground Series tabular competitions. C
 3. Download the competition zip into `data/<competition_slug>/` when it is missing.
 4. Read `train.csv`, `test.csv`, and `sample_submission.csv` from the zip as needed.
 5. Run EDA and write report CSVs under `reports/<competition_slug>/`.
-6. Resolve `id_column` and `label_column` from `train.csv`, `test.csv`, and `sample_submission.csv`, then prepare raw feature frames from the train/test data.
+6. Resolve `id_column` and `label_column` from `train.csv`, `test.csv`, and `sample_submission.csv`, then prepare raw feature frames from the train/test data with the resolved `id_column` excluded from modeled features.
 7. Build preprocessing for the selected feature types:
    - numeric: median imputation + `StandardScaler`
    - categorical: most-frequent imputation + `OneHotEncoder`
@@ -38,12 +38,12 @@ Input:
   - `task_type` (`regression` or `binary`)
   - `primary_metric` (`rmse`, `mse`, `rmsle`, `mae`, `roc_auc`, `log_loss`, `accuracy`)
 - Optional submission schema keys:
-  - `id_column` (optional override for the inferred identifier column)
+  - `id_column` (optional override for the inferred identifier column; resolved IDs are kept as metadata and excluded from modeled features)
   - `label_column` (optional override for the inferred submission/target column)
 - Optional keys for preprocessing:
   - `force_categorical` (list of column names)
   - `force_numeric` (list of column names)
-  - `drop_columns` (list of column names)
+  - `drop_columns` (list of additional modeled-feature columns to remove after the ID column is excluded by default)
   - `low_cardinality_int_threshold` (positive integer)
 - Optional keys for CV:
   - `cv_n_splits` (integer >= 2, default 7)
@@ -101,6 +101,7 @@ Manual verification steps for each target:
 - Competition zip contents are expected to include `train.csv`, `test.csv`, and `sample_submission.csv`
 - Binary classification supports any two-class target labels; the positive class is resolved from the training target and used consistently for diagnostics, scoring, and probability extraction
 - `id_column` inference must resolve to exactly one column present in `train.csv`, `test.csv`, and `sample_submission.csv`
+- The resolved `id_column` is identifier metadata and must be excluded from preprocessing and model fitting by default
 - `label_column` inference must resolve to exactly one column present in `train.csv` and `sample_submission.csv` but not `test.csv`
 - `sample_submission.csv` must match the resolved schema exactly as `[id_column, label_column]`
 - Feature override columns must exist and cannot overlap between forced numeric and forced categorical sets
@@ -123,7 +124,7 @@ Hard-error cases include:
 - Invalid `id_column` or `label_column` override -> hard error
 - Unknown columns in `force_categorical`, `force_numeric`, or `drop_columns` -> hard error
 - Any overlap between `force_categorical` and `force_numeric` -> hard error
-- No feature columns remaining after `drop_columns` -> hard error
+- No modeled feature columns remaining after excluding `id_column` and applying `drop_columns` -> hard error
 - Preprocessing fit/transform failure -> hard error
 - Unsupported task type for CV/model selection -> hard error
 - Unsupported metric for chosen task -> hard error

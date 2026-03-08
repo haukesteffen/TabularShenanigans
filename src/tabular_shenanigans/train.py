@@ -153,6 +153,7 @@ def run_training(
     x_train_raw, x_test_raw, y_train = prepare_feature_frames(
         train_df=train_df,
         test_df=test_df,
+        id_column=id_column,
         label_column=label_column,
         force_categorical=force_categorical,
         force_numeric=force_numeric,

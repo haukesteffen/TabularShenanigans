@@ -101,6 +101,7 @@ def run_eda(
     x_train_raw, _, _ = prepare_feature_frames(
         train_df=train_df,
         test_df=test_df,
+        id_column=id_column,
         label_column=label_column,
         force_categorical=force_categorical,
         force_numeric=force_numeric,
@@ -139,7 +140,7 @@ def run_eda(
             {"metric": "test_missing_pct", "value": float(test_df.isna().mean().mean())},
             {"metric": "train_duplicate_rows", "value": int(train_df.duplicated().sum())},
             {"metric": "test_duplicate_rows", "value": int(test_df.duplicated().sum())},
-            {"metric": "feature_count_after_drop_columns", "value": int(x_train_raw.shape[1])},
+            {"metric": "model_feature_count", "value": int(x_train_raw.shape[1])},
         ]
     )
     run_summary.to_csv(report_dir / "run_summary.csv", index=False)
@@ -152,6 +153,6 @@ def run_eda(
     print(f"Test missing pct: {test_df.isna().mean().mean():.6f}")
     print(f"Train duplicate rows: {int(train_df.duplicated().sum())}")
     print(f"Test duplicate rows: {int(test_df.duplicated().sum())}")
-    print(f"Feature count after drop_columns: {int(x_train_raw.shape[1])}")
+    print(f"Modeled feature count: {int(x_train_raw.shape[1])}")
 
     return report_dir

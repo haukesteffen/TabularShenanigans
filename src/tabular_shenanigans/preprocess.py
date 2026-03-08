@@ -46,6 +46,7 @@ def _resolve_feature_types(
 def prepare_feature_frames(
     train_df: pd.DataFrame,
     test_df: pd.DataFrame,
+    id_column: str,
     label_column: str,
     force_categorical: list[str] | None = None,
     force_numeric: list[str] | None = None,
@@ -55,21 +56,24 @@ def prepare_feature_frames(
     force_numeric = force_numeric or []
     drop_columns = drop_columns or []
 
-    x_train_raw = train_df.drop(columns=[label_column])
-    y_train = train_df[label_column]
-    x_test_raw = test_df
+    available_feature_columns = train_df.drop(columns=[label_column]).columns.tolist()
+    _validate_column_names("drop_columns", drop_columns, available_feature_columns)
 
-    _validate_column_names("drop_columns", drop_columns, x_train_raw.columns.tolist())
+    excluded_feature_columns = [id_column]
+    excluded_feature_columns.extend(
+        column for column in drop_columns if column != id_column
+    )
+
+    x_train_raw = train_df.drop(columns=[label_column, *excluded_feature_columns])
+    y_train = train_df[label_column]
+    x_test_raw = test_df.drop(columns=excluded_feature_columns)
+
     _validate_column_names("force_categorical", force_categorical, x_train_raw.columns.tolist())
     _validate_column_names("force_numeric", force_numeric, x_train_raw.columns.tolist())
 
     overlap = sorted(set(force_categorical).intersection(force_numeric))
     if overlap:
         raise ValueError(f"Columns cannot be both forced categorical and forced numeric: {overlap}")
-
-    if drop_columns:
-        x_train_raw = x_train_raw.drop(columns=drop_columns)
-        x_test_raw = x_test_raw.drop(columns=drop_columns)
 
     return x_train_raw, x_test_raw, y_train
 
@@ -117,7 +121,7 @@ def build_preprocessor(
     if categorical_columns:
         transformers.append(("cat", categorical_pipeline, categorical_columns))
     if not transformers:
-        raise ValueError("No features remain after applying drop_columns.")
+        raise ValueError("No modeled features remain after excluding id_column and applying drop_columns.")
 
     preprocessor = ColumnTransformer(transformers=transformers, remainder="drop")
     return preprocessor, numeric_columns, categorical_columns
@@ -176,6 +180,7 @@ def run_preprocessing(
     x_train_raw, x_test_raw, y_train = prepare_feature_frames(
         train_df=train_df,
         test_df=test_df,
+        id_column=id_column,
         label_column=label_column,
         force_categorical=force_categorical,
         force_numeric=force_numeric,
@@ -214,7 +219,9 @@ def run_preprocessing(
             {"metric": "test_cols", "value": int(x_test_df.shape[1])},
             {"metric": "numeric_feature_count", "value": len(numeric_columns)},
             {"metric": "categorical_feature_count", "value": len(categorical_columns)},
-            {"metric": "dropped_feature_count", "value": len(drop_columns)},
+            {"metric": "model_feature_count", "value": int(x_train_raw.shape[1])},
+            {"metric": "config_drop_column_count", "value": len(drop_columns)},
+            {"metric": "excluded_id_column", "value": id_column},
         ]
     )
     summary_df.to_csv(artifact_dir / "preprocess_summary.csv", index=False)
