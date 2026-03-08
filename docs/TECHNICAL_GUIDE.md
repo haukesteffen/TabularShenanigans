@@ -14,9 +14,9 @@ The intended operating scope is Kaggle Playground Series tabular competitions. C
 7. During training, build fold-local preprocessing for the selected feature types:
    - numeric: median imputation + `StandardScaler`
    - categorical: most-frequent imputation + `OneHotEncoder`
-8. Train the baseline model:
-   - regression: `ElasticNet`
-   - binary classification: `LogisticRegression`
+8. Train the configured baseline model:
+   - regression: `elasticnet` (`ElasticNet`) or `random_forest` (`RandomForestRegressor`)
+   - binary classification: `logistic_regression` (`LogisticRegression`) or `random_forest` (`RandomForestClassifier`)
 9. Write fold metrics, task-aware run diagnostics, OOF predictions, test predictions, and a canonical `run_manifest.json` under `artifacts/<competition_slug>/train/<run_id>/`.
 10. Validate predictions against `sample_submission.csv`, including exact ID content and order, using `run_manifest.json` as the submission metadata contract, write `submission.csv`, and optionally submit to Kaggle.
 
@@ -25,9 +25,10 @@ The intended operating scope is Kaggle Playground Series tabular competitions. C
 - `src/tabular_shenanigans/config.py`: Pydantic-backed config schema, metric normalization, and runtime contract validation.
 - `src/tabular_shenanigans/data.py`: competition download, zip access, metric helpers, dataset schema resolution, and sample-submission template loading.
 - `src/tabular_shenanigans/eda.py`: competition-scan EDA summaries written to CSV, including missingness, categorical cardinality, target summary, and feature-type counts.
+- `src/tabular_shenanigans/models.py`: single-model registry and estimator construction for supported baseline presets.
 - `src/tabular_shenanigans/preprocess.py`: feature frame preparation, column typing, and sklearn preprocessing pipelines.
 - `src/tabular_shenanigans/cv.py`: task-aware CV splitters and metric scoring helpers.
-- `src/tabular_shenanigans/train.py`: baseline model selection, fold training, artifact writing, and run ledger updates.
+- `src/tabular_shenanigans/train.py`: config-selected model training, fold training, artifact writing, and run ledger updates.
 - `src/tabular_shenanigans/submit.py`: submission schema validation, submission message creation, Kaggle submission, and submission ledger updates.
 
 ## Configuration Contract
@@ -37,6 +38,10 @@ Input:
   - `competition_slug`
   - `task_type` (`regression` or `binary`)
   - `primary_metric` (`rmse`, `mse`, `rmsle`, `mae`, `roc_auc`, `log_loss`, `accuracy`)
+- Optional model-selection key:
+  - `model_id` (baseline model preset for the configured task; defaults to `elasticnet` for regression and `logistic_regression` for binary classification)
+    - regression: `elasticnet`, `random_forest`
+    - binary classification: `logistic_regression`, `random_forest`
 - Optional binary-classification key:
   - `positive_label` (explicit positive class for binary competitions; required unless observed labels match one of the documented safe conventions `[0, 1]`, `[False, True]`, or `["No", "Yes"]`)
 - Optional submission schema keys:
@@ -98,6 +103,7 @@ Manual verification steps for each target:
 - One runtime config source only: `config.yaml`
 - No config overrides via CLI or environment variables
 - `task_type` and `primary_metric` must be present in config for every run
+- `model_id` must resolve to a supported preset for the configured task; if omitted, the task default is used
 - Kaggle CLI and authentication are expected to be preconfigured
 - Competition zip contents are expected to include `train.csv`, `test.csv`, and `sample_submission.csv`
 - Binary classification supports any two-class target labels; the positive class is resolved from the training target and used consistently for diagnostics, scoring, and probability extraction
@@ -122,6 +128,7 @@ Hard-error cases include:
 - Missing `task_type` or `primary_metric` -> hard error
 - Unknown/unsupported configured `primary_metric` -> hard error
 - Invalid task/metric pairing (for example `binary` + `rmse`) -> hard error
+- Invalid `model_id` for the configured task -> hard error
 - Missing/invalid competition zip contents -> hard error
 - `id_column` inference not exactly one column -> hard error
 - `label_column` inference not exactly one column -> hard error
@@ -150,6 +157,6 @@ Hard-error cases include:
 ## Extension Notes
 - New config keys should be added to `AppConfig` in `config.py` and documented in both this file and `README.md` when user-facing.
 - New metrics should be normalized and validated during config loading, then scored in `cv.py`.
-- New model families should be introduced in `train.py` with explicit task compatibility and matching artifact outputs.
+- New model families should be introduced in `models.py` with explicit task compatibility and matching artifact outputs.
 - New preprocessing modes should be added in `preprocess.py` without breaking the existing feature-frame contract.
 - New run or submission artifacts should be reflected in both the artifact contract above and the corresponding ledger rows.

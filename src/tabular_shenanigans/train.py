@@ -5,10 +5,10 @@ from pathlib import Path
 
 import numpy as np
 import pandas as pd
-from sklearn.linear_model import ElasticNet, LogisticRegression
 
 from tabular_shenanigans.cv import build_splitter, is_higher_better, resolve_positive_label, score_predictions
 from tabular_shenanigans.data import load_competition_dataset_context
+from tabular_shenanigans.models import build_model
 from tabular_shenanigans.preprocess import build_preprocessor, prepare_feature_frames
 
 RUN_LEDGER_COLUMNS = [
@@ -17,6 +17,7 @@ RUN_LEDGER_COLUMNS = [
     "competition_slug",
     "task_type",
     "primary_metric",
+    "model_id",
     "model_name",
     "cv_mean",
     "cv_std",
@@ -39,26 +40,16 @@ RUN_LEDGER_COLUMNS = [
 ]
 
 
-def _build_model(task_type: str, random_state: int) -> tuple[str, object, dict[str, object]]:
-    if task_type == "regression":
-        params = {
-            "alpha": 0.001,
-            "l1_ratio": 0.5,
-            "max_iter": 10000,
-            "random_state": random_state,
-        }
-        return "ElasticNet", ElasticNet(**params), params
-
-    if task_type == "binary":
-        params = {
-            "C": 1.0,
-            "solver": "lbfgs",
-            "max_iter": 2000,
-            "random_state": random_state,
-        }
-        return "LogisticRegression", LogisticRegression(**params), params
-
-    raise ValueError(f"Unsupported task_type for baseline model: {task_type}")
+def _json_ready(value: object) -> object:
+    if isinstance(value, dict):
+        return {str(key): _json_ready(nested_value) for key, nested_value in value.items()}
+    if isinstance(value, list):
+        return [_json_ready(item) for item in value]
+    if isinstance(value, tuple):
+        return [_json_ready(item) for item in value]
+    if isinstance(value, np.generic):
+        return value.item()
+    return value
 
 
 def _make_run_id() -> str:
@@ -171,6 +162,7 @@ def _build_run_manifest(
     primary_metric: str,
     config_fingerprint: str,
     config_snapshot: dict[str, object],
+    model_id: str,
     model_name: str,
     model_params: dict[str, object],
     cv_mean: float,
@@ -194,6 +186,7 @@ def _build_run_manifest(
         "primary_metric": primary_metric,
         "config_fingerprint": config_fingerprint,
         "config_snapshot": config_snapshot,
+        "model_id": model_id,
         "model_name": model_name,
         "model_params": model_params,
         "cv_summary": {
@@ -231,6 +224,7 @@ def _build_run_ledger_row(
         "competition_slug": run_manifest["competition_slug"],
         "task_type": run_manifest["task_type"],
         "primary_metric": run_manifest["primary_metric"],
+        "model_id": run_manifest["model_id"],
         "model_name": run_manifest["model_name"],
         "cv_mean": cv_summary["metric_mean"],
         "cv_std": cv_summary["metric_std"],
@@ -250,6 +244,7 @@ def run_training(
     competition_slug: str,
     task_type: str,
     primary_metric: str,
+    model_id: str,
     id_column: str | None = None,
     label_column: str | None = None,
     force_categorical: list[str] | None = None,
@@ -288,7 +283,7 @@ def run_training(
             configured_positive_label=positive_label,
         )
 
-    model_name, _, model_params = _build_model(task_type, cv_random_state)
+    model_id, model_name, _, model_params = build_model(task_type, model_id, cv_random_state)
     splitter = build_splitter(
         task_type=task_type,
         n_splits=cv_n_splits,
@@ -347,7 +342,7 @@ def run_training(
         x_fold_valid_processed = preprocessor.transform(x_fold_valid)
         x_test_processed = preprocessor.transform(x_test_raw)
 
-        _, model, _ = _build_model(task_type, cv_random_state)
+        _, _, model, _ = build_model(task_type, model_id, cv_random_state)
         model.fit(x_fold_train_processed, y_fold_train)
 
         if task_type == "binary":
@@ -375,6 +370,7 @@ def run_training(
         test_predictions_per_fold.append(np.asarray(fold_test_predictions, dtype=float))
         fold_metrics.append(
             {
+                "model_id": model_id,
                 "model_name": model_name,
                 "fold": fold_index,
                 "metric_name": primary_metric,
@@ -416,6 +412,7 @@ def run_training(
             "y_true": y_train.to_numpy(),
             "y_pred": oof_predictions,
             "fold": fold_assignments,
+            "model_id": model_id,
             "model_name": model_name,
         }
     )
@@ -433,6 +430,7 @@ def run_training(
         "competition_slug": competition_slug,
         "task_type": task_type,
         "primary_metric": primary_metric,
+        "model_id": model_id,
         "positive_label": positive_label,
         "id_column": id_column,
         "label_column": label_column,
@@ -449,7 +447,7 @@ def run_training(
         "model_name": model_name,
         "model_params": model_params,
     }
-    config_snapshot_json = json.dumps(fingerprint_payload, sort_keys=True)
+    config_snapshot_json = json.dumps(_json_ready(fingerprint_payload), sort_keys=True)
     config_fingerprint = hashlib.sha256(config_snapshot_json.encode("utf-8")).hexdigest()[:12]
 
     generated_at_utc = datetime.now(timezone.utc).isoformat()
@@ -461,6 +459,7 @@ def run_training(
         primary_metric=primary_metric,
         config_fingerprint=config_fingerprint,
         config_snapshot=config_snapshot,
+        model_id=model_id,
         model_name=model_name,
         model_params=model_params,
         cv_mean=cv_mean,
@@ -476,7 +475,8 @@ def run_training(
         test_rows=int(x_test_raw.shape[0]),
         test_cols=int(x_test_raw.shape[1]),
     )
-    (run_dir / "run_manifest.json").write_text(json.dumps(run_manifest, indent=2), encoding="utf-8")
+    run_manifest_json = json.dumps(_json_ready(run_manifest), indent=2)
+    (run_dir / "run_manifest.json").write_text(run_manifest_json, encoding="utf-8")
 
     ledger_row = _build_run_ledger_row(
         run_manifest=run_manifest,
@@ -487,7 +487,7 @@ def run_training(
     ledger_path = Path("artifacts") / competition_slug / "train" / "runs.csv"
     _append_run_ledger(ledger_path, ledger_row)
 
-    print(f"Training model: {model_name}")
+    print(f"Training model: {model_id} ({model_name})")
     print(f"CV {primary_metric}: mean={cv_mean:.6f}, std={cv_std:.6f}")
 
     return run_dir
