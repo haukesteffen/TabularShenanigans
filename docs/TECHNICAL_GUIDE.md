@@ -18,7 +18,7 @@ The intended operating scope is Kaggle Playground Series tabular competitions. C
    - regression: `ElasticNet`
    - binary classification: `LogisticRegression`
 9. Write fold metrics, CV summary, task-aware run diagnostics, OOF predictions, test predictions, and a run manifest under `artifacts/<competition_slug>/train/<run_id>/`.
-10. Validate predictions against `sample_submission.csv`, write `submission.csv`, and optionally submit to Kaggle.
+10. Validate predictions against `sample_submission.csv`, including exact ID content and order, write `submission.csv`, and optionally submit to Kaggle.
 
 ## Module Responsibilities
 - `main.py`: orchestration entrypoint for config loading, data fetch, EDA, preprocessing, training, and submission.
@@ -66,7 +66,7 @@ Manual verification steps for each target:
 - run the workflow from a clean repo state with explicit `task_type` and `primary_metric`
 - confirm inferred `id_column` and `label_column`
 - confirm `test_predictions.csv` is generated in the run directory
-- confirm `submission.csv` validates against `sample_submission.csv`
+- confirm `submission.csv` validates against `sample_submission.csv`, including exact ID values and order
 
 ## Artifact Contract
 - A validated in-memory config object from Pydantic
@@ -104,10 +104,11 @@ Manual verification steps for each target:
 - The resolved `id_column` is identifier metadata and must be excluded from preprocessing and model fitting by default
 - `label_column` inference must resolve to exactly one column present in `train.csv` and `sample_submission.csv` but not `test.csv`
 - `sample_submission.csv` must match the resolved schema exactly as `[id_column, label_column]`
+- `test_predictions.csv[id_column]` must match `sample_submission.csv[id_column]` exactly in both values and row order
 - Feature override columns must exist and cannot overlap between forced numeric and forced categorical sets
 - Configured metric must normalize to a supported metric compatible with the configured task type
 - CV splitter construction must support both `cv_shuffle=true` and `cv_shuffle=false`
-- Submission output must match the schema and row count of `sample_submission.csv`
+- Submission output must match the schema, row count, and ID ordering/content of `sample_submission.csv`
 - Fail fast is the default behavior; errors are surfaced directly with minimal wrapping
 
 Hard-error cases include:
@@ -130,7 +131,7 @@ Hard-error cases include:
 - Unsupported metric for chosen task -> hard error
 - Any CV/training fit or scoring failure -> hard error
 - Fold assignment gaps in OOF generation -> hard error
-- Submission schema mismatch against `sample_submission.csv` -> hard error
+- Submission schema or ID mismatch against `sample_submission.csv` -> hard error
 - Kaggle submission command failure when `submit_enabled=true` -> hard error
 
 ## Design Guardrails
