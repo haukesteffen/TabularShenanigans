@@ -11,6 +11,33 @@ from tabular_shenanigans.cv import build_splitter, is_higher_better, resolve_pos
 from tabular_shenanigans.data import load_competition_dataset_context
 from tabular_shenanigans.preprocess import build_preprocessor, prepare_feature_frames
 
+RUN_LEDGER_COLUMNS = [
+    "run_id",
+    "timestamp_utc",
+    "competition_slug",
+    "task_type",
+    "primary_metric",
+    "model_name",
+    "cv_mean",
+    "cv_std",
+    "higher_is_better",
+    "cv_n_splits",
+    "cv_shuffle",
+    "cv_random_state",
+    "config_fingerprint",
+    "target_mean",
+    "target_std",
+    "target_min",
+    "target_max",
+    "positive_count",
+    "negative_count",
+    "target_prevalence",
+    "positive_label",
+    "observed_label_1",
+    "observed_label_2",
+    "negative_label",
+]
+
 
 def _build_model(task_type: str, random_state: int) -> tuple[str, object, dict[str, object]]:
     if task_type == "regression":
@@ -40,9 +67,11 @@ def _make_run_id() -> str:
 
 def _append_run_ledger(ledger_path: Path, row: dict[str, object]) -> None:
     ledger_df = pd.DataFrame([row])
+    ledger_df = ledger_df.reindex(columns=RUN_LEDGER_COLUMNS)
     if ledger_path.exists():
         existing_df = pd.read_csv(ledger_path)
         merged_df = pd.concat([existing_df, ledger_df], ignore_index=True, sort=False)
+        merged_df = merged_df.reindex(columns=RUN_LEDGER_COLUMNS)
         merged_df.to_csv(ledger_path, index=False)
         return
     ledger_df.to_csv(ledger_path, index=False)
@@ -132,6 +161,89 @@ def _build_diagnostic_rows(
         return [row]
 
     raise ValueError(f"Unsupported task_type for diagnostics: {task_type}")
+
+
+def _build_run_manifest(
+    run_id: str,
+    generated_at_utc: str,
+    competition_slug: str,
+    task_type: str,
+    primary_metric: str,
+    config_fingerprint: str,
+    config_snapshot: dict[str, object],
+    model_name: str,
+    model_params: dict[str, object],
+    cv_mean: float,
+    cv_std: float,
+    observed_label_pair: tuple[object, object] | None,
+    negative_label: object | None,
+    positive_label: object | None,
+    id_column: str,
+    label_column: str,
+    target_summary: dict[str, object],
+    train_rows: int,
+    train_cols: int,
+    test_rows: int,
+    test_cols: int,
+) -> dict[str, object]:
+    return {
+        "run_id": run_id,
+        "generated_at_utc": generated_at_utc,
+        "competition_slug": competition_slug,
+        "task_type": task_type,
+        "primary_metric": primary_metric,
+        "config_fingerprint": config_fingerprint,
+        "config_snapshot": config_snapshot,
+        "model_name": model_name,
+        "model_params": model_params,
+        "cv_summary": {
+            "metric_name": primary_metric,
+            "metric_mean": cv_mean,
+            "metric_std": cv_std,
+            "higher_is_better": is_higher_better(primary_metric),
+        },
+        "observed_label_pair": list(observed_label_pair) if observed_label_pair is not None else None,
+        "negative_label": negative_label,
+        "positive_label": positive_label,
+        "id_column": id_column,
+        "label_column": label_column,
+        "target_summary": target_summary,
+        "train_rows": train_rows,
+        "train_cols": train_cols,
+        "test_rows": test_rows,
+        "test_cols": test_cols,
+    }
+
+
+def _build_run_ledger_row(
+    run_manifest: dict[str, object],
+    cv_n_splits: int,
+    cv_shuffle: bool,
+    cv_random_state: int,
+) -> dict[str, object]:
+    cv_summary = run_manifest["cv_summary"]
+    if not isinstance(cv_summary, dict):
+        raise ValueError("Run manifest cv_summary must be a mapping.")
+
+    ledger_row = {
+        "run_id": run_manifest["run_id"],
+        "timestamp_utc": run_manifest["generated_at_utc"],
+        "competition_slug": run_manifest["competition_slug"],
+        "task_type": run_manifest["task_type"],
+        "primary_metric": run_manifest["primary_metric"],
+        "model_name": run_manifest["model_name"],
+        "cv_mean": cv_summary["metric_mean"],
+        "cv_std": cv_summary["metric_std"],
+        "higher_is_better": cv_summary["higher_is_better"],
+        "cv_n_splits": cv_n_splits,
+        "cv_shuffle": cv_shuffle,
+        "cv_random_state": cv_random_state,
+        "config_fingerprint": run_manifest["config_fingerprint"],
+    }
+    target_summary = run_manifest.get("target_summary", {})
+    if isinstance(target_summary, dict):
+        ledger_row.update(target_summary)
+    return ledger_row
 
 
 def run_training(
@@ -298,19 +410,6 @@ def run_training(
     fold_metrics_df.to_csv(run_dir / "fold_metrics.csv", index=False)
     run_diagnostics_df.to_csv(run_dir / "run_diagnostics.csv", index=False)
 
-    cv_summary_df = pd.DataFrame(
-        [
-            {
-                "model_name": model_name,
-                "metric_name": primary_metric,
-                "metric_mean": cv_mean,
-                "metric_std": cv_std,
-                "higher_is_better": is_higher_better(primary_metric),
-            }
-        ]
-    )
-    cv_summary_df.to_csv(run_dir / "cv_summary.csv", index=False)
-
     oof_df = pd.DataFrame(
         {
             "row_idx": np.arange(n_rows, dtype=int),
@@ -344,63 +443,47 @@ def run_training(
         "cv_n_splits": cv_n_splits,
         "cv_shuffle": cv_shuffle,
         "cv_random_state": cv_random_state,
+    }
+    fingerprint_payload = {
+        "config_snapshot": config_snapshot,
         "model_name": model_name,
         "model_params": model_params,
     }
-    config_snapshot_json = json.dumps(config_snapshot, sort_keys=True)
+    config_snapshot_json = json.dumps(fingerprint_payload, sort_keys=True)
     config_fingerprint = hashlib.sha256(config_snapshot_json.encode("utf-8")).hexdigest()[:12]
-    artifact_paths = {
-        "run_manifest": "run_manifest.json",
-        "fold_metrics": "fold_metrics.csv",
-        "cv_summary": "cv_summary.csv",
-        "run_diagnostics": "run_diagnostics.csv",
-        "oof_predictions": "oof_predictions.csv",
-        "test_predictions": "test_predictions.csv",
-    }
 
-    run_manifest = {
-        "run_id": run_id,
-        "generated_at_utc": datetime.now(timezone.utc).isoformat(),
-        "competition_slug": competition_slug,
-        "task_type": task_type,
-        "primary_metric": primary_metric,
-        "config_fingerprint": config_fingerprint,
-        "config_snapshot": config_snapshot,
-        "observed_label_pair": list(observed_label_pair) if observed_label_pair is not None else None,
-        "negative_label": negative_label,
-        "positive_label": positive_label,
-        "id_column": id_column,
-        "label_column": label_column,
-        "target_summary": target_summary,
-        "train_rows": int(x_train_raw.shape[0]),
-        "train_cols": int(x_train_raw.shape[1]),
-        "test_rows": int(x_test_raw.shape[0]),
-        "test_cols": int(x_test_raw.shape[1]),
-        "artifacts": artifact_paths,
-    }
+    generated_at_utc = datetime.now(timezone.utc).isoformat()
+    run_manifest = _build_run_manifest(
+        run_id=run_id,
+        generated_at_utc=generated_at_utc,
+        competition_slug=competition_slug,
+        task_type=task_type,
+        primary_metric=primary_metric,
+        config_fingerprint=config_fingerprint,
+        config_snapshot=config_snapshot,
+        model_name=model_name,
+        model_params=model_params,
+        cv_mean=cv_mean,
+        cv_std=cv_std,
+        observed_label_pair=observed_label_pair,
+        negative_label=negative_label,
+        positive_label=positive_label,
+        id_column=id_column,
+        label_column=label_column,
+        target_summary=target_summary,
+        train_rows=int(x_train_raw.shape[0]),
+        train_cols=int(x_train_raw.shape[1]),
+        test_rows=int(x_test_raw.shape[0]),
+        test_cols=int(x_test_raw.shape[1]),
+    )
     (run_dir / "run_manifest.json").write_text(json.dumps(run_manifest, indent=2), encoding="utf-8")
 
-    ledger_row = {
-        "run_id": run_id,
-        "timestamp_utc": run_manifest["generated_at_utc"],
-        "competition_slug": competition_slug,
-        "task_type": task_type,
-        "primary_metric": primary_metric,
-        "model_name": model_name,
-        "cv_mean": cv_mean,
-        "cv_std": cv_std,
-        "cv_n_splits": cv_n_splits,
-        "cv_random_state": cv_random_state,
-        "config_fingerprint": config_fingerprint,
-        "artifact_dir": str(run_dir),
-        "run_manifest_path": str(run_dir / artifact_paths["run_manifest"]),
-        "fold_metrics_path": str(run_dir / artifact_paths["fold_metrics"]),
-        "cv_summary_path": str(run_dir / artifact_paths["cv_summary"]),
-        "run_diagnostics_path": str(run_dir / artifact_paths["run_diagnostics"]),
-        "oof_predictions_path": str(run_dir / artifact_paths["oof_predictions"]),
-        "test_predictions_path": str(run_dir / artifact_paths["test_predictions"]),
-    }
-    ledger_row.update(target_summary)
+    ledger_row = _build_run_ledger_row(
+        run_manifest=run_manifest,
+        cv_n_splits=cv_n_splits,
+        cv_shuffle=cv_shuffle,
+        cv_random_state=cv_random_state,
+    )
     ledger_path = Path("artifacts") / competition_slug / "train" / "runs.csv"
     _append_run_ledger(ledger_path, ledger_row)
 

@@ -17,7 +17,7 @@ The intended operating scope is Kaggle Playground Series tabular competitions. C
 8. Train the baseline model:
    - regression: `ElasticNet`
    - binary classification: `LogisticRegression`
-9. Write fold metrics, CV summary, task-aware run diagnostics, OOF predictions, test predictions, and a run manifest under `artifacts/<competition_slug>/train/<run_id>/`.
+9. Write fold metrics, task-aware run diagnostics, OOF predictions, test predictions, and a canonical `run_manifest.json` under `artifacts/<competition_slug>/train/<run_id>/`.
 10. Validate predictions against `sample_submission.csv`, including exact ID content and order, write `submission.csv`, and optionally submit to Kaggle.
 
 ## Module Responsibilities
@@ -84,15 +84,15 @@ Manual verification steps for each target:
   - `run_summary.csv`
 - Training artifacts under `artifacts/<competition_slug>/train/<run_id>/`:
   - `fold_metrics.csv`
-  - `cv_summary.csv`
   - `run_diagnostics.csv`
   - `oof_predictions.csv`
   - `test_predictions.csv`
   - `run_manifest.json`
-- Training ledger at `artifacts/<competition_slug>/train/runs.csv` with task, metric, CV metadata, task-aware target summary fields, and artifact paths
+- `run_manifest.json` is the canonical per-run metadata source
+- Training ledger at `artifacts/<competition_slug>/train/runs.csv` with compact comparison fields and task-aware target summary fields
 - Submission artifact in each run dir:
   - `submission.csv`
-- Append-only submission ledger at `artifacts/<competition_slug>/train/submissions.csv`
+- Append-only submission ledger at `artifacts/<competition_slug>/train/submissions.csv` with submission event metadata only
 
 ## Runtime Invariants And Failure Behavior
 - One runtime config source only: `config.yaml`

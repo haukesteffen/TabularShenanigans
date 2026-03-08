@@ -26,7 +26,7 @@ The repository is developed and manually verified primarily against these Playgr
 - Train baseline cross-validated models with fold-local preprocessing:
   - regression: `ElasticNet`
   - binary classification: `LogisticRegression`
-- Write fold metrics, CV summary, task-aware run diagnostics, OOF predictions, test predictions, and a run manifest under `artifacts/<competition_slug>/train/<run_id>/`.
+- Write fold metrics, task-aware run diagnostics, OOF predictions, test predictions, and a canonical `run_manifest.json` under `artifacts/<competition_slug>/train/<run_id>/`.
 - Validate predictions against `sample_submission.csv`, including exact ID content and order, and optionally submit to Kaggle.
 
 ## Tooling
@@ -107,9 +107,10 @@ Manual verification for each target:
 - Competition data: `data/<competition_slug>/`
 - EDA reports: `reports/<competition_slug>/`
 - Training artifacts: `artifacts/<competition_slug>/train/<run_id>/`
-  - includes `fold_metrics.csv`, `cv_summary.csv`, `run_diagnostics.csv`, `oof_predictions.csv`, `test_predictions.csv`, and `run_manifest.json`
-- Run ledger: `artifacts/<competition_slug>/train/runs.csv`
-- Submission ledger: `artifacts/<competition_slug>/train/submissions.csv`
+  - includes `fold_metrics.csv`, `run_diagnostics.csv`, `oof_predictions.csv`, `test_predictions.csv`, and `run_manifest.json`
+  - `run_manifest.json` is the canonical per-run metadata source
+- Run ledger: `artifacts/<competition_slug>/train/runs.csv` as a compact comparison/history table
+- Submission ledger: `artifacts/<competition_slug>/train/submissions.csv` as an append-only submission event table
 
 ## Current Assumptions
 - Kaggle CLI is installed, authenticated, and has access to the configured competition.
