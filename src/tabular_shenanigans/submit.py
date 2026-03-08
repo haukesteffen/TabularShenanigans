@@ -115,11 +115,32 @@ def _require_manifest_value(manifest: dict[str, object], field_name: str) -> obj
 
 
 def _infer_legacy_model_id(task_type: str, model_name: object | None) -> str | None:
+    resolved_model_name = str(model_name).strip()
     legacy_model_map = {
         ("regression", "ElasticNet"): "elasticnet",
+        ("regression", "RandomForestRegressor"): "random_forest",
         ("binary", "LogisticRegression"): "logistic_regression",
+        ("binary", "RandomForestClassifier"): "random_forest",
+        ("regression", "elasticnet"): "elasticnet",
+        ("regression", "random_forest"): "random_forest",
+        ("binary", "logistic_regression"): "logistic_regression",
+        ("binary", "random_forest"): "random_forest",
     }
-    return legacy_model_map.get((task_type, str(model_name)))
+    return legacy_model_map.get((task_type, resolved_model_name))
+
+
+def _resolve_legacy_model_name(manifest: dict[str, object]) -> str | None:
+    model_name = manifest.get("model_name")
+    if model_name is not None:
+        return str(model_name)
+
+    config_snapshot = manifest.get("config_snapshot", {})
+    if isinstance(config_snapshot, dict):
+        config_model_name = config_snapshot.get("model_name")
+        if config_model_name is not None:
+            return str(config_model_name)
+
+    return None
 
 
 def _load_manifest_models(manifest: dict[str, object]) -> list[dict[str, object]]:
@@ -141,13 +162,15 @@ def _resolve_legacy_manifest_model_id(manifest: dict[str, object]) -> str:
         return str(model_id)
 
     task_type = str(_require_manifest_value(manifest, "task_type"))
-    legacy_model_id = _infer_legacy_model_id(task_type, manifest.get("model_name"))
+    legacy_model_name = _resolve_legacy_model_name(manifest)
+    legacy_model_id = _infer_legacy_model_id(task_type, legacy_model_name)
     if legacy_model_id is not None:
         return legacy_model_id
 
     raise ValueError(
         "Run manifest is missing required submission field 'model_id'. "
-        "Submission requires a manifest-backed model selection contract."
+        f"Could not infer it from legacy model metadata for task_type '{task_type}' and model_name "
+        f"{legacy_model_name!r}."
     )
 
 
@@ -233,7 +256,7 @@ def _load_run_metadata(
             "higher_is_better": cv_summary.get("higher_is_better"),
         }
 
-    model_name = manifest.get("model_name")
+    model_name = _resolve_legacy_model_name(manifest)
     cv_summary = manifest.get("cv_summary")
     if isinstance(cv_summary, dict):
         metric_name = cv_summary.get("metric_name")
@@ -252,9 +275,6 @@ def _load_run_metadata(
                 "higher_is_better": higher_is_better,
             }
 
-    config_snapshot = manifest.get("config_snapshot", {})
-    if model_name is None and isinstance(config_snapshot, dict):
-        model_name = config_snapshot.get("model_name")
     legacy_summary = _load_legacy_cv_summary(run_dir)
     resolved_model_name = model_name if model_name is not None else legacy_summary["model_name"]
     return {
