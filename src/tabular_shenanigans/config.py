@@ -7,12 +7,24 @@ from pydantic import BaseModel, ConfigDict, Field, model_validator
 from tabular_shenanigans.data import SUPPORTED_PRIMARY_METRICS, is_metric_valid_for_task, normalize_primary_metric
 from tabular_shenanigans.models import (
     get_default_model_id,
+    get_tunable_model_ids,
+    is_model_tunable,
     resolve_model_id,
 )
 
 
 class ConfigError(ValueError):
     pass
+
+
+class TuningConfig(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    enabled: bool = False
+    model_id: str | None = None
+    n_trials: int | None = Field(default=None, ge=1)
+    timeout_seconds: int | None = Field(default=None, ge=1)
+    random_state: int = 42
 
 
 class AppConfig(BaseModel):
@@ -32,6 +44,7 @@ class AppConfig(BaseModel):
     cv_n_splits: int = Field(default=7, ge=2)
     cv_shuffle: bool = True
     cv_random_state: int = 42
+    tuning: TuningConfig | None = None
     submit_enabled: bool = False
     submit_message_prefix: str | None = None
 
@@ -64,6 +77,22 @@ class AppConfig(BaseModel):
 
         if self.task_type != "binary" and self.positive_label is not None:
             raise ValueError("positive_label is only supported for binary task_type.")
+
+        if self.tuning is not None and self.tuning.enabled:
+            if self.tuning.model_id is None:
+                raise ValueError("tuning.model_id is required when tuning.enabled=true.")
+            if self.tuning.n_trials is None and self.tuning.timeout_seconds is None:
+                raise ValueError(
+                    "At least one tuning stopping condition is required. "
+                    "Set tuning.n_trials or tuning.timeout_seconds."
+                )
+            canonical_tuning_model_id = resolve_model_id(self.task_type, self.tuning.model_id)
+            if not is_model_tunable(self.task_type, canonical_tuning_model_id):
+                raise ValueError(
+                    f"Configured tuning.model_id '{canonical_tuning_model_id}' does not support tuning for task_type "
+                    f"'{self.task_type}'. Supported tunable model_ids: {get_tunable_model_ids(self.task_type)}"
+                )
+            self.tuning.model_id = canonical_tuning_model_id
         return self
 
 

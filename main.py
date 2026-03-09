@@ -9,6 +9,7 @@ from tabular_shenanigans.data import fetch_competition_data, load_competition_da
 from tabular_shenanigans.eda import run_eda
 from tabular_shenanigans.preprocess import run_preprocess
 from tabular_shenanigans.submit import run_submission
+from tabular_shenanigans.tune import run_tuning
 from tabular_shenanigans.train import run_training
 
 
@@ -22,6 +23,7 @@ def build_parser() -> argparse.ArgumentParser:
     subparsers.add_parser("eda", help="Run EDA reports only.")
     subparsers.add_parser("preprocess", help="Write preprocessing diagnostics only.")
     subparsers.add_parser("train", help="Run training only.")
+    subparsers.add_parser("tune", help="Run Optuna tuning and retrain the best trial.")
 
     submit_parser = subparsers.add_parser("submit", help="Prepare or submit from an existing run artifact.")
     run_selection = submit_parser.add_mutually_exclusive_group(required=True)
@@ -101,6 +103,14 @@ def _run_train_stage(config: AppConfig) -> None:
     print(f"Training artifacts ready: {train_dir}")
 
 
+def _run_tune_stage(config: AppConfig) -> None:
+    _ensure_data_ready(config)
+    dataset_context = _load_shared_dataset_context(config)
+    tuning_result = run_tuning(config=config, dataset_context=dataset_context)
+    print(f"Tuning artifacts ready: {tuning_result.study_dir}")
+    print(f"Best-trial training artifacts ready: {tuning_result.train_dir}")
+
+
 def _run_submit_stage(config: AppConfig, args: argparse.Namespace) -> None:
     run_dir = _resolve_run_dir(config, args)
     print(f"Using run_dir: {run_dir}")
@@ -136,6 +146,10 @@ def main(argv: list[str] | None = None) -> None:
 
     if args.stage == "train":
         _run_train_stage(config)
+        return
+
+    if args.stage == "tune":
+        _run_tune_stage(config)
         return
 
     if args.stage == "submit":

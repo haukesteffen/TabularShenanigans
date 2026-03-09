@@ -32,5 +32,14 @@ model_ids:
 # cv_shuffle: true
 # cv_random_state: 42
 
+# Optional Optuna tuning settings for `uv run python main.py tune`.
+# tune uses tuning.model_id only; normal train still uses top-level model_ids.
+# tuning:
+#   enabled: true
+#   model_id: ordinal_hgb
+#   n_trials: 25
+#   # timeout_seconds: 3600
+#   random_state: 42
+
 submit_enabled: false
 # submit_message_prefix: s5e10-baseline
