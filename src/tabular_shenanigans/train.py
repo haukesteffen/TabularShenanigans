@@ -7,7 +7,7 @@ import numpy as np
 import pandas as pd
 
 from tabular_shenanigans.cv import build_splitter, is_higher_better, resolve_positive_label, score_predictions
-from tabular_shenanigans.data import load_competition_dataset_context
+from tabular_shenanigans.data import get_binary_prediction_kind, load_competition_dataset_context
 from tabular_shenanigans.models import build_model, build_model_fit_kwargs
 from tabular_shenanigans.preprocess import build_preprocessor, prepare_feature_frames
 
@@ -271,6 +271,9 @@ def _train_single_model(
     test_predictions_per_fold: list[np.ndarray] = []
     fold_metrics: list[dict[str, object]] = []
     use_named_columns = model_name.startswith("LGBM")
+    binary_prediction_kind = None
+    if task_type == "binary":
+        binary_prediction_kind = get_binary_prediction_kind(primary_metric)
 
     for fold_index, train_idx, valid_idx in split_indices:
         x_fold_train = x_train_raw.iloc[train_idx]
@@ -340,6 +343,12 @@ def _train_single_model(
     mean_test_predictions = np.mean(np.vstack(test_predictions_per_fold), axis=0)
     if task_type == "regression" and primary_metric == "rmsle":
         mean_test_predictions = np.clip(mean_test_predictions, a_min=0.0, a_max=None)
+    if task_type == "binary" and binary_prediction_kind == "label":
+        if positive_label is None or negative_label is None:
+            raise ValueError("Binary label exports require resolved class metadata.")
+        final_test_predictions = np.where(mean_test_predictions >= 0.5, positive_label, negative_label)
+    else:
+        final_test_predictions = mean_test_predictions
 
     model_dir = run_dir / resolved_model_id
     model_dir.mkdir(parents=True, exist_ok=True)
@@ -362,7 +371,7 @@ def _train_single_model(
     test_predictions_df = pd.DataFrame(
         {
             id_column: test_ids.to_numpy(),
-            label_column: mean_test_predictions,
+            label_column: final_test_predictions,
         }
     )
     test_predictions_df.to_csv(model_dir / "test_predictions.csv", index=False)

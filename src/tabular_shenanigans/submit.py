@@ -8,7 +8,7 @@ from pathlib import Path
 import numpy as np
 import pandas as pd
 
-from tabular_shenanigans.data import load_sample_submission_template, validate_sample_submission_schema
+from tabular_shenanigans.data import get_binary_prediction_kind, load_sample_submission_template, validate_sample_submission_schema
 
 SUBMISSION_LEDGER_COLUMNS = [
     "timestamp_utc",
@@ -29,9 +29,11 @@ class SubmissionRunContext:
     run_id: str
     competition_slug: str
     task_type: str
+    primary_metric: str
     model_id: str
     id_column: str
     label_column: str
+    observed_label_pair: tuple[object, object] | None
     config_fingerprint: str | None
 
 
@@ -246,13 +248,23 @@ def _load_submission_run_context(
     manifest = _load_run_manifest(run_dir)
     run_id = str(manifest["run_id"])
     selected_model_id = _resolve_selected_model_id(manifest, requested_model_id=model_id)
+    observed_label_pair_raw = manifest.get("observed_label_pair")
+    observed_label_pair = None
+    if isinstance(observed_label_pair_raw, list):
+        if len(observed_label_pair_raw) != 2:
+            raise ValueError("Run manifest observed_label_pair must contain exactly two labels when present.")
+        observed_label_pair = (observed_label_pair_raw[0], observed_label_pair_raw[1])
+    elif manifest.get("negative_label") is not None and manifest.get("positive_label") is not None:
+        observed_label_pair = (manifest["negative_label"], manifest["positive_label"])
     return SubmissionRunContext(
         run_id=run_id,
         competition_slug=str(_require_manifest_value(manifest, "competition_slug")),
         task_type=str(_require_manifest_value(manifest, "task_type")),
+        primary_metric=str(_require_manifest_value(manifest, "primary_metric")),
         model_id=selected_model_id,
         id_column=str(_require_manifest_value(manifest, "id_column")),
         label_column=str(_require_manifest_value(manifest, "label_column")),
+        observed_label_pair=observed_label_pair,
         config_fingerprint=manifest.get("config_fingerprint"),
     )
 
@@ -384,6 +396,50 @@ def _validate_submission_ids(
     )
 
 
+def _normalize_binary_label(value: object) -> str:
+    if isinstance(value, str):
+        return value
+    if isinstance(value, (bool, np.bool_)):
+        return "True" if bool(value) else "False"
+    if isinstance(value, (int, np.integer)):
+        return str(int(value))
+    if isinstance(value, (float, np.floating)) and float(value).is_integer():
+        return str(int(value))
+    return str(value)
+
+
+def _validate_binary_probability_predictions(prediction_values: pd.Series) -> None:
+    if not pd.api.types.is_numeric_dtype(prediction_values):
+        raise ValueError("Binary probability submissions must be numeric.")
+    if not prediction_values.map(pd.notna).all():
+        raise ValueError("Binary probability submissions contain missing values.")
+    if not np.isfinite(prediction_values.to_numpy(dtype=float)).all():
+        raise ValueError("Binary probability submissions must be finite.")
+    if ((prediction_values < 0.0) | (prediction_values > 1.0)).any():
+        raise ValueError("Binary probability submissions must be within [0, 1].")
+
+
+def _validate_binary_label_predictions(
+    prediction_values: pd.Series,
+    observed_label_pair: tuple[object, object] | None,
+) -> None:
+    if observed_label_pair is None:
+        raise ValueError(
+            "Binary label submissions require observed_label_pair metadata in the run manifest."
+        )
+    if not prediction_values.map(pd.notna).all():
+        raise ValueError("Binary label submissions contain missing values.")
+
+    allowed_labels = {_normalize_binary_label(label) for label in observed_label_pair}
+    normalized_predictions = prediction_values.map(_normalize_binary_label)
+    invalid_labels = sorted(set(normalized_predictions) - allowed_labels)
+    if invalid_labels:
+        raise ValueError(
+            "Binary label submissions must contain only observed class labels. "
+            f"Allowed labels: {sorted(allowed_labels)}; invalid labels: {invalid_labels[:10]}"
+        )
+
+
 def prepare_submission_file(
     run_dir: Path,
     model_id: str | None = None,
@@ -413,14 +469,14 @@ def prepare_submission_file(
         )
     if run_context.task_type == "binary":
         prediction_values = prediction_df[run_context.label_column]
-        if not pd.api.types.is_numeric_dtype(prediction_values):
-            raise ValueError("Binary submission predictions must be numeric probabilities.")
-        if not prediction_values.map(pd.notna).all():
-            raise ValueError("Binary submission predictions contain missing values.")
-        if not np.isfinite(prediction_values.to_numpy(dtype=float)).all():
-            raise ValueError("Binary submission predictions must be finite.")
-        if ((prediction_values < 0.0) | (prediction_values > 1.0)).any():
-            raise ValueError("Binary submission predictions must be within [0, 1].")
+        binary_prediction_kind = get_binary_prediction_kind(run_context.primary_metric)
+        if binary_prediction_kind == "probability":
+            _validate_binary_probability_predictions(prediction_values)
+        else:
+            _validate_binary_label_predictions(
+                prediction_values=prediction_values,
+                observed_label_pair=run_context.observed_label_pair,
+            )
     _validate_submission_ids(
         prediction_df=prediction_df,
         sample_submission_df=sample_submission_df,

@@ -1,6 +1,7 @@
 from dataclasses import dataclass
 from pathlib import Path
 import subprocess
+from typing import Literal
 import zipfile
 
 import pandas as pd
@@ -16,6 +17,10 @@ SUPPORTED_PRIMARY_METRICS = {
     "accuracy": "accuracy",
 }
 
+BINARY_PROBABILITY_METRICS = {"roc_auc", "log_loss"}
+BINARY_LABEL_METRICS = {"accuracy"}
+BinaryPredictionKind = Literal["probability", "label"]
+
 
 def normalize_primary_metric(metric_name: str) -> str | None:
     normalized_name = metric_name.strip().lower()
@@ -26,12 +31,21 @@ def normalize_primary_metric(metric_name: str) -> str | None:
 
 def is_metric_valid_for_task(task_type: str, primary_metric: str) -> bool:
     regression_metrics = {"rmse", "mse", "rmsle", "mae"}
-    binary_metrics = {"roc_auc", "log_loss", "accuracy"}
+    binary_metrics = BINARY_PROBABILITY_METRICS | BINARY_LABEL_METRICS
     if task_type == "regression":
         return primary_metric in regression_metrics
     if task_type == "binary":
         return primary_metric in binary_metrics
     return False
+
+
+def get_binary_prediction_kind(primary_metric: str) -> BinaryPredictionKind:
+    normalized_primary_metric = normalize_primary_metric(primary_metric)
+    if normalized_primary_metric in BINARY_PROBABILITY_METRICS:
+        return "probability"
+    if normalized_primary_metric in BINARY_LABEL_METRICS:
+        return "label"
+    raise ValueError(f"Unsupported binary primary_metric for prediction handling: {primary_metric}")
 
 
 def fetch_competition_data(competition_slug: str) -> Path:

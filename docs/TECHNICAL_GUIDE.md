@@ -20,7 +20,7 @@ The intended operating scope is Kaggle Playground Series tabular competitions. C
    - binary classification: `onehot_logreg`, `ordinal_randomforest`, `ordinal_extratrees`, `ordinal_hgb`, `ordinal_lightgbm`, `native_catboost`, `ordinal_xgboost`
 9. Write run-level diagnostics, `model_summary.csv`, and a canonical `run_manifest.json` under `artifacts/<competition_slug>/train/<run_id>/`.
 10. Write per-model fold metrics, OOF predictions, and test predictions under `artifacts/<competition_slug>/train/<run_id>/<model_id>/`.
-11. Validate predictions against `sample_submission.csv`, including exact ID content and order, using `run_manifest.json` as the submission metadata contract, write `submission.csv` in the selected model directory, and optionally submit to Kaggle.
+11. Validate predictions against `sample_submission.csv`, including exact ID content and order, using `run_manifest.json` as the submission metadata contract, apply metric-aware binary prediction validation, write `submission.csv` in the selected model directory, and optionally submit to Kaggle.
 
 ## Module Responsibilities
 - `main.py`: orchestration entrypoint for config loading, data fetch, EDA, training, and submission.
@@ -66,6 +66,10 @@ Input:
   - `submit_enabled` (boolean, default false)
   - `submit_message_prefix` (string, optional)
 
+Binary prediction artifact contract:
+- `roc_auc` and `log_loss` write positive-class probabilities to `test_predictions.csv` and `submission.csv`
+- `accuracy` writes predicted class labels to `test_predictions.csv` and `submission.csv`
+
 The config is validated by Pydantic with `extra="forbid"`. Unknown keys, schema mismatches, and missing required fields are hard errors.
 Configured metrics are normalized to the internal metric names during config validation.
 LightGBM, CatBoost, and XGBoost require the optional booster dependencies installed via `uv sync --extra boosters`.
@@ -83,6 +87,7 @@ Manual verification steps for each target:
 - confirm `model_summary.csv` is generated in the run directory
 - confirm `test_predictions.csv` is generated in each model directory
 - confirm `submission.csv` validates against `sample_submission.csv`, including exact ID values and order, for the selected model directory
+- confirm binary outputs match the configured metric contract: probabilities for `roc_auc`/`log_loss`, labels for `accuracy`
 
 ## Artifact Contract
 - A validated in-memory config object from Pydantic
@@ -121,7 +126,10 @@ Manual verification steps for each target:
 - `native_catboost` must preserve categorical feature positions through preprocessing so CatBoost can receive `cat_features`
 - Kaggle CLI and authentication are expected to be preconfigured
 - Competition zip contents are expected to include `train.csv`, `test.csv`, and `sample_submission.csv`
-- Binary classification supports any two-class target labels; the positive class is resolved from the training target and used consistently for diagnostics, scoring, and probability extraction
+- Binary classification supports any two-class target labels
+- The positive class is resolved from the training target and used consistently for diagnostics and scoring
+- Binary `roc_auc` and `log_loss` artifacts use positive-class probabilities
+- Binary `accuracy` artifacts use class labels from the observed binary label pair
 - Binary classification must have an explicit positive-class contract; when `positive_label` is omitted, the workflow only auto-resolves the positive class for `[0, 1]`, `[False, True]`, or `["No", "Yes"]`
 - `id_column` inference must resolve to exactly one column present in `train.csv`, `test.csv`, and `sample_submission.csv`
 - The resolved `id_column` is identifier metadata and must be excluded from preprocessing and model fitting by default
@@ -160,6 +168,8 @@ Hard-error cases include:
 - Fold assignment gaps in OOF generation -> hard error
 - Requested submission `model_id` not present in the run manifest -> hard error
 - Submission schema or ID mismatch against `sample_submission.csv` -> hard error
+- Binary probability artifact outside `[0, 1]` for `roc_auc` or `log_loss` -> hard error
+- Binary label artifact containing values outside the observed label pair for `accuracy` -> hard error
 - Kaggle submission command failure when `submit_enabled=true` -> hard error
 
 ## Design Guardrails
