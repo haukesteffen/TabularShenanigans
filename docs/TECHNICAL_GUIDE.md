@@ -40,7 +40,7 @@ The default `submit` path supports current manifest-backed run artifacts only. U
 - `src/tabular_shenanigans/config.py`: Pydantic-backed config schema, metric normalization, and runtime contract validation.
 - `src/tabular_shenanigans/data.py`: competition download, zip access, metric helpers, dataset schema resolution, and sample-submission template loading.
 - `src/tabular_shenanigans/eda.py`: competition-scan EDA summaries written to CSV from the shared dataset context, including missingness, categorical cardinality, target summary, and feature-type counts.
-- `src/tabular_shenanigans/models.py`: model-recipe registry, compatibility alias resolution, optional booster loading, and estimator construction for supported presets.
+- `src/tabular_shenanigans/models.py`: model-recipe registry, canonical model-id validation, optional booster loading, and estimator construction for supported presets.
 - `src/tabular_shenanigans/preprocess.py`: feature frame preparation, column typing, scheme-specific preprocessing pipelines, native-frame support for CatBoost, and preprocess-stage diagnostics.
 - `src/tabular_shenanigans/cv.py`: task-aware CV splitters and metric scoring helpers.
 - `src/tabular_shenanigans/train.py`: config-selected multi-model training from the shared dataset context, shared split handling, artifact writing, and run ledger updates.
@@ -56,11 +56,9 @@ Input:
   - `task_type` (`regression` or `binary`)
   - `primary_metric` (`rmse`, `mse`, `rmsle`, `mae`, `roc_auc`, `log_loss`, `accuracy`)
 - Optional model-selection key:
-  - `model_ids` (ordered list of baseline model recipes for the configured task)
-  - `model_id` (single-model shorthand; mutually exclusive with `model_ids`)
+  - `model_ids` (ordered list of canonical baseline model recipes for the configured task)
     - regression: `onehot_ridge`, `onehot_elasticnet`, `ordinal_randomforest`, `ordinal_extratrees`, `ordinal_hgb`, `ordinal_lightgbm`, `native_catboost`, `ordinal_xgboost`
     - binary classification: `onehot_logreg`, `ordinal_randomforest`, `ordinal_extratrees`, `ordinal_hgb`, `ordinal_lightgbm`, `native_catboost`, `ordinal_xgboost`
-    - compatibility aliases accepted during transition: `elasticnet`, `logistic_regression`, `random_forest`, `lightgbm`, `catboost`, `xgb`
 - Optional binary-classification key:
   - `positive_label` (explicit positive class for binary competitions; required unless observed labels match one of the documented safe conventions `[0, 1]`, `[False, True]`, or `["No", "Yes"]`)
 - Optional submission schema keys:
@@ -137,9 +135,9 @@ Manual verification steps for each target:
 - No config overrides via CLI or environment variables
 - Tracked example config files are documentation and starting points only; they are never read automatically at runtime
 - `task_type` and `primary_metric` must be present in config for every run
-- `model_ids` is the preferred model-selection interface; `model_id` remains the single-model shorthand and the two keys are mutually exclusive
-- `model_ids` must resolve to one or more supported presets for the configured task; if omitted, the task default is used
-- Configured model IDs are normalized to canonical preprocessing-first recipe IDs during config loading
+- `model_ids` is the config-time model-selection interface
+- `model_ids` must contain one or more canonical supported presets for the configured task; if omitted, the task default is used
+- Submit-time `model_id` remains the trained-model selector for choosing one artifact from a run
 - `native_catboost` must preserve categorical feature positions through preprocessing so CatBoost can receive `cat_features`
 - Kaggle CLI and authentication are expected to be preconfigured
 - Competition zip contents are expected to include `train.csv`, `test.csv`, and `sample_submission.csv`
@@ -170,7 +168,8 @@ Hard-error cases include:
 - Missing `task_type` or `primary_metric` -> hard error
 - Unknown/unsupported configured `primary_metric` -> hard error
 - Invalid task/metric pairing (for example `binary` + `rmse`) -> hard error
-- Invalid `model_id` or `model_ids` for the configured task -> hard error
+- Removed config key `model_id` -> hard error
+- Invalid configured `model_ids` for the configured task -> hard error
 - Empty or duplicate `model_ids` -> hard error
 - Missing/invalid competition zip contents -> hard error
 - `id_column` inference not exactly one column -> hard error

@@ -369,38 +369,9 @@ MODEL_REGISTRY: dict[str, dict[str, ModelDefinition]] = {
     },
 }
 
-MODEL_ID_ALIASES: dict[str, dict[str, str]] = {
-    "regression": {
-        "catboost": "native_catboost",
-        "catboost_native": "native_catboost",
-        "elasticnet": "onehot_elasticnet",
-        "lightgbm": "ordinal_lightgbm",
-        "random_forest": "ordinal_randomforest",
-        "xgb": "ordinal_xgboost",
-        "xgboost": "ordinal_xgboost",
-    },
-    "binary": {
-        "catboost": "native_catboost",
-        "catboost_native": "native_catboost",
-        "lightgbm": "ordinal_lightgbm",
-        "logistic_regression": "onehot_logreg",
-        "random_forest": "ordinal_randomforest",
-        "xgb": "ordinal_xgboost",
-        "xgboost": "ordinal_xgboost",
-    },
-}
-
-
 def _get_task_model_registry(task_type: str) -> dict[str, ModelDefinition]:
     try:
         return MODEL_REGISTRY[task_type]
-    except KeyError as exc:
-        raise ValueError(f"Unsupported task_type for model selection: {task_type}") from exc
-
-
-def _get_task_model_aliases(task_type: str) -> dict[str, str]:
-    try:
-        return MODEL_ID_ALIASES[task_type]
     except KeyError as exc:
         raise ValueError(f"Unsupported task_type for model selection: {task_type}") from exc
 
@@ -412,11 +383,8 @@ def get_default_model_id(task_type: str) -> str:
         raise ValueError(f"Unsupported task_type for model selection: {task_type}") from exc
 
 
-def get_supported_model_ids(task_type: str, include_aliases: bool = False) -> list[str]:
-    supported_model_ids = sorted(_get_task_model_registry(task_type))
-    if not include_aliases:
-        return supported_model_ids
-    return sorted(supported_model_ids + list(_get_task_model_aliases(task_type)))
+def get_supported_model_ids(task_type: str) -> list[str]:
+    return sorted(_get_task_model_registry(task_type))
 
 
 def resolve_model_id(task_type: str, model_id: str) -> str:
@@ -424,14 +392,10 @@ def resolve_model_id(task_type: str, model_id: str) -> str:
     if model_id in task_registry:
         return model_id
 
-    task_aliases = _get_task_model_aliases(task_type)
-    if model_id in task_aliases:
-        return task_aliases[model_id]
-
-    supported_model_ids = get_supported_model_ids(task_type, include_aliases=True)
+    supported_model_ids = get_supported_model_ids(task_type)
     raise ValueError(
-        f"Configured model_id '{model_id}' is not valid for task_type '{task_type}'. "
-        f"Supported model_ids: {supported_model_ids}"
+        f"Model id '{model_id}' is not valid for task_type '{task_type}'. "
+        f"Use canonical model_ids only. Supported model_ids: {supported_model_ids}"
     )
 
 

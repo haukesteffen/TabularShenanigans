@@ -4,13 +4,14 @@ competition_slug: playground-series-s5e12
 task_type: binary
 primary_metric: roc_auc
 
-# Prefer model_ids for multi-model baselines. Swap to model_id for a single-model smoke test.
+# Use canonical model_ids. For a single-model smoke test, keep a one-entry list.
 model_ids:
   - onehot_logreg
   - ordinal_lightgbm
   - native_catboost
   - ordinal_xgboost
-# model_id: ordinal_lightgbm
+# model_ids:
+#   - ordinal_lightgbm
 
 # Set this when labels are not one of the auto-resolved safe pairs:
 # [0, 1], [False, True], or ["No", "Yes"].

@@ -18,7 +18,7 @@ The repository is developed and manually verified primarily against these Playgr
 - Load and validate a single local repository-root `config.yaml`.
 - Fetch Kaggle competition data into `data/<competition_slug>/` when the zip is missing.
 - Require explicit `task_type` and `primary_metric` in config.
-- Select one or more baseline or booster model recipes per run from config via `model_ids`, with `model_id` retained as the single-model shorthand.
+- Select one or more baseline or booster model recipes per run from config via canonical `model_ids`.
 - Ship tracked binary and regression example configs that can be copied into the local runtime config.
 - Infer Playground-style submission schema from dataset files:
   - `id_column` as the only column shared by `train.csv`, `test.csv`, and `sample_submission.csv`
@@ -101,11 +101,9 @@ Optional binary-classification key:
 - `positive_label`: explicit positive class for binary competitions; required unless the observed training labels follow one of the documented safe conventions: `[0, 1]`, `[False, True]`, or `["No", "Yes"]`
 
 Optional model-selection key:
-- `model_ids`: ordered list of baseline model recipes for the configured task
-- `model_id`: single-model shorthand retained for backward compatibility; mutually exclusive with `model_ids`
+- `model_ids`: ordered list of canonical baseline model recipes for the configured task
   - regression: `onehot_ridge`, `onehot_elasticnet` (default), `ordinal_randomforest`, `ordinal_extratrees`, `ordinal_hgb`, `ordinal_lightgbm`, `native_catboost`, `ordinal_xgboost`
   - binary classification: `onehot_logreg` (default), `ordinal_randomforest`, `ordinal_extratrees`, `ordinal_hgb`, `ordinal_lightgbm`, `native_catboost`, `ordinal_xgboost`
-  - compatibility aliases accepted during transition: `elasticnet`, `logistic_regression`, `random_forest`, `lightgbm`, `catboost`, `xgb`
 
 Optional submission schema keys:
 - `id_column`: override for the inferred identifier column; the resolved ID column is excluded from modeled features by default
@@ -136,7 +134,7 @@ Binary prediction artifact contract:
 
 If `id_column` or `label_column` are omitted, the training pipeline infers them from `train.csv`, `test.csv`, and `sample_submission.csv`. The resolved `id_column` is preserved for prediction outputs and in `run_manifest.json`, but it is not part of the model feature matrix. Submission preparation consumes the selected run manifest as the schema/task source of truth and uses `sample_submission.csv` only for validation. Invalid overrides, ambiguous inference, a `sample_submission.csv` shape that does not exactly match `[id_column, label_column]`, or a submission ID column that differs from `sample_submission.csv` in values or ordering are hard errors.
 
-`model_ids` is the preferred config-driven model interface. If both `model_id` and `model_ids` are omitted, the workflow selects the current default recipe for the configured task: `onehot_elasticnet` for regression and `onehot_logreg` for binary classification. If `model_id` is provided, it resolves to a single-entry `model_ids` list. Backward-compatible aliases are normalized to the canonical preprocessing-first IDs during config loading, so run artifacts always use the canonical IDs.
+`model_ids` is the config-driven model-selection interface. If `model_ids` is omitted, the workflow selects the current default recipe for the configured task: `onehot_elasticnet` for regression and `onehot_logreg` for binary classification. For a single-model run, use a one-entry `model_ids` list. Config-time model selection accepts canonical preprocessing-first recipe IDs only. Submit-time `--model-id` still selects one trained model artifact from an existing run.
 
 `task_type` and `primary_metric` are always config-driven. The pipeline does not infer them from Kaggle metadata.
 
@@ -177,7 +175,7 @@ Manual verification for each target:
 - Competition zip contents include `train.csv`, `test.csv`, and `sample_submission.csv`.
 - The competition follows a simple two-column Playground submission contract: `sample_submission.csv` must be exactly `[id_column, label_column]`.
 - The resolved `id_column` is identifier metadata and is excluded from preprocessing and model fitting by default.
-- Model IDs resolve to preprocessing-aware training recipes; run artifacts record the canonical `model_id` and `preprocessing_scheme_id`.
+- Configured `model_ids` must use canonical preprocessing-aware training recipe IDs; run artifacts record the canonical `model_id` and `preprocessing_scheme_id`.
 - Submission uses `run_manifest.json` as the canonical source for `competition_slug`, `task_type`, `id_column`, and `label_column`.
 - Submission metadata includes the selected `model_id`; when no model is selected explicitly, submission defaults to the run manifest `best_model_id`.
 - Submission validation requires the selected model artifact `test_predictions.csv[id_column]` to match `sample_submission.csv[id_column]` exactly in both values and row order.
