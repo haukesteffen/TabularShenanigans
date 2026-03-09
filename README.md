@@ -25,6 +25,7 @@ The repository is developed and manually verified primarily against these Playgr
   - `label_column` as the only column shared by `train.csv` and `sample_submission.csv` but not `test.csv`
 - Exclude the resolved `id_column` from modeled features by default; identifier columns are treated as metadata, not training signal.
 - Generate terminal and CSV EDA summaries under `reports/<competition_slug>/`, including missingness, categorical cardinality, target summary, and feature-type counts.
+- Run stage-specific CLI entrypoints for `fetch`, `eda`, `preprocess`, `train`, and submit-only flows against explicit run artifacts.
 - Train one or more cross-validated model recipes with fold-local, model-specific preprocessing:
   - `onehot` preprocessing: `onehot_ridge`, `onehot_elasticnet`, `onehot_logreg`
   - `ordinal` preprocessing: `ordinal_randomforest`, `ordinal_extratrees`, `ordinal_hgb`, `ordinal_lightgbm`, `ordinal_xgboost`
@@ -54,6 +55,31 @@ cp config.regression.example.yaml config.yaml
 `config.yaml` is the only runtime config source. It is intentionally ignored by Git so you can keep local competition-specific settings without committing them.
 
 The current pipeline fetches competition data if needed, runs config-aware EDA, trains one or more CV model recipes with fold-local preprocessing and task-aware diagnostics, writes prediction artifacts, and prepares a validated submission file.
+
+## Stage Commands
+`uv run python main.py` still runs the full default pipeline: fetch, EDA, train, and submit.
+
+Available stage-specific commands:
+- `uv run python main.py fetch`
+- `uv run python main.py eda`
+- `uv run python main.py preprocess`
+- `uv run python main.py train`
+- `uv run python main.py submit --run-dir artifacts/<competition_slug>/train/<run_id>`
+- `uv run python main.py submit --run-id <run_id>`
+
+Stage behavior:
+- `fetch`: ensures competition data is present locally
+- `eda`: fetches if needed, then writes EDA report CSVs
+- `preprocess`: fetches if needed, then writes preprocessing diagnostics under `reports/<competition_slug>/`
+- `train`: fetches if needed, then trains and writes normal training artifacts
+- `submit`: requires an explicit existing run selection and never retrains implicitly
+
+The `preprocess` stage is a diagnostic/export path, not a separate required step in the normal runtime contract. It writes:
+- `preprocess_summary.csv`
+- `preprocess_features.csv`
+- `preprocess_models.csv`
+
+`submit` can take an optional `--model-id` when targeting a specific model artifact from a multi-model run.
 
 ## Config Overview
 Tracked example configs:
@@ -135,6 +161,7 @@ Manual verification for each target:
 ## Outputs
 - Competition data: `data/<competition_slug>/`
 - EDA reports: `reports/<competition_slug>/`
+  - when `preprocess` stage is run, also includes `preprocess_summary.csv`, `preprocess_features.csv`, and `preprocess_models.csv`
 - Training artifacts: `artifacts/<competition_slug>/train/<run_id>/`
   - includes `run_diagnostics.csv`, `model_summary.csv`, and `run_manifest.json`
   - includes per-model subdirectories `artifacts/<competition_slug>/train/<run_id>/<model_id>/`

@@ -22,13 +22,24 @@ The intended operating scope is Kaggle Playground Series tabular competitions. C
 10. Write per-model fold metrics, OOF predictions, and test predictions under `artifacts/<competition_slug>/train/<run_id>/<model_id>/`.
 11. Validate predictions against `sample_submission.csv`, including exact ID content and order, using `run_manifest.json` as the submission metadata contract, apply metric-aware binary prediction validation, write `submission.csv` in the selected model directory, and optionally submit to Kaggle.
 
+## CLI Stages
+- `uv run python main.py`: default full pipeline (`fetch` -> `eda` -> `train` -> `submit`)
+- `uv run python main.py fetch`: ensure competition data is present
+- `uv run python main.py eda`: fetch if needed, load the shared dataset context, and write EDA reports
+- `uv run python main.py preprocess`: fetch if needed, load the shared dataset context, validate model-specific preprocessing paths, and write preprocessing diagnostics
+- `uv run python main.py train`: fetch if needed, load the shared dataset context, and write training artifacts
+- `uv run python main.py submit --run-dir artifacts/.../train/<run_id>`: prepare or submit from an explicit existing run artifact
+- `uv run python main.py submit --run-id <run_id>`: resolve the run under `artifacts/<competition_slug>/train/<run_id>` using the configured competition slug
+
+The `preprocess` stage is intentionally diagnostic. It is not part of the default runtime contract and it does not create a second training artifact layout.
+
 ## Module Responsibilities
-- `main.py`: orchestration entrypoint for config loading, data fetch, one shared dataset load, EDA, training, and submission.
+- `main.py`: orchestration entrypoint for config loading plus stage-specific CLI dispatch across fetch, EDA, preprocess diagnostics, training, and submission.
 - `src/tabular_shenanigans/config.py`: Pydantic-backed config schema, metric normalization, and runtime contract validation.
 - `src/tabular_shenanigans/data.py`: competition download, zip access, metric helpers, dataset schema resolution, and sample-submission template loading.
 - `src/tabular_shenanigans/eda.py`: competition-scan EDA summaries written to CSV from the shared dataset context, including missingness, categorical cardinality, target summary, and feature-type counts.
 - `src/tabular_shenanigans/models.py`: model-recipe registry, compatibility alias resolution, optional booster loading, and estimator construction for supported presets.
-- `src/tabular_shenanigans/preprocess.py`: feature frame preparation, column typing, and scheme-specific preprocessing pipelines, including native-frame support for CatBoost.
+- `src/tabular_shenanigans/preprocess.py`: feature frame preparation, column typing, scheme-specific preprocessing pipelines, native-frame support for CatBoost, and preprocess-stage diagnostics.
 - `src/tabular_shenanigans/cv.py`: task-aware CV splitters and metric scoring helpers.
 - `src/tabular_shenanigans/train.py`: config-selected multi-model training from the shared dataset context, shared split handling, artifact writing, and run ledger updates.
 - `src/tabular_shenanigans/submit.py`: submission schema validation, model-artifact selection, submission message creation, Kaggle submission, and submission ledger updates.
@@ -101,6 +112,10 @@ Manual verification steps for each target:
   - `target_summary.csv`
   - `feature_type_counts.csv`
   - `run_summary.csv`
+  - when the `preprocess` stage is run:
+    - `preprocess_summary.csv`
+    - `preprocess_features.csv`
+    - `preprocess_models.csv`
 - Training artifacts under `artifacts/<competition_slug>/train/<run_id>/`:
   - `run_diagnostics.csv`
   - `model_summary.csv`
