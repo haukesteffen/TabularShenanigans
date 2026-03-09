@@ -159,17 +159,38 @@ def _read_run_ledger(ledger_path: Path) -> pd.DataFrame:
         ledger_df["best_model_name"] = legacy_model_name
     if "model_count" not in ledger_df.columns:
         ledger_df["model_count"] = 1
-    return ledger_df.reindex(columns=RUN_LEDGER_COLUMNS)
+    return ledger_df
+
+
+def _resolve_run_ledger_output_columns(
+    existing_columns: list[str],
+    row_columns: list[str],
+) -> list[str]:
+    extra_columns: list[str] = []
+    seen_extra_columns: set[str] = set()
+    for columns in (existing_columns, row_columns):
+        for column in columns:
+            if column in RUN_LEDGER_COLUMNS or column in seen_extra_columns:
+                continue
+            seen_extra_columns.add(column)
+            extra_columns.append(column)
+    return [*RUN_LEDGER_COLUMNS, *extra_columns]
 
 
 def _append_run_ledger(ledger_path: Path, row: dict[str, object]) -> None:
-    ledger_df = pd.DataFrame([row]).reindex(columns=RUN_LEDGER_COLUMNS)
+    ledger_df = pd.DataFrame([row])
     if ledger_path.exists():
         existing_df = _read_run_ledger(ledger_path)
+        output_columns = _resolve_run_ledger_output_columns(
+            existing_columns=existing_df.columns.tolist(),
+            row_columns=ledger_df.columns.tolist(),
+        )
         merged_df = pd.concat([existing_df, ledger_df], ignore_index=True, sort=False)
-        merged_df = merged_df.reindex(columns=RUN_LEDGER_COLUMNS)
+        merged_df = merged_df.reindex(columns=output_columns)
         merged_df.to_csv(ledger_path, index=False)
         return
+    output_columns = _resolve_run_ledger_output_columns(existing_columns=[], row_columns=ledger_df.columns.tolist())
+    ledger_df = ledger_df.reindex(columns=output_columns)
     ledger_df.to_csv(ledger_path, index=False)
 
 
