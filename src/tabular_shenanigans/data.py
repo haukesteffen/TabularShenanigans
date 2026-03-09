@@ -78,12 +78,47 @@ def find_competition_zip(competition_slug: str) -> Path:
     return zip_files[0]
 
 
+def _read_csv_from_archive(
+    archive: zipfile.ZipFile,
+    zip_path: Path,
+    member_name: str,
+    archive_members: set[str] | None = None,
+) -> pd.DataFrame:
+    if archive_members is None:
+        archive_members = set(archive.namelist())
+    if member_name not in archive_members:
+        raise ValueError(f"Missing {member_name} in {zip_path}")
+    with archive.open(member_name) as f:
+        return pd.read_csv(f)
+
+
 def read_csv_from_zip(zip_path: Path, member_name: str) -> pd.DataFrame:
     with zipfile.ZipFile(zip_path) as archive:
-        if member_name not in archive.namelist():
-            raise ValueError(f"Missing {member_name} in {zip_path}")
-        with archive.open(member_name) as f:
-            return pd.read_csv(f)
+        return _read_csv_from_archive(archive=archive, zip_path=zip_path, member_name=member_name)
+
+
+def _load_competition_tables(zip_path: Path) -> tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame]:
+    with zipfile.ZipFile(zip_path) as archive:
+        archive_members = set(archive.namelist())
+        train_df = _read_csv_from_archive(
+            archive=archive,
+            zip_path=zip_path,
+            member_name="train.csv",
+            archive_members=archive_members,
+        )
+        test_df = _read_csv_from_archive(
+            archive=archive,
+            zip_path=zip_path,
+            member_name="test.csv",
+            archive_members=archive_members,
+        )
+        sample_submission_df = _read_csv_from_archive(
+            archive=archive,
+            zip_path=zip_path,
+            member_name="sample_submission.csv",
+            archive_members=archive_members,
+        )
+    return train_df, test_df, sample_submission_df
 
 
 def load_sample_submission_template(competition_slug: str) -> pd.DataFrame:
@@ -185,9 +220,7 @@ def load_competition_dataset_context(
     configured_label_column: str | None = None,
 ) -> CompetitionDatasetContext:
     zip_path = find_competition_zip(competition_slug)
-    train_df = read_csv_from_zip(zip_path, "train.csv")
-    test_df = read_csv_from_zip(zip_path, "test.csv")
-    sample_submission_df = load_sample_submission_template(competition_slug)
+    train_df, test_df, sample_submission_df = _load_competition_tables(zip_path)
     id_column, label_column = resolve_id_and_label_columns(
         train_df=train_df,
         test_df=test_df,
