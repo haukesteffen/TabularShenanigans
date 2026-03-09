@@ -175,6 +175,9 @@ Manual verification for each target:
 
 Manual verification for tuning:
 - run `uv run python main.py tune` with `tuning.enabled: true`, one supported `tuning.model_id`, and at least one stopping condition
+- supported tunable `model_id`s are:
+  - binary: `onehot_logreg`, `ordinal_randomforest`, `ordinal_extratrees`, `ordinal_hgb`, `ordinal_lightgbm`, `native_catboost`, `ordinal_xgboost`
+  - regression: `ordinal_randomforest`, `ordinal_extratrees`, `ordinal_hgb`, `ordinal_lightgbm`, `native_catboost`, `ordinal_xgboost`
 - confirm `artifacts/<competition_slug>/tune/<study_id>/study_manifest.json` is written
 - confirm `artifacts/<competition_slug>/tune/<study_id>/trials.csv` records trial state, score, and params
 - confirm `artifacts/<competition_slug>/train/<run_id>/run_manifest.json` records `tuning_provenance`

@@ -365,6 +365,46 @@ def _build_logreg_tuning_space(trial: object) -> dict[str, object]:
     }
 
 
+def _build_lightgbm_tuning_space(trial: object) -> dict[str, object]:
+    return {
+        "colsample_bytree": trial.suggest_float("colsample_bytree", 0.5, 1.0),
+        "learning_rate": trial.suggest_float("learning_rate", 0.01, 0.2, log=True),
+        "max_depth": trial.suggest_int("max_depth", 3, 12),
+        "min_child_samples": trial.suggest_int("min_child_samples", 10, 100),
+        "n_estimators": trial.suggest_int("n_estimators", 200, 1200, step=100),
+        "num_leaves": trial.suggest_int("num_leaves", 16, 255),
+        "reg_alpha": trial.suggest_float("reg_alpha", 1e-10, 10.0, log=True),
+        "reg_lambda": trial.suggest_float("reg_lambda", 1e-10, 10.0, log=True),
+        "subsample": trial.suggest_float("subsample", 0.5, 1.0),
+    }
+
+
+def _build_xgboost_tuning_space(trial: object) -> dict[str, object]:
+    return {
+        "colsample_bytree": trial.suggest_float("colsample_bytree", 0.5, 1.0),
+        "gamma": trial.suggest_float("gamma", 1e-10, 10.0, log=True),
+        "learning_rate": trial.suggest_float("learning_rate", 0.01, 0.2, log=True),
+        "max_depth": trial.suggest_int("max_depth", 3, 12),
+        "min_child_weight": trial.suggest_float("min_child_weight", 1.0, 20.0),
+        "n_estimators": trial.suggest_int("n_estimators", 200, 1200, step=100),
+        "reg_alpha": trial.suggest_float("reg_alpha", 1e-10, 10.0, log=True),
+        "reg_lambda": trial.suggest_float("reg_lambda", 1e-10, 10.0, log=True),
+        "subsample": trial.suggest_float("subsample", 0.5, 1.0),
+    }
+
+
+def _build_catboost_tuning_space(trial: object) -> dict[str, object]:
+    return {
+        "bagging_temperature": trial.suggest_float("bagging_temperature", 0.0, 10.0),
+        "border_count": trial.suggest_int("border_count", 32, 255),
+        "depth": trial.suggest_int("depth", 4, 10),
+        "iterations": trial.suggest_int("iterations", 200, 1200, step=100),
+        "l2_leaf_reg": trial.suggest_float("l2_leaf_reg", 1.0, 20.0, log=True),
+        "learning_rate": trial.suggest_float("learning_rate", 0.01, 0.2, log=True),
+        "random_strength": trial.suggest_float("random_strength", 1e-10, 10.0, log=True),
+    }
+
+
 def _build_catboost_fit_kwargs(
     x_train_processed: object,
     numeric_columns: list[str],
@@ -422,6 +462,7 @@ MODEL_REGISTRY: dict[str, dict[str, ModelDefinition]] = {
             model_name="LGBMRegressor",
             preprocessing_scheme_id="ordinal",
             builder=_build_lightgbm_regressor,
+            tuning_space_builder=_build_lightgbm_tuning_space,
         ),
         "native_catboost": ModelDefinition(
             model_id="native_catboost",
@@ -429,12 +470,14 @@ MODEL_REGISTRY: dict[str, dict[str, ModelDefinition]] = {
             preprocessing_scheme_id="native",
             builder=_build_catboost_regressor,
             fit_kwargs_builder=_build_catboost_fit_kwargs,
+            tuning_space_builder=_build_catboost_tuning_space,
         ),
         "ordinal_xgboost": ModelDefinition(
             model_id="ordinal_xgboost",
             model_name="XGBRegressor",
             preprocessing_scheme_id="ordinal",
             builder=_build_xgboost_regressor,
+            tuning_space_builder=_build_xgboost_tuning_space,
         ),
     },
     "binary": {
@@ -471,6 +514,7 @@ MODEL_REGISTRY: dict[str, dict[str, ModelDefinition]] = {
             model_name="LGBMClassifier",
             preprocessing_scheme_id="ordinal",
             builder=_build_lightgbm_classifier,
+            tuning_space_builder=_build_lightgbm_tuning_space,
         ),
         "native_catboost": ModelDefinition(
             model_id="native_catboost",
@@ -478,12 +522,14 @@ MODEL_REGISTRY: dict[str, dict[str, ModelDefinition]] = {
             preprocessing_scheme_id="native",
             builder=_build_catboost_classifier,
             fit_kwargs_builder=_build_catboost_fit_kwargs,
+            tuning_space_builder=_build_catboost_tuning_space,
         ),
         "ordinal_xgboost": ModelDefinition(
             model_id="ordinal_xgboost",
             model_name="XGBClassifier",
             preprocessing_scheme_id="ordinal",
             builder=_build_xgboost_classifier,
+            tuning_space_builder=_build_xgboost_tuning_space,
         ),
     },
 }
