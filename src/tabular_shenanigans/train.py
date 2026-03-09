@@ -106,6 +106,20 @@ class ModelRunResult:
 
 
 @dataclass(frozen=True)
+class TrainingModelSpec:
+    model_id: str
+    parameter_overrides: dict[str, object] | None = None
+
+
+@dataclass(frozen=True)
+class ModelEvaluationArtifacts:
+    model_result: ModelRunResult
+    fold_metrics_df: pd.DataFrame
+    oof_predictions: np.ndarray
+    final_test_predictions: np.ndarray
+
+
+@dataclass(frozen=True)
 class TrainingRunContext:
     run_id: str
     generated_at_utc: str
@@ -129,6 +143,7 @@ class TrainingRunContext:
     cv_n_splits: int
     cv_shuffle: bool
     cv_random_state: int
+    tuning_provenance: dict[str, object] | None = None
 
 
 def _json_ready(value: object) -> object:
@@ -145,6 +160,17 @@ def _json_ready(value: object) -> object:
 
 def _make_run_id() -> str:
     return datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
+
+
+def _resolve_training_model_specs(
+    config: AppConfig,
+    model_specs: list[TrainingModelSpec] | None = None,
+) -> list[TrainingModelSpec]:
+    if model_specs is not None:
+        if not model_specs:
+            raise ValueError("Training requires at least one model specification.")
+        return model_specs
+    return [TrainingModelSpec(model_id=model_id) for model_id in config.model_ids]
 
 
 def _read_run_ledger(ledger_path: Path) -> pd.DataFrame:
@@ -352,27 +378,27 @@ def _build_run_diagnostics(
     return pd.DataFrame(run_diagnostics)
 
 
-def _train_single_model(
+def _evaluate_model_spec(
     task_type: str,
     primary_metric: str,
-    model_id: str,
+    model_spec: TrainingModelSpec,
     x_train_raw: pd.DataFrame,
     x_test_raw: pd.DataFrame,
     y_train: pd.Series,
-    test_ids: pd.Series,
-    id_column: str,
-    label_column: str,
     split_indices: list[tuple[int, np.ndarray, np.ndarray]],
-    fold_assignments: np.ndarray,
-    run_dir: Path,
     force_categorical: list[str] | None,
     force_numeric: list[str] | None,
     low_cardinality_int_threshold: int | None,
     cv_random_state: int,
     positive_label: object | None,
     negative_label: object | None,
-) -> ModelRunResult:
-    model_definition, _, model_params = build_model(task_type, model_id, cv_random_state)
+) -> ModelEvaluationArtifacts:
+    model_definition, _, model_params = build_model(
+        task_type,
+        model_spec.model_id,
+        cv_random_state,
+        parameter_overrides=model_spec.parameter_overrides,
+    )
     resolved_model_id = model_definition.model_id
     model_name = model_definition.model_name
     preprocessing_scheme_id = model_definition.preprocessing_scheme_id
@@ -409,7 +435,12 @@ def _train_single_model(
             x_fold_valid_processed = np.asarray(x_fold_valid_processed)
             x_test_processed = np.asarray(x_test_processed)
 
-        _, model, _ = build_model(task_type, resolved_model_id, cv_random_state)
+        _, model, _ = build_model(
+            task_type,
+            resolved_model_id,
+            cv_random_state,
+            parameter_overrides=model_spec.parameter_overrides,
+        )
         model_fit_kwargs = build_model_fit_kwargs(
             model_definition=model_definition,
             x_train_processed=x_fold_train_processed,
@@ -460,20 +491,75 @@ def _train_single_model(
     else:
         final_test_predictions = mean_test_predictions
 
-    model_dir = run_dir / resolved_model_id
-    model_dir.mkdir(parents=True, exist_ok=True)
-
     fold_metrics_df = pd.DataFrame(fold_metrics)
-    fold_metrics_df.to_csv(model_dir / "fold_metrics.csv", index=False)
+    return ModelEvaluationArtifacts(
+        model_result=ModelRunResult(
+            model_id=resolved_model_id,
+            model_name=model_name,
+            preprocessing_scheme_id=preprocessing_scheme_id,
+            model_params=model_params,
+            cv_summary=CvSummary(
+                metric_name=primary_metric,
+                metric_mean=float(fold_metrics_df["metric_value"].mean()),
+                metric_std=float(fold_metrics_df["metric_value"].std(ddof=0)),
+                higher_is_better=is_higher_better(primary_metric),
+            ),
+        ),
+        fold_metrics_df=fold_metrics_df,
+        oof_predictions=oof_predictions,
+        final_test_predictions=np.asarray(final_test_predictions),
+    )
+
+
+def _train_single_model(
+    task_type: str,
+    primary_metric: str,
+    model_spec: TrainingModelSpec,
+    x_train_raw: pd.DataFrame,
+    x_test_raw: pd.DataFrame,
+    y_train: pd.Series,
+    test_ids: pd.Series,
+    id_column: str,
+    label_column: str,
+    split_indices: list[tuple[int, np.ndarray, np.ndarray]],
+    fold_assignments: np.ndarray,
+    run_dir: Path,
+    force_categorical: list[str] | None,
+    force_numeric: list[str] | None,
+    low_cardinality_int_threshold: int | None,
+    cv_random_state: int,
+    positive_label: object | None,
+    negative_label: object | None,
+) -> ModelRunResult:
+    evaluation_artifacts = _evaluate_model_spec(
+        task_type=task_type,
+        primary_metric=primary_metric,
+        model_spec=model_spec,
+        x_train_raw=x_train_raw,
+        x_test_raw=x_test_raw,
+        y_train=y_train,
+        split_indices=split_indices,
+        force_categorical=force_categorical,
+        force_numeric=force_numeric,
+        low_cardinality_int_threshold=low_cardinality_int_threshold,
+        cv_random_state=cv_random_state,
+        positive_label=positive_label,
+        negative_label=negative_label,
+    )
+    model_result = evaluation_artifacts.model_result
+
+    model_dir = run_dir / model_result.model_id
+    model_dir.mkdir(parents=True, exist_ok=True)
+    evaluation_artifacts.fold_metrics_df.to_csv(model_dir / "fold_metrics.csv", index=False)
 
     oof_df = pd.DataFrame(
         {
             "row_idx": np.arange(x_train_raw.shape[0], dtype=int),
             "y_true": y_train.to_numpy(),
-            "y_pred": oof_predictions,
+            "y_pred": evaluation_artifacts.oof_predictions,
             "fold": fold_assignments,
-            "model_id": resolved_model_id,
-            "model_name": model_name,
+            "model_id": model_result.model_id,
+            "model_name": model_result.model_name,
         }
     )
     oof_df.to_csv(model_dir / "oof_predictions.csv", index=False)
@@ -481,23 +567,12 @@ def _train_single_model(
     test_predictions_df = pd.DataFrame(
         {
             id_column: test_ids.to_numpy(),
-            label_column: final_test_predictions,
+            label_column: evaluation_artifacts.final_test_predictions,
         }
     )
     test_predictions_df.to_csv(model_dir / "test_predictions.csv", index=False)
 
-    return ModelRunResult(
-        model_id=resolved_model_id,
-        model_name=model_name,
-        preprocessing_scheme_id=preprocessing_scheme_id,
-        model_params=model_params,
-        cv_summary=CvSummary(
-            metric_name=primary_metric,
-            metric_mean=float(fold_metrics_df["metric_value"].mean()),
-            metric_std=float(fold_metrics_df["metric_value"].std(ddof=0)),
-            higher_is_better=is_higher_better(primary_metric),
-        ),
-    )
+    return model_result
 
 
 def _rank_model_results(
@@ -560,6 +635,7 @@ def _build_run_manifest(
         "train_cols": run_context.train_cols,
         "test_rows": run_context.test_rows,
         "test_cols": run_context.test_cols,
+        "tuning_provenance": run_context.tuning_provenance,
     }
 
     if len(models) == 1:
@@ -599,16 +675,17 @@ def _build_run_ledger_row(
 
 def _build_config_snapshot(
     config: AppConfig,
-    model_ids: list[str],
+    model_specs: list[TrainingModelSpec],
     positive_label: object | None,
     id_column: str,
     label_column: str,
+    tuning_provenance: dict[str, object] | None = None,
 ) -> dict[str, object]:
-    return {
+    config_snapshot = {
         "competition_slug": config.competition_slug,
         "task_type": config.task_type,
         "primary_metric": config.primary_metric,
-        "model_ids": model_ids,
+        "model_ids": [model_spec.model_id for model_spec in model_specs],
         "positive_label": positive_label,
         "id_column": id_column,
         "label_column": label_column,
@@ -620,6 +697,16 @@ def _build_config_snapshot(
         "cv_shuffle": config.cv_shuffle,
         "cv_random_state": config.cv_random_state,
     }
+    parameter_overrides = {
+        model_spec.model_id: model_spec.parameter_overrides
+        for model_spec in model_specs
+        if model_spec.parameter_overrides
+    }
+    if parameter_overrides:
+        config_snapshot["model_parameter_overrides"] = parameter_overrides
+    if tuning_provenance is not None:
+        config_snapshot["tuning_provenance"] = tuning_provenance
+    return config_snapshot
 
 
 def _build_config_fingerprint(
@@ -637,12 +724,15 @@ def _build_config_fingerprint(
 def run_training(
     config: AppConfig,
     dataset_context: CompetitionDatasetContext,
+    model_specs: list[TrainingModelSpec] | None = None,
+    tuning_provenance: dict[str, object] | None = None,
 ) -> Path:
     competition_slug = config.competition_slug
     task_type = config.task_type
     primary_metric = config.primary_metric
-    model_ids = config.model_ids
     positive_label = config.positive_label
+    resolved_model_specs = _resolve_training_model_specs(config=config, model_specs=model_specs)
+    configured_model_ids = [model_spec.model_id for model_spec in resolved_model_specs]
 
     train_df = dataset_context.train_df
     test_df = dataset_context.test_df
@@ -696,11 +786,11 @@ def run_training(
     run_diagnostics_df.to_csv(run_dir / "run_diagnostics.csv", index=False)
 
     model_results: list[ModelRunResult] = []
-    for configured_model_id in model_ids:
+    for model_spec in resolved_model_specs:
         model_result = _train_single_model(
             task_type=task_type,
             primary_metric=primary_metric,
-            model_id=configured_model_id,
+            model_spec=model_spec,
             x_train_raw=x_train_raw,
             x_test_raw=x_test_raw,
             y_train=y_train,
@@ -725,17 +815,18 @@ def run_training(
             f"std={model_result.cv_summary.metric_std:.6f}"
         )
 
-    model_results, best_model_result = _rank_model_results(model_results, model_ids)
+    model_results, best_model_result = _rank_model_results(model_results, configured_model_ids)
     model_summary_rows = _build_model_summary_rows(model_results)
     model_summary_df = pd.DataFrame(model_summary_rows)
     model_summary_df.to_csv(run_dir / "model_summary.csv", index=False)
 
     config_snapshot = _build_config_snapshot(
         config=config,
-        model_ids=model_ids,
+        model_specs=resolved_model_specs,
         positive_label=positive_label,
         id_column=id_column,
         label_column=label_column,
+        tuning_provenance=tuning_provenance,
     )
     config_fingerprint = _build_config_fingerprint(
         config_snapshot=config_snapshot,
@@ -766,6 +857,7 @@ def run_training(
         cv_n_splits=config.cv_n_splits,
         cv_shuffle=config.cv_shuffle,
         cv_random_state=config.cv_random_state,
+        tuning_provenance=tuning_provenance,
     )
     run_manifest = _build_run_manifest(run_context)
     run_manifest_json = json.dumps(_json_ready(run_manifest), indent=2)

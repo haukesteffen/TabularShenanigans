@@ -22,12 +22,15 @@ The intended operating scope is Kaggle Playground Series tabular competitions. C
 10. Write per-model fold metrics, OOF predictions, and test predictions under `artifacts/<competition_slug>/train/<run_id>/<model_id>/`.
 11. Validate predictions against `sample_submission.csv`, including exact ID content and order, using `run_manifest.json` as the submission metadata contract, apply metric-aware binary prediction validation, write `submission.csv` in the selected model directory, and optionally submit to Kaggle.
 
+When the explicit `tune` stage is selected, the workflow additionally runs an Optuna study for one configured `tuning.model_id`, writes tuning artifacts under `artifacts/<competition_slug>/tune/<study_id>/`, and retrains the best trial into the standard train artifact layout with `tuning_provenance` recorded in `run_manifest.json`.
+
 ## CLI Stages
 - `uv run python main.py`: default full pipeline (`fetch` -> `eda` -> `train` -> `submit`)
 - `uv run python main.py fetch`: ensure competition data is present
 - `uv run python main.py eda`: fetch if needed, load the shared dataset context, and write EDA reports
 - `uv run python main.py preprocess`: fetch if needed, load the shared dataset context, validate model-specific preprocessing paths, and write preprocessing diagnostics
 - `uv run python main.py train`: fetch if needed, load the shared dataset context, and write training artifacts
+- `uv run python main.py tune`: fetch if needed, load the shared dataset context, run an Optuna study for `tuning.model_id`, write tuning artifacts, and retrain the best trial into normal training artifacts
 - `uv run python main.py submit --run-dir artifacts/.../train/<run_id>`: prepare or submit from an explicit existing run artifact
 - `uv run python main.py submit --run-id <run_id>`: resolve the run under `artifacts/<competition_slug>/train/<run_id>` using the configured competition slug
 
@@ -36,14 +39,15 @@ The `preprocess` stage is intentionally diagnostic. It is not part of the defaul
 The default `submit` path supports current manifest-backed run artifacts only. Unsupported older local artifact layouts fail directly instead of using compatibility fallbacks.
 
 ## Module Responsibilities
-- `main.py`: orchestration entrypoint for config loading plus stage-specific CLI dispatch across fetch, EDA, preprocess diagnostics, training, and submission.
+- `main.py`: orchestration entrypoint for config loading plus stage-specific CLI dispatch across fetch, EDA, preprocess diagnostics, training, tuning, and submission.
 - `src/tabular_shenanigans/config.py`: Pydantic-backed config schema, metric normalization, and runtime contract validation.
 - `src/tabular_shenanigans/data.py`: competition download, zip access, metric helpers, dataset schema resolution, and sample-submission template loading.
 - `src/tabular_shenanigans/eda.py`: competition-scan EDA summaries written to CSV from the shared dataset context, including missingness, categorical cardinality, target summary, and feature-type counts.
-- `src/tabular_shenanigans/models.py`: model-recipe registry, canonical model-id validation, optional booster loading, and estimator construction for supported presets.
+- `src/tabular_shenanigans/models.py`: model-recipe registry, canonical model-id validation, tunable-model search spaces, optional booster loading, and estimator construction for supported presets.
 - `src/tabular_shenanigans/preprocess.py`: feature frame preparation, column typing, scheme-specific preprocessing pipelines, native-frame support for CatBoost, and preprocess-stage diagnostics.
 - `src/tabular_shenanigans/cv.py`: task-aware CV splitters and metric scoring helpers.
 - `src/tabular_shenanigans/train.py`: config-selected multi-model training from the shared dataset context, shared split handling, artifact writing, and run ledger updates.
+- `src/tabular_shenanigans/tune.py`: Optuna study execution, study artifact writing, and best-trial retraining into the standard train artifact layout.
 - `src/tabular_shenanigans/submit.py`: submission schema validation, model-artifact selection, submission message creation, Kaggle submission, and submission ledger updates.
 
 ## Configuration Contract
@@ -73,6 +77,14 @@ Input:
   - `cv_n_splits` (integer >= 2, default 7)
   - `cv_shuffle` (boolean, default true)
   - `cv_random_state` (integer, default 42)
+- Optional tuning block:
+  - `tuning.enabled` (boolean, default false)
+  - `tuning.model_id` (one explicit canonical tunable model recipe for the configured task)
+    - regression: `ordinal_randomforest`, `ordinal_extratrees`, `ordinal_hgb`
+    - binary classification: `onehot_logreg`, `ordinal_randomforest`, `ordinal_extratrees`, `ordinal_hgb`
+  - `tuning.n_trials` (integer >= 1, optional)
+  - `tuning.timeout_seconds` (integer >= 1, optional)
+  - `tuning.random_state` (integer, default 42)
 - Optional keys for submission:
   - `submit_enabled` (boolean, default false)
   - `submit_message_prefix` (string, optional)
@@ -83,6 +95,8 @@ Binary prediction artifact contract:
 
 The config is validated by Pydantic with `extra="forbid"`. Unknown keys, schema mismatches, and missing required fields are hard errors.
 Configured metrics are normalized to the internal metric names during config validation.
+tuning requires at least one stopping condition: `tuning.n_trials` or `tuning.timeout_seconds`.
+tune uses `tuning.model_id` only; the normal `train` stage still uses top-level `model_ids`.
 LightGBM, CatBoost, and XGBoost require the optional booster dependencies installed via `uv sync --extra boosters`.
 
 ## Preferred Verification Targets
@@ -99,6 +113,8 @@ Manual verification steps for each target:
 - confirm `test_predictions.csv` is generated in each model directory
 - confirm `submission.csv` validates against `sample_submission.csv`, including exact ID values and order, for the selected model directory
 - confirm binary outputs match the configured metric contract: probabilities for `roc_auc`/`log_loss`, labels for `accuracy`
+- when tuning is enabled, run `uv run python main.py tune` and confirm `study_manifest.json`, `study_summary.csv`, `trials.csv`, and `best_params.json` are generated under `artifacts/<competition_slug>/tune/<study_id>/`
+- when tuning is enabled, confirm the best-trial retrain writes a standard train artifact and records `tuning_provenance` in `run_manifest.json`
 
 ## Artifact Contract
 - A validated in-memory config object from Pydantic
@@ -127,6 +143,12 @@ Manual verification steps for each target:
     - `submission.csv` when prepared or submitted
 - `run_manifest.json` is the canonical per-run metadata source
 - Each model entry in `model_summary.csv` and `run_manifest.json` records the resolved `preprocessing_scheme_id`
+- tuned retrain runs record `tuning_provenance` in `run_manifest.json`
+- Tuning artifacts under `artifacts/<competition_slug>/tune/<study_id>/`:
+  - `study_manifest.json`
+  - `study_summary.csv`
+  - `trials.csv`
+  - `best_params.json`
 - Training ledger at `artifacts/<competition_slug>/train/runs.csv` with compact comparison fields and task-aware target summary fields
 - Append-only submission ledger at `artifacts/<competition_slug>/train/submissions.csv` with submission event metadata only
 
@@ -137,6 +159,9 @@ Manual verification steps for each target:
 - `task_type` and `primary_metric` must be present in config for every run
 - `model_ids` is the config-time model-selection interface
 - `model_ids` must contain one or more canonical supported presets for the configured task; if omitted, the task default is used
+- the `tune` stage requires `tuning.enabled=true`, uses `tuning.model_id` only, and retrains exactly one tuned candidate into the normal train artifact layout
+- `tuning.model_id` must be one of the supported tunable model recipes for the configured task
+- tuning must have at least one stopping condition: `tuning.n_trials` or `tuning.timeout_seconds`
 - Submit-time `model_id` remains the trained-model selector for choosing one artifact from a run
 - `native_catboost` must preserve categorical feature positions through preprocessing so CatBoost can receive `cat_features`
 - Kaggle CLI and authentication are expected to be preconfigured
@@ -171,6 +196,9 @@ Hard-error cases include:
 - Removed config key `model_id` -> hard error
 - Invalid configured `model_ids` for the configured task -> hard error
 - Empty or duplicate `model_ids` -> hard error
+- `tuning.enabled=true` without `tuning.model_id` -> hard error
+- `tuning.enabled=true` without `tuning.n_trials` or `tuning.timeout_seconds` -> hard error
+- unsupported configured `tuning.model_id` for the configured task -> hard error
 - Missing/invalid competition zip contents -> hard error
 - `id_column` inference not exactly one column -> hard error
 - `label_column` inference not exactly one column -> hard error
