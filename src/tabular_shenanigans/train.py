@@ -6,8 +6,9 @@ from pathlib import Path
 import numpy as np
 import pandas as pd
 
+from tabular_shenanigans.config import AppConfig
 from tabular_shenanigans.cv import build_splitter, is_higher_better, resolve_positive_label, score_predictions
-from tabular_shenanigans.data import get_binary_prediction_kind, load_competition_dataset_context
+from tabular_shenanigans.data import CompetitionDatasetContext, get_binary_prediction_kind
 from tabular_shenanigans.models import build_model, build_model_fit_kwargs
 from tabular_shenanigans.preprocess import build_preprocessor, prepare_feature_frames
 
@@ -533,26 +534,15 @@ def _build_run_ledger_row(
 
 
 def run_training(
-    competition_slug: str,
-    task_type: str,
-    primary_metric: str,
-    model_ids: list[str],
-    id_column: str | None = None,
-    label_column: str | None = None,
-    force_categorical: list[str] | None = None,
-    force_numeric: list[str] | None = None,
-    drop_columns: list[str] | None = None,
-    low_cardinality_int_threshold: int | None = None,
-    cv_n_splits: int = 7,
-    cv_shuffle: bool = True,
-    cv_random_state: int = 42,
-    positive_label: str | int | bool | None = None,
+    config: AppConfig,
+    dataset_context: CompetitionDatasetContext,
 ) -> Path:
-    dataset_context = load_competition_dataset_context(
-        competition_slug=competition_slug,
-        configured_id_column=id_column,
-        configured_label_column=label_column,
-    )
+    competition_slug = config.competition_slug
+    task_type = config.task_type
+    primary_metric = config.primary_metric
+    model_ids = config.model_ids
+    positive_label = config.positive_label
+
     train_df = dataset_context.train_df
     test_df = dataset_context.test_df
     id_column = dataset_context.id_column
@@ -563,9 +553,9 @@ def run_training(
         test_df=test_df,
         id_column=id_column,
         label_column=label_column,
-        force_categorical=force_categorical,
-        force_numeric=force_numeric,
-        drop_columns=drop_columns,
+        force_categorical=config.force_categorical,
+        force_numeric=config.force_numeric,
+        drop_columns=config.drop_columns,
     )
 
     observed_label_pair = None
@@ -580,9 +570,9 @@ def run_training(
         task_type=task_type,
         x_train_raw=x_train_raw,
         y_train=y_train,
-        n_splits=cv_n_splits,
-        shuffle=cv_shuffle,
-        random_state=cv_random_state,
+        n_splits=config.cv_n_splits,
+        shuffle=config.cv_shuffle,
+        random_state=config.cv_random_state,
     )
     fold_assignments = _build_fold_assignments(x_train_raw.shape[0], split_indices)
     run_diagnostics_df = _build_run_diagnostics(
@@ -620,10 +610,10 @@ def run_training(
             split_indices=split_indices,
             fold_assignments=fold_assignments,
             run_dir=run_dir,
-            force_categorical=force_categorical,
-            force_numeric=force_numeric,
-            low_cardinality_int_threshold=low_cardinality_int_threshold,
-            cv_random_state=cv_random_state,
+            force_categorical=config.force_categorical,
+            force_numeric=config.force_numeric,
+            low_cardinality_int_threshold=config.low_cardinality_int_threshold,
+            cv_random_state=config.cv_random_state,
             positive_label=positive_label,
             negative_label=negative_label,
         )
@@ -670,13 +660,13 @@ def run_training(
         "positive_label": positive_label,
         "id_column": id_column,
         "label_column": label_column,
-        "force_categorical": force_categorical or [],
-        "force_numeric": force_numeric or [],
-        "drop_columns": drop_columns or [],
-        "low_cardinality_int_threshold": low_cardinality_int_threshold,
-        "cv_n_splits": cv_n_splits,
-        "cv_shuffle": cv_shuffle,
-        "cv_random_state": cv_random_state,
+        "force_categorical": config.force_categorical,
+        "force_numeric": config.force_numeric,
+        "drop_columns": config.drop_columns,
+        "low_cardinality_int_threshold": config.low_cardinality_int_threshold,
+        "cv_n_splits": config.cv_n_splits,
+        "cv_shuffle": config.cv_shuffle,
+        "cv_random_state": config.cv_random_state,
     }
     fingerprint_payload = {
         "config_snapshot": config_snapshot,
@@ -719,9 +709,9 @@ def run_training(
 
     ledger_row = _build_run_ledger_row(
         run_manifest=run_manifest,
-        cv_n_splits=cv_n_splits,
-        cv_shuffle=cv_shuffle,
-        cv_random_state=cv_random_state,
+        cv_n_splits=config.cv_n_splits,
+        cv_shuffle=config.cv_shuffle,
+        cv_random_state=config.cv_random_state,
     )
     ledger_path = Path("artifacts") / competition_slug / "train" / "runs.csv"
     _append_run_ledger(ledger_path, ledger_row)

@@ -8,8 +8,8 @@ The intended operating scope is Kaggle Playground Series tabular competitions. C
 1. Load and validate the local repository-root `config.yaml`.
 2. Use explicit `task_type` and `primary_metric` from config.
 3. Download the competition zip into `data/<competition_slug>/` when it is missing.
-4. Read `train.csv`, `test.csv`, and `sample_submission.csv` from the zip as needed.
-5. Run EDA and write report CSVs under `reports/<competition_slug>/`.
+4. Load one shared dataset context from `train.csv`, `test.csv`, and `sample_submission.csv`.
+5. Run EDA against that shared dataset context and write report CSVs under `reports/<competition_slug>/`.
 6. Resolve `id_column` and `label_column` from `train.csv`, `test.csv`, and `sample_submission.csv`, then prepare raw feature frames from the train/test data with the resolved `id_column` excluded from modeled features.
 7. During training, build fold-local preprocessing from the selected model recipe:
    - `onehot`: numeric median imputation + `StandardScaler`; categorical most-frequent imputation + `OneHotEncoder`
@@ -23,14 +23,14 @@ The intended operating scope is Kaggle Playground Series tabular competitions. C
 11. Validate predictions against `sample_submission.csv`, including exact ID content and order, using `run_manifest.json` as the submission metadata contract, apply metric-aware binary prediction validation, write `submission.csv` in the selected model directory, and optionally submit to Kaggle.
 
 ## Module Responsibilities
-- `main.py`: orchestration entrypoint for config loading, data fetch, EDA, training, and submission.
+- `main.py`: orchestration entrypoint for config loading, data fetch, one shared dataset load, EDA, training, and submission.
 - `src/tabular_shenanigans/config.py`: Pydantic-backed config schema, metric normalization, and runtime contract validation.
 - `src/tabular_shenanigans/data.py`: competition download, zip access, metric helpers, dataset schema resolution, and sample-submission template loading.
-- `src/tabular_shenanigans/eda.py`: competition-scan EDA summaries written to CSV, including missingness, categorical cardinality, target summary, and feature-type counts.
+- `src/tabular_shenanigans/eda.py`: competition-scan EDA summaries written to CSV from the shared dataset context, including missingness, categorical cardinality, target summary, and feature-type counts.
 - `src/tabular_shenanigans/models.py`: model-recipe registry, compatibility alias resolution, optional booster loading, and estimator construction for supported presets.
 - `src/tabular_shenanigans/preprocess.py`: feature frame preparation, column typing, and scheme-specific preprocessing pipelines, including native-frame support for CatBoost.
 - `src/tabular_shenanigans/cv.py`: task-aware CV splitters and metric scoring helpers.
-- `src/tabular_shenanigans/train.py`: config-selected multi-model training, shared split handling, artifact writing, and run ledger updates.
+- `src/tabular_shenanigans/train.py`: config-selected multi-model training from the shared dataset context, shared split handling, artifact writing, and run ledger updates.
 - `src/tabular_shenanigans/submit.py`: submission schema validation, model-artifact selection, submission message creation, Kaggle submission, and submission ledger updates.
 
 ## Configuration Contract
