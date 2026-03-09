@@ -8,6 +8,7 @@ from pathlib import Path
 import numpy as np
 import pandas as pd
 
+from tabular_shenanigans.config import AppConfig
 from tabular_shenanigans.data import get_binary_prediction_kind, load_sample_submission_template, validate_sample_submission_schema
 
 SUBMISSION_LEDGER_COLUMNS = [
@@ -504,9 +505,8 @@ def build_submission_message(
 
 
 def run_submission(
+    config: AppConfig,
     run_dir: Path,
-    submit_enabled: bool,
-    submit_message_prefix: str | None = None,
     model_id: str | None = None,
 ) -> tuple[Path, str]:
     run_context = _load_submission_run_context(run_dir=run_dir, model_id=model_id)
@@ -514,11 +514,11 @@ def run_submission(
     submission_path = prepare_submission_file(run_dir=run_dir, model_id=model_id)
     message = build_submission_message(
         run_dir=run_dir,
-        submit_message_prefix=submit_message_prefix,
+        submit_message_prefix=config.submit_message_prefix,
         model_id=model_id,
     )
 
-    if submit_enabled:
+    if config.submit_enabled:
         completed = subprocess.run(
             [
                 "kaggle",
@@ -552,7 +552,7 @@ def run_submission(
         "model_name": run_metadata["model_name"],
         "config_fingerprint": run_context.config_fingerprint,
         "submission_path": str(submission_path),
-        "submit_enabled": submit_enabled,
+        "submit_enabled": config.submit_enabled,
         "status": status,
         "message": message,
     }

@@ -2,7 +2,8 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 import pandas as pd
-from tabular_shenanigans.data import load_competition_dataset_context
+from tabular_shenanigans.config import AppConfig
+from tabular_shenanigans.data import CompetitionDatasetContext
 from tabular_shenanigans.preprocess import prepare_feature_frames, summarize_feature_types
 
 
@@ -79,19 +80,9 @@ def _target_summary(train_df: pd.DataFrame, target_column: str) -> pd.DataFrame:
 
 
 def run_eda(
-    competition_slug: str,
-    id_column: str | None = None,
-    label_column: str | None = None,
-    force_categorical: list[str] | None = None,
-    force_numeric: list[str] | None = None,
-    drop_columns: list[str] | None = None,
-    low_cardinality_int_threshold: int | None = None,
+    config: AppConfig,
+    dataset_context: CompetitionDatasetContext,
 ) -> Path:
-    dataset_context = load_competition_dataset_context(
-        competition_slug=competition_slug,
-        configured_id_column=id_column,
-        configured_label_column=label_column,
-    )
     train_df = dataset_context.train_df
     test_df = dataset_context.test_df
     id_column = dataset_context.id_column
@@ -102,12 +93,12 @@ def run_eda(
         test_df=test_df,
         id_column=id_column,
         label_column=label_column,
-        force_categorical=force_categorical,
-        force_numeric=force_numeric,
-        drop_columns=drop_columns,
+        force_categorical=config.force_categorical,
+        force_numeric=config.force_numeric,
+        drop_columns=config.drop_columns,
     )
 
-    report_dir = Path("reports") / competition_slug
+    report_dir = Path("reports") / config.competition_slug
     report_dir.mkdir(parents=True, exist_ok=True)
 
     _column_summary(train_df).to_csv(report_dir / "columns_train.csv", index=False)
@@ -120,9 +111,9 @@ def run_eda(
     _target_summary(train_df, label_column).to_csv(report_dir / "target_summary.csv", index=False)
     feature_type_counts = summarize_feature_types(
         x_train_raw=x_train_raw,
-        force_categorical=force_categorical,
-        force_numeric=force_numeric,
-        low_cardinality_int_threshold=low_cardinality_int_threshold,
+        force_categorical=config.force_categorical,
+        force_numeric=config.force_numeric,
+        low_cardinality_int_threshold=config.low_cardinality_int_threshold,
     )
     feature_type_counts.to_csv(report_dir / "feature_type_counts.csv", index=False)
 
