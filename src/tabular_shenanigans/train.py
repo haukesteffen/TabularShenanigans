@@ -1,5 +1,6 @@
 import hashlib
 import json
+from dataclasses import dataclass, replace
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -40,6 +41,94 @@ RUN_LEDGER_COLUMNS = [
     "observed_label_2",
     "negative_label",
 ]
+
+
+@dataclass(frozen=True)
+class CvSummary:
+    metric_name: str
+    metric_mean: float
+    metric_std: float
+    higher_is_better: bool
+
+    def to_dict(self) -> dict[str, object]:
+        return {
+            "metric_name": self.metric_name,
+            "metric_mean": self.metric_mean,
+            "metric_std": self.metric_std,
+            "higher_is_better": self.higher_is_better,
+        }
+
+
+@dataclass(frozen=True)
+class ModelRunResult:
+    model_id: str
+    model_name: str
+    preprocessing_scheme_id: str
+    model_params: dict[str, object]
+    cv_summary: CvSummary
+    rank: int | None = None
+    is_best_model: bool = False
+
+    def require_rank(self) -> int:
+        if self.rank is None:
+            raise ValueError("Model run result must be ranked before writing run-level artifacts.")
+        return self.rank
+
+    def to_model_summary_row(self) -> dict[str, object]:
+        return {
+            "model_id": self.model_id,
+            "model_name": self.model_name,
+            "preprocessing_scheme_id": self.preprocessing_scheme_id,
+            "metric_name": self.cv_summary.metric_name,
+            "cv_mean": self.cv_summary.metric_mean,
+            "cv_std": self.cv_summary.metric_std,
+            "higher_is_better": self.cv_summary.higher_is_better,
+            "rank": self.require_rank(),
+            "is_best_model": self.is_best_model,
+        }
+
+    def to_manifest_model_entry(self) -> dict[str, object]:
+        return {
+            "model_id": self.model_id,
+            "model_name": self.model_name,
+            "preprocessing_scheme_id": self.preprocessing_scheme_id,
+            "model_params": self.model_params,
+            "cv_summary": self.cv_summary.to_dict(),
+            "rank": self.require_rank(),
+            "is_best_model": self.is_best_model,
+        }
+
+    def to_fingerprint_model_entry(self) -> dict[str, object]:
+        return {
+            "model_id": self.model_id,
+            "model_params": self.model_params,
+        }
+
+
+@dataclass(frozen=True)
+class TrainingRunContext:
+    run_id: str
+    generated_at_utc: str
+    competition_slug: str
+    task_type: str
+    primary_metric: str
+    config_snapshot: dict[str, object]
+    config_fingerprint: str
+    model_results: list[ModelRunResult]
+    best_model_result: ModelRunResult
+    observed_label_pair: tuple[object, object] | None
+    negative_label: object | None
+    positive_label: object | None
+    id_column: str
+    label_column: str
+    target_summary: dict[str, object]
+    train_rows: int
+    train_cols: int
+    test_rows: int
+    test_cols: int
+    cv_n_splits: int
+    cv_shuffle: bool
+    cv_random_state: int
 
 
 def _json_ready(value: object) -> object:
@@ -243,7 +332,6 @@ def _build_run_diagnostics(
 
 
 def _train_single_model(
-    competition_slug: str,
     task_type: str,
     primary_metric: str,
     model_id: str,
@@ -262,7 +350,7 @@ def _train_single_model(
     cv_random_state: int,
     positive_label: object | None,
     negative_label: object | None,
-) -> dict[str, object]:
+) -> ModelRunResult:
     model_definition, _, model_params = build_model(task_type, model_id, cv_random_state)
     resolved_model_id = model_definition.model_id
     model_name = model_definition.model_name
@@ -377,104 +465,80 @@ def _train_single_model(
     )
     test_predictions_df.to_csv(model_dir / "test_predictions.csv", index=False)
 
-    return {
-        "competition_slug": competition_slug,
-        "model_id": resolved_model_id,
-        "model_name": model_name,
-        "preprocessing_scheme_id": preprocessing_scheme_id,
-        "model_params": model_params,
-        "cv_mean": float(fold_metrics_df["metric_value"].mean()),
-        "cv_std": float(fold_metrics_df["metric_value"].std(ddof=0)),
-        "higher_is_better": is_higher_better(primary_metric),
-    }
+    return ModelRunResult(
+        model_id=resolved_model_id,
+        model_name=model_name,
+        preprocessing_scheme_id=preprocessing_scheme_id,
+        model_params=model_params,
+        cv_summary=CvSummary(
+            metric_name=primary_metric,
+            metric_mean=float(fold_metrics_df["metric_value"].mean()),
+            metric_std=float(fold_metrics_df["metric_value"].std(ddof=0)),
+            higher_is_better=is_higher_better(primary_metric),
+        ),
+    )
 
 
 def _rank_model_results(
-    model_results: list[dict[str, object]],
+    model_results: list[ModelRunResult],
     configured_model_ids: list[str],
-) -> list[dict[str, object]]:
+) -> tuple[list[ModelRunResult], ModelRunResult]:
     model_order = {model_id: index for index, model_id in enumerate(configured_model_ids)}
 
     sorted_results = sorted(
         model_results,
         key=lambda result: (
-            -float(result["cv_mean"]) if bool(result["higher_is_better"]) else float(result["cv_mean"]),
-            model_order[str(result["model_id"])],
+            -result.cv_summary.metric_mean if result.cv_summary.higher_is_better else result.cv_summary.metric_mean,
+            model_order[result.model_id],
         ),
     )
 
+    ranked_results_by_model_id: dict[str, ModelRunResult] = {}
     for rank, result in enumerate(sorted_results, start=1):
-        result["rank"] = rank
-        result["is_best_model"] = rank == 1
+        ranked_results_by_model_id[result.model_id] = replace(
+            result,
+            rank=rank,
+            is_best_model=rank == 1,
+        )
 
-    return sorted_results
+    ranked_results = [ranked_results_by_model_id[result.model_id] for result in model_results]
+    best_model_result = ranked_results_by_model_id[sorted_results[0].model_id]
+    return ranked_results, best_model_result
 
 
 def _build_model_summary_rows(
-    ranked_model_results: list[dict[str, object]],
-    primary_metric: str,
+    model_results: list[ModelRunResult],
 ) -> list[dict[str, object]]:
-    summary_rows: list[dict[str, object]] = []
-    for result in ranked_model_results:
-        summary_rows.append(
-            {
-                "model_id": result["model_id"],
-                "model_name": result["model_name"],
-                "preprocessing_scheme_id": result["preprocessing_scheme_id"],
-                "metric_name": primary_metric,
-                "cv_mean": result["cv_mean"],
-                "cv_std": result["cv_std"],
-                "higher_is_better": result["higher_is_better"],
-                "rank": result["rank"],
-                "is_best_model": result["is_best_model"],
-            }
-        )
-    return summary_rows
+    ranked_results = sorted(model_results, key=lambda result: result.require_rank())
+    return [result.to_model_summary_row() for result in ranked_results]
 
 
 def _build_run_manifest(
-    run_id: str,
-    generated_at_utc: str,
-    competition_slug: str,
-    task_type: str,
-    primary_metric: str,
-    config_fingerprint: str,
-    config_snapshot: dict[str, object],
-    model_ids: list[str],
-    best_model_id: str,
-    models: list[dict[str, object]],
-    observed_label_pair: tuple[object, object] | None,
-    negative_label: object | None,
-    positive_label: object | None,
-    id_column: str,
-    label_column: str,
-    target_summary: dict[str, object],
-    train_rows: int,
-    train_cols: int,
-    test_rows: int,
-    test_cols: int,
+    run_context: TrainingRunContext,
 ) -> dict[str, object]:
+    model_ids = [result.model_id for result in run_context.model_results]
+    models = [result.to_manifest_model_entry() for result in run_context.model_results]
     run_manifest = {
-        "run_id": run_id,
-        "generated_at_utc": generated_at_utc,
-        "competition_slug": competition_slug,
-        "task_type": task_type,
-        "primary_metric": primary_metric,
-        "config_fingerprint": config_fingerprint,
-        "config_snapshot": config_snapshot,
+        "run_id": run_context.run_id,
+        "generated_at_utc": run_context.generated_at_utc,
+        "competition_slug": run_context.competition_slug,
+        "task_type": run_context.task_type,
+        "primary_metric": run_context.primary_metric,
+        "config_fingerprint": run_context.config_fingerprint,
+        "config_snapshot": run_context.config_snapshot,
         "model_ids": model_ids,
-        "best_model_id": best_model_id,
+        "best_model_id": run_context.best_model_result.model_id,
         "models": models,
-        "observed_label_pair": list(observed_label_pair) if observed_label_pair is not None else None,
-        "negative_label": negative_label,
-        "positive_label": positive_label,
-        "id_column": id_column,
-        "label_column": label_column,
-        "target_summary": target_summary,
-        "train_rows": train_rows,
-        "train_cols": train_cols,
-        "test_rows": test_rows,
-        "test_cols": test_cols,
+        "observed_label_pair": list(run_context.observed_label_pair) if run_context.observed_label_pair is not None else None,
+        "negative_label": run_context.negative_label,
+        "positive_label": run_context.positive_label,
+        "id_column": run_context.id_column,
+        "label_column": run_context.label_column,
+        "target_summary": run_context.target_summary,
+        "train_rows": run_context.train_rows,
+        "train_cols": run_context.train_cols,
+        "test_rows": run_context.test_rows,
+        "test_cols": run_context.test_cols,
     }
 
     if len(models) == 1:
@@ -489,48 +553,65 @@ def _build_run_manifest(
 
 
 def _build_run_ledger_row(
-    run_manifest: dict[str, object],
-    cv_n_splits: int,
-    cv_shuffle: bool,
-    cv_random_state: int,
+    run_context: TrainingRunContext,
 ) -> dict[str, object]:
-    models = run_manifest.get("models")
-    if not isinstance(models, list) or not models:
-        raise ValueError("Run manifest models must be a non-empty list.")
-
-    best_model_id = run_manifest.get("best_model_id")
-    best_model = next(
-        (model for model in models if isinstance(model, dict) and model.get("model_id") == best_model_id),
-        None,
-    )
-    if best_model is None:
-        raise ValueError("Run manifest best_model_id must match one of the model entries.")
-
-    cv_summary = best_model.get("cv_summary")
-    if not isinstance(cv_summary, dict):
-        raise ValueError("Run manifest model cv_summary must be a mapping.")
-
     ledger_row = {
-        "run_id": run_manifest["run_id"],
-        "timestamp_utc": run_manifest["generated_at_utc"],
-        "competition_slug": run_manifest["competition_slug"],
-        "task_type": run_manifest["task_type"],
-        "primary_metric": run_manifest["primary_metric"],
-        "best_model_id": best_model["model_id"],
-        "best_model_name": best_model["model_name"],
-        "cv_mean": cv_summary["metric_mean"],
-        "cv_std": cv_summary["metric_std"],
-        "higher_is_better": cv_summary["higher_is_better"],
-        "model_count": len(models),
-        "cv_n_splits": cv_n_splits,
-        "cv_shuffle": cv_shuffle,
-        "cv_random_state": cv_random_state,
-        "config_fingerprint": run_manifest["config_fingerprint"],
+        "run_id": run_context.run_id,
+        "timestamp_utc": run_context.generated_at_utc,
+        "competition_slug": run_context.competition_slug,
+        "task_type": run_context.task_type,
+        "primary_metric": run_context.primary_metric,
+        "best_model_id": run_context.best_model_result.model_id,
+        "best_model_name": run_context.best_model_result.model_name,
+        "cv_mean": run_context.best_model_result.cv_summary.metric_mean,
+        "cv_std": run_context.best_model_result.cv_summary.metric_std,
+        "higher_is_better": run_context.best_model_result.cv_summary.higher_is_better,
+        "model_count": len(run_context.model_results),
+        "cv_n_splits": run_context.cv_n_splits,
+        "cv_shuffle": run_context.cv_shuffle,
+        "cv_random_state": run_context.cv_random_state,
+        "config_fingerprint": run_context.config_fingerprint,
     }
-    target_summary = run_manifest.get("target_summary", {})
-    if isinstance(target_summary, dict):
-        ledger_row.update(target_summary)
+    ledger_row.update(run_context.target_summary)
     return ledger_row
+
+
+def _build_config_snapshot(
+    config: AppConfig,
+    model_ids: list[str],
+    positive_label: object | None,
+    id_column: str,
+    label_column: str,
+) -> dict[str, object]:
+    return {
+        "competition_slug": config.competition_slug,
+        "task_type": config.task_type,
+        "primary_metric": config.primary_metric,
+        "model_id": model_ids[0] if len(model_ids) == 1 else None,
+        "model_ids": model_ids,
+        "positive_label": positive_label,
+        "id_column": id_column,
+        "label_column": label_column,
+        "force_categorical": config.force_categorical,
+        "force_numeric": config.force_numeric,
+        "drop_columns": config.drop_columns,
+        "low_cardinality_int_threshold": config.low_cardinality_int_threshold,
+        "cv_n_splits": config.cv_n_splits,
+        "cv_shuffle": config.cv_shuffle,
+        "cv_random_state": config.cv_random_state,
+    }
+
+
+def _build_config_fingerprint(
+    config_snapshot: dict[str, object],
+    model_results: list[ModelRunResult],
+) -> str:
+    fingerprint_payload = {
+        "config_snapshot": config_snapshot,
+        "models": [result.to_fingerprint_model_entry() for result in model_results],
+    }
+    config_snapshot_json = json.dumps(_json_ready(fingerprint_payload), sort_keys=True)
+    return hashlib.sha256(config_snapshot_json.encode("utf-8")).hexdigest()[:12]
 
 
 def run_training(
@@ -594,10 +675,9 @@ def run_training(
     run_dir.mkdir(parents=True, exist_ok=True)
     run_diagnostics_df.to_csv(run_dir / "run_diagnostics.csv", index=False)
 
-    model_results: list[dict[str, object]] = []
+    model_results: list[ModelRunResult] = []
     for configured_model_id in model_ids:
         model_result = _train_single_model(
-            competition_slug=competition_slug,
             task_type=task_type,
             primary_metric=primary_metric,
             model_id=configured_model_id,
@@ -619,80 +699,40 @@ def run_training(
         )
         model_results.append(model_result)
         print(
-            f"Training model: {model_result['model_id']} ({model_result['model_name']}) | "
-            f"preprocessing={model_result['preprocessing_scheme_id']} | "
-            f"CV {primary_metric}: mean={model_result['cv_mean']:.6f}, std={model_result['cv_std']:.6f}"
+            f"Training model: {model_result.model_id} ({model_result.model_name}) | "
+            f"preprocessing={model_result.preprocessing_scheme_id} | "
+            f"CV {primary_metric}: mean={model_result.cv_summary.metric_mean:.6f}, "
+            f"std={model_result.cv_summary.metric_std:.6f}"
         )
 
-    ranked_model_results = _rank_model_results(model_results, model_ids)
-    model_summary_rows = _build_model_summary_rows(ranked_model_results, primary_metric)
+    model_results, best_model_result = _rank_model_results(model_results, model_ids)
+    model_summary_rows = _build_model_summary_rows(model_results)
     model_summary_df = pd.DataFrame(model_summary_rows)
     model_summary_df.to_csv(run_dir / "model_summary.csv", index=False)
 
-    best_model_result = ranked_model_results[0]
-    model_entries = []
-    for result in model_results:
-        model_entries.append(
-            {
-                "model_id": result["model_id"],
-                "model_name": result["model_name"],
-                "preprocessing_scheme_id": result["preprocessing_scheme_id"],
-                "model_params": result["model_params"],
-                "cv_summary": {
-                    "metric_name": primary_metric,
-                    "metric_mean": result["cv_mean"],
-                    "metric_std": result["cv_std"],
-                    "higher_is_better": result["higher_is_better"],
-                },
-                "rank": next(row["rank"] for row in model_summary_rows if row["model_id"] == result["model_id"]),
-                "is_best_model": next(
-                    row["is_best_model"] for row in model_summary_rows if row["model_id"] == result["model_id"]
-                ),
-            }
-        )
-
-    config_snapshot = {
-        "competition_slug": competition_slug,
-        "task_type": task_type,
-        "primary_metric": primary_metric,
-        "model_id": model_ids[0] if len(model_ids) == 1 else None,
-        "model_ids": model_ids,
-        "positive_label": positive_label,
-        "id_column": id_column,
-        "label_column": label_column,
-        "force_categorical": config.force_categorical,
-        "force_numeric": config.force_numeric,
-        "drop_columns": config.drop_columns,
-        "low_cardinality_int_threshold": config.low_cardinality_int_threshold,
-        "cv_n_splits": config.cv_n_splits,
-        "cv_shuffle": config.cv_shuffle,
-        "cv_random_state": config.cv_random_state,
-    }
-    fingerprint_payload = {
-        "config_snapshot": config_snapshot,
-        "models": [
-            {
-                "model_id": result["model_id"],
-                "model_params": result["model_params"],
-            }
-            for result in model_results
-        ],
-    }
-    config_snapshot_json = json.dumps(_json_ready(fingerprint_payload), sort_keys=True)
-    config_fingerprint = hashlib.sha256(config_snapshot_json.encode("utf-8")).hexdigest()[:12]
+    config_snapshot = _build_config_snapshot(
+        config=config,
+        model_ids=model_ids,
+        positive_label=positive_label,
+        id_column=id_column,
+        label_column=label_column,
+    )
+    config_fingerprint = _build_config_fingerprint(
+        config_snapshot=config_snapshot,
+        model_results=model_results,
+    )
 
     generated_at_utc = datetime.now(timezone.utc).isoformat()
-    run_manifest = _build_run_manifest(
+    run_context = TrainingRunContext(
         run_id=run_id,
         generated_at_utc=generated_at_utc,
         competition_slug=competition_slug,
         task_type=task_type,
         primary_metric=primary_metric,
-        config_fingerprint=config_fingerprint,
         config_snapshot=config_snapshot,
-        model_ids=model_ids,
-        best_model_id=str(best_model_result["model_id"]),
-        models=model_entries,
+        config_fingerprint=config_fingerprint,
+        model_results=model_results,
+        best_model_result=best_model_result,
         observed_label_pair=observed_label_pair,
         negative_label=negative_label,
         positive_label=positive_label,
@@ -703,22 +743,22 @@ def run_training(
         train_cols=int(x_train_raw.shape[1]),
         test_rows=int(x_test_raw.shape[0]),
         test_cols=int(x_test_raw.shape[1]),
-    )
-    run_manifest_json = json.dumps(_json_ready(run_manifest), indent=2)
-    (run_dir / "run_manifest.json").write_text(run_manifest_json, encoding="utf-8")
-
-    ledger_row = _build_run_ledger_row(
-        run_manifest=run_manifest,
         cv_n_splits=config.cv_n_splits,
         cv_shuffle=config.cv_shuffle,
         cv_random_state=config.cv_random_state,
     )
+    run_manifest = _build_run_manifest(run_context)
+    run_manifest_json = json.dumps(_json_ready(run_manifest), indent=2)
+    (run_dir / "run_manifest.json").write_text(run_manifest_json, encoding="utf-8")
+
+    ledger_row = _build_run_ledger_row(run_context)
     ledger_path = Path("artifacts") / competition_slug / "train" / "runs.csv"
     _append_run_ledger(ledger_path, ledger_row)
 
     print(
-        f"Best model: {best_model_result['model_id']} ({best_model_result['model_name']}) | "
-        f"CV {primary_metric}: mean={best_model_result['cv_mean']:.6f}, std={best_model_result['cv_std']:.6f}"
+        f"Best model: {best_model_result.model_id} ({best_model_result.model_name}) | "
+        f"CV {primary_metric}: mean={best_model_result.cv_summary.metric_mean:.6f}, "
+        f"std={best_model_result.cv_summary.metric_std:.6f}"
     )
 
     return run_dir
