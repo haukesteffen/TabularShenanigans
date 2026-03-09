@@ -161,6 +161,9 @@ Manual verification steps for each target:
 - `model_ids` must contain one or more canonical supported presets for the configured task; if omitted, the task default is used
 - the `tune` stage requires `tuning.enabled=true`, uses `tuning.model_id` only, and retrains exactly one tuned candidate into the normal train artifact layout
 - `tuning.model_id` must be one of the supported tunable model recipes for the configured task
+- supported tunable recipes are:
+  - binary: `onehot_logreg`, `ordinal_randomforest`, `ordinal_extratrees`, `ordinal_hgb`, `ordinal_lightgbm`, `native_catboost`, `ordinal_xgboost`
+  - regression: `ordinal_randomforest`, `ordinal_extratrees`, `ordinal_hgb`, `ordinal_lightgbm`, `native_catboost`, `ordinal_xgboost`
 - tuning must have at least one stopping condition: `tuning.n_trials` or `tuning.timeout_seconds`
 - Submit-time `model_id` remains the trained-model selector for choosing one artifact from a run
 - `native_catboost` must preserve categorical feature positions through preprocessing so CatBoost can receive `cat_features`

@@ -39,7 +39,7 @@ model_ids:
 # tune uses tuning.model_id only; normal train still uses top-level model_ids.
 # tuning:
 #   enabled: true
-#   model_id: ordinal_hgb
+#   model_id: ordinal_lightgbm
 #   n_trials: 25
 #   # timeout_seconds: 3600
 #   random_state: 42
