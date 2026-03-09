@@ -1,4 +1,3 @@
-import csv
 import json
 import subprocess
 from dataclasses import dataclass
@@ -39,36 +38,18 @@ class SubmissionRunContext:
 
 
 def _read_submission_ledger(ledger_path: Path) -> pd.DataFrame:
-    with ledger_path.open(encoding="utf-8", newline="") as ledger_file:
-        rows = list(csv.reader(ledger_file))
-
-    if not rows:
-        return pd.DataFrame()
-
-    header = rows[0]
-    if not header:
-        return pd.DataFrame()
-
-    max_column_count = max(len(row) for row in rows[1:]) if len(rows) > 1 else len(header)
-    normalized_header = header.copy()
-    legacy_extra_columns = ["positive_label", "negative_label"]
-    while len(normalized_header) < max_column_count:
-        extra_index = len(normalized_header) - len(header)
-        if extra_index < len(legacy_extra_columns):
-            normalized_header.append(legacy_extra_columns[extra_index])
-        else:
-            normalized_header.append(f"extra_col_{extra_index - len(legacy_extra_columns) + 1}")
-
-    normalized_rows = []
-    for row in rows[1:]:
-        padded_row = row + [""] * (len(normalized_header) - len(row))
-        normalized_rows.append(dict(zip(normalized_header, padded_row)))
-    return pd.DataFrame(normalized_rows, columns=normalized_header)
+    ledger_df = pd.read_csv(ledger_path)
+    ledger_columns = ledger_df.columns.tolist()
+    if ledger_columns != SUBMISSION_LEDGER_COLUMNS:
+        raise ValueError(
+            "Submission ledger does not match the supported schema. "
+            f"Expected columns {SUBMISSION_LEDGER_COLUMNS}, got {ledger_columns}"
+        )
+    return ledger_df
 
 
 def _append_submission_ledger(ledger_path: Path, row: dict[str, object]) -> None:
-    ledger_df = pd.DataFrame([row])
-    ledger_df = ledger_df.reindex(columns=SUBMISSION_LEDGER_COLUMNS)
+    ledger_df = pd.DataFrame([row]).reindex(columns=SUBMISSION_LEDGER_COLUMNS)
     if ledger_path.exists():
         existing_df = _read_submission_ledger(ledger_path)
         merged_df = pd.concat([existing_df, ledger_df], ignore_index=True, sort=False)
@@ -78,168 +59,74 @@ def _append_submission_ledger(ledger_path: Path, row: dict[str, object]) -> None
     ledger_df.to_csv(ledger_path, index=False)
 
 
-def _load_legacy_cv_summary(run_dir: Path) -> dict[str, object]:
-    summary_path = run_dir / "cv_summary.csv"
-    if not summary_path.exists():
-        raise ValueError(f"Missing CV summary: {summary_path}")
-    summary_df = pd.read_csv(summary_path)
-    if summary_df.shape[0] != 1:
-        raise ValueError(f"Expected exactly one row in CV summary, got {summary_df.shape[0]}")
-    return {
-        "model_name": str(summary_df.loc[0, "model_name"]),
-        "metric_name": str(summary_df.loc[0, "metric_name"]),
-        "metric_mean": float(summary_df.loc[0, "metric_mean"]),
-        "metric_std": float(summary_df.loc[0, "metric_std"]),
-        "higher_is_better": bool(summary_df.loc[0, "higher_is_better"]),
-    }
-
-
 def _load_run_manifest(run_dir: Path) -> dict[str, object]:
     manifest_path = run_dir / "run_manifest.json"
     if not manifest_path.exists():
-        raise ValueError(f"Missing run manifest: {manifest_path}")
+        raise ValueError(
+            f"Missing run manifest: {manifest_path}. Submission requires current manifest-backed run artifacts."
+        )
     return json.loads(manifest_path.read_text(encoding="utf-8"))
 
 
 def _require_manifest_value(manifest: dict[str, object], field_name: str) -> object:
     field_value = manifest.get(field_name)
-    if field_value is not None:
-        return field_value
-
-    config_snapshot = manifest.get("config_snapshot", {})
-    if isinstance(config_snapshot, dict):
-        field_value = config_snapshot.get(field_name)
     if field_value is None:
         raise ValueError(
             f"Run manifest is missing required submission field '{field_name}'. "
-            "Submission requires a manifest-backed artifact contract."
+            "Submission requires current manifest-backed run artifacts."
         )
     return field_value
 
 
-def _infer_legacy_model_id(task_type: str, model_name: object | None) -> str | None:
-    resolved_model_name = str(model_name).strip()
-    legacy_model_map = {
-        ("regression", "Ridge"): "onehot_ridge",
-        ("regression", "ElasticNet"): "onehot_elasticnet",
-        ("regression", "RandomForestRegressor"): "ordinal_randomforest",
-        ("regression", "ExtraTreesRegressor"): "ordinal_extratrees",
-        ("regression", "HistGradientBoostingRegressor"): "ordinal_hgb",
-        ("regression", "LGBMRegressor"): "ordinal_lightgbm",
-        ("regression", "CatBoostRegressor"): "native_catboost",
-        ("regression", "XGBRegressor"): "ordinal_xgboost",
-        ("binary", "LogisticRegression"): "onehot_logreg",
-        ("binary", "RandomForestClassifier"): "ordinal_randomforest",
-        ("binary", "ExtraTreesClassifier"): "ordinal_extratrees",
-        ("binary", "HistGradientBoostingClassifier"): "ordinal_hgb",
-        ("binary", "LGBMClassifier"): "ordinal_lightgbm",
-        ("binary", "CatBoostClassifier"): "native_catboost",
-        ("binary", "XGBClassifier"): "ordinal_xgboost",
-        ("regression", "onehot_ridge"): "onehot_ridge",
-        ("regression", "onehot_elasticnet"): "onehot_elasticnet",
-        ("regression", "ordinal_randomforest"): "ordinal_randomforest",
-        ("regression", "ordinal_extratrees"): "ordinal_extratrees",
-        ("regression", "ordinal_hgb"): "ordinal_hgb",
-        ("regression", "ordinal_lightgbm"): "ordinal_lightgbm",
-        ("regression", "native_catboost"): "native_catboost",
-        ("regression", "ordinal_xgboost"): "ordinal_xgboost",
-        ("binary", "onehot_logreg"): "onehot_logreg",
-        ("binary", "ordinal_randomforest"): "ordinal_randomforest",
-        ("binary", "ordinal_extratrees"): "ordinal_extratrees",
-        ("binary", "ordinal_hgb"): "ordinal_hgb",
-        ("binary", "ordinal_lightgbm"): "ordinal_lightgbm",
-        ("binary", "native_catboost"): "native_catboost",
-        ("binary", "ordinal_xgboost"): "ordinal_xgboost",
-        ("regression", "elasticnet"): "onehot_elasticnet",
-        ("regression", "catboost"): "native_catboost",
-        ("regression", "lightgbm"): "ordinal_lightgbm",
-        ("regression", "random_forest"): "ordinal_randomforest",
-        ("regression", "xgb"): "ordinal_xgboost",
-        ("binary", "logistic_regression"): "onehot_logreg",
-        ("binary", "catboost"): "native_catboost",
-        ("binary", "lightgbm"): "ordinal_lightgbm",
-        ("binary", "random_forest"): "ordinal_randomforest",
-        ("binary", "xgb"): "ordinal_xgboost",
-    }
-    return legacy_model_map.get((task_type, resolved_model_name))
-
-
-def _resolve_legacy_model_name(manifest: dict[str, object]) -> str | None:
-    model_name = manifest.get("model_name")
-    if model_name is not None:
-        return str(model_name)
-
-    config_snapshot = manifest.get("config_snapshot", {})
-    if isinstance(config_snapshot, dict):
-        config_model_name = config_snapshot.get("model_name")
-        if config_model_name is not None:
-            return str(config_model_name)
-
-    return None
-
-
 def _load_manifest_models(manifest: dict[str, object]) -> list[dict[str, object]]:
     manifest_models = manifest.get("models")
-    if manifest_models is None:
-        return []
-    if not isinstance(manifest_models, list) or not all(isinstance(model, dict) for model in manifest_models):
+    if not isinstance(manifest_models, list) or not manifest_models:
+        raise ValueError(
+            "Run manifest must contain a non-empty 'models' list. "
+            "Submission requires current multi-model-aware run artifacts."
+        )
+    if not all(isinstance(model, dict) for model in manifest_models):
         raise ValueError("Run manifest models must be a list of mappings.")
     return manifest_models
 
 
-def _resolve_legacy_manifest_model_id(manifest: dict[str, object]) -> str:
-    model_id = manifest.get("model_id")
-    if model_id is None:
-        config_snapshot = manifest.get("config_snapshot", {})
-        if isinstance(config_snapshot, dict):
-            model_id = config_snapshot.get("model_id")
-    if model_id is not None:
-        return str(model_id)
-
-    task_type = str(_require_manifest_value(manifest, "task_type"))
-    legacy_model_name = _resolve_legacy_model_name(manifest)
-    legacy_model_id = _infer_legacy_model_id(task_type, legacy_model_name)
-    if legacy_model_id is not None:
-        return legacy_model_id
-
-    raise ValueError(
-        "Run manifest is missing required submission field 'model_id'. "
-        f"Could not infer it from legacy model metadata for task_type '{task_type}' and model_name "
-        f"{legacy_model_name!r}."
-    )
-
-
-def _resolve_selected_model_id(
+def _resolve_selected_model(
     manifest: dict[str, object],
     requested_model_id: str | None = None,
-) -> str:
+) -> tuple[str, dict[str, object]]:
     manifest_models = _load_manifest_models(manifest)
-    if manifest_models:
-        available_model_ids = [str(model["model_id"]) for model in manifest_models]
-        if requested_model_id is not None:
-            if requested_model_id not in available_model_ids:
-                raise ValueError(
-                    f"Requested model_id '{requested_model_id}' is not present in the run manifest. "
-                    f"Available model_ids: {available_model_ids}"
-                )
-            return requested_model_id
+    available_model_ids = [str(model["model_id"]) for model in manifest_models]
 
+    if requested_model_id is not None:
+        selected_model_id = requested_model_id
+        if selected_model_id not in available_model_ids:
+            raise ValueError(
+                f"Requested model_id '{selected_model_id}' is not present in the run manifest. "
+                f"Available model_ids: {available_model_ids}"
+            )
+    else:
         best_model_id = manifest.get("best_model_id")
-        if best_model_id is None and len(available_model_ids) == 1:
-            return available_model_ids[0]
-        if best_model_id not in available_model_ids:
+        if best_model_id is None:
+            raise ValueError(
+                "Run manifest is missing required submission field 'best_model_id'. "
+                f"Available model_ids: {available_model_ids}"
+            )
+        selected_model_id = str(best_model_id)
+        if selected_model_id not in available_model_ids:
             raise ValueError(
                 "Run manifest best_model_id must match one of the available model entries. "
                 f"Available model_ids: {available_model_ids}"
             )
-        return str(best_model_id)
 
-    resolved_model_id = _resolve_legacy_manifest_model_id(manifest)
-    if requested_model_id is not None and requested_model_id != resolved_model_id:
+    selected_model = next(
+        (model for model in manifest_models if str(model["model_id"]) == selected_model_id),
+        None,
+    )
+    if selected_model is None:
         raise ValueError(
-            f"Requested model_id '{requested_model_id}' does not match the legacy run model_id '{resolved_model_id}'."
+            f"Requested model_id '{selected_model_id}' is missing from the run manifest model entries."
         )
-    return resolved_model_id
+    return selected_model_id, selected_model
 
 
 def _load_submission_run_context(
@@ -247,18 +134,17 @@ def _load_submission_run_context(
     model_id: str | None = None,
 ) -> SubmissionRunContext:
     manifest = _load_run_manifest(run_dir)
-    run_id = str(manifest["run_id"])
-    selected_model_id = _resolve_selected_model_id(manifest, requested_model_id=model_id)
+    selected_model_id, _ = _resolve_selected_model(manifest, requested_model_id=model_id)
+
     observed_label_pair_raw = manifest.get("observed_label_pair")
     observed_label_pair = None
-    if isinstance(observed_label_pair_raw, list):
-        if len(observed_label_pair_raw) != 2:
+    if observed_label_pair_raw is not None:
+        if not isinstance(observed_label_pair_raw, list) or len(observed_label_pair_raw) != 2:
             raise ValueError("Run manifest observed_label_pair must contain exactly two labels when present.")
         observed_label_pair = (observed_label_pair_raw[0], observed_label_pair_raw[1])
-    elif manifest.get("negative_label") is not None and manifest.get("positive_label") is not None:
-        observed_label_pair = (manifest["negative_label"], manifest["positive_label"])
+
     return SubmissionRunContext(
-        run_id=run_id,
+        run_id=str(_require_manifest_value(manifest, "run_id")),
         competition_slug=str(_require_manifest_value(manifest, "competition_slug")),
         task_type=str(_require_manifest_value(manifest, "task_type")),
         primary_metric=str(_require_manifest_value(manifest, "primary_metric")),
@@ -275,62 +161,20 @@ def _load_run_metadata(
     model_id: str | None = None,
 ) -> dict[str, object]:
     manifest = _load_run_manifest(run_dir)
-    selected_model_id = _resolve_selected_model_id(manifest, requested_model_id=model_id)
-    manifest_models = _load_manifest_models(manifest)
+    selected_model_id, selected_model = _resolve_selected_model(manifest, requested_model_id=model_id)
+    cv_summary = selected_model.get("cv_summary")
+    if not isinstance(cv_summary, dict):
+        raise ValueError("Run manifest model cv_summary must be a mapping.")
 
-    if manifest_models:
-        selected_model = next(
-            (model for model in manifest_models if str(model["model_id"]) == selected_model_id),
-            None,
-        )
-        if selected_model is None:
-            raise ValueError(
-                f"Requested model_id '{selected_model_id}' is missing from the run manifest model entries."
-            )
-        cv_summary = selected_model.get("cv_summary")
-        if not isinstance(cv_summary, dict):
-            raise ValueError("Run manifest model cv_summary must be a mapping.")
-        return {
-            "run_id": str(manifest["run_id"]),
-            "model_id": selected_model_id,
-            "config_fingerprint": manifest.get("config_fingerprint"),
-            "model_name": str(selected_model["model_name"]),
-            "metric_name": str(cv_summary["metric_name"]),
-            "metric_mean": float(cv_summary["metric_mean"]),
-            "metric_std": float(cv_summary["metric_std"]) if cv_summary.get("metric_std") is not None else None,
-            "higher_is_better": cv_summary.get("higher_is_better"),
-        }
-
-    model_name = _resolve_legacy_model_name(manifest)
-    cv_summary = manifest.get("cv_summary")
-    if isinstance(cv_summary, dict):
-        metric_name = cv_summary.get("metric_name")
-        metric_mean = cv_summary.get("metric_mean")
-        metric_std = cv_summary.get("metric_std")
-        higher_is_better = cv_summary.get("higher_is_better")
-        if model_name is not None and metric_name is not None and metric_mean is not None:
-            return {
-                "run_id": str(manifest["run_id"]),
-                "model_id": selected_model_id,
-                "config_fingerprint": manifest.get("config_fingerprint"),
-                "model_name": str(model_name),
-                "metric_name": str(metric_name),
-                "metric_mean": float(metric_mean),
-                "metric_std": float(metric_std) if metric_std is not None else None,
-                "higher_is_better": higher_is_better,
-            }
-
-    legacy_summary = _load_legacy_cv_summary(run_dir)
-    resolved_model_name = model_name if model_name is not None else legacy_summary["model_name"]
     return {
-        "run_id": str(manifest["run_id"]),
+        "run_id": str(_require_manifest_value(manifest, "run_id")),
         "model_id": selected_model_id,
         "config_fingerprint": manifest.get("config_fingerprint"),
-        "model_name": str(resolved_model_name),
-        "metric_name": str(legacy_summary["metric_name"]),
-        "metric_mean": float(legacy_summary["metric_mean"]),
-        "metric_std": float(legacy_summary["metric_std"]),
-        "higher_is_better": legacy_summary["higher_is_better"],
+        "model_name": str(selected_model["model_name"]),
+        "metric_name": str(cv_summary["metric_name"]),
+        "metric_mean": float(cv_summary["metric_mean"]),
+        "metric_std": float(cv_summary["metric_std"]) if cv_summary.get("metric_std") is not None else None,
+        "higher_is_better": cv_summary.get("higher_is_better"),
     }
 
 
@@ -338,19 +182,12 @@ def _resolve_prediction_path(
     run_dir: Path,
     model_id: str,
 ) -> Path:
-    manifest = _load_run_manifest(run_dir)
-    manifest_models = _load_manifest_models(manifest)
-    model_prediction_path = run_dir / model_id / "test_predictions.csv"
-    if model_prediction_path.exists():
-        return model_prediction_path
-
-    legacy_prediction_path = run_dir / "test_predictions.csv"
-    if not manifest_models and legacy_prediction_path.exists():
-        return legacy_prediction_path
-
+    prediction_path = run_dir / model_id / "test_predictions.csv"
+    if prediction_path.exists():
+        return prediction_path
     raise ValueError(
         "Missing test predictions file for submission. "
-        f"Checked {model_prediction_path} and {legacy_prediction_path}"
+        f"Expected current per-model artifact at {prediction_path}"
     )
 
 

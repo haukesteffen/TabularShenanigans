@@ -80,6 +80,7 @@ The `preprocess` stage is a diagnostic/export path, not a separate required step
 - `preprocess_models.csv`
 
 `submit` can take an optional `--model-id` when targeting a specific model artifact from a multi-model run.
+The default submit path supports current manifest-backed run artifacts only. Older local artifact layouts are unsupported and fail with direct errors.
 
 ## Config Overview
 Tracked example configs:
@@ -180,6 +181,7 @@ Manual verification for each target:
 - Submission uses `run_manifest.json` as the canonical source for `competition_slug`, `task_type`, `id_column`, and `label_column`.
 - Submission metadata includes the selected `model_id`; when no model is selected explicitly, submission defaults to the run manifest `best_model_id`.
 - Submission validation requires the selected model artifact `test_predictions.csv[id_column]` to match `sample_submission.csv[id_column]` exactly in both values and row order.
+- Submission requires the current per-model artifact layout under `artifacts/<competition_slug>/train/<run_id>/<model_id>/`.
 - Binary classification supports any two-class labels accepted by scikit-learn.
 - For binary `roc_auc` and `log_loss`, prediction artifacts use probabilities aligned to the resolved positive class.
 - For binary `accuracy`, prediction artifacts use class labels from the observed binary label set.

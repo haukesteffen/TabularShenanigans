@@ -33,6 +33,8 @@ The intended operating scope is Kaggle Playground Series tabular competitions. C
 
 The `preprocess` stage is intentionally diagnostic. It is not part of the default runtime contract and it does not create a second training artifact layout.
 
+The default `submit` path supports current manifest-backed run artifacts only. Unsupported older local artifact layouts fail directly instead of using compatibility fallbacks.
+
 ## Module Responsibilities
 - `main.py`: orchestration entrypoint for config loading plus stage-specific CLI dispatch across fetch, EDA, preprocess diagnostics, training, and submission.
 - `src/tabular_shenanigans/config.py`: Pydantic-backed config schema, metric normalization, and runtime contract validation.
@@ -153,6 +155,7 @@ Manual verification steps for each target:
 - Multi-model submission must default to `best_model_id` unless a specific `model_id` is requested explicitly
 - `sample_submission.csv` must match the resolved schema exactly as `[id_column, label_column]`
 - The selected model artifact `test_predictions.csv[id_column]` must match `sample_submission.csv[id_column]` exactly in both values and row order
+- Submission requires the current per-model prediction layout at `artifacts/<competition_slug>/train/<run_id>/<model_id>/test_predictions.csv`
 - Feature override columns must exist and cannot overlap between forced numeric and forced categorical sets
 - Configured metric must normalize to a supported metric compatible with the configured task type
 - CV splitter construction must support both `cv_shuffle=true` and `cv_shuffle=false`
@@ -182,6 +185,7 @@ Hard-error cases include:
 - Any CV/training fit or scoring failure -> hard error
 - Fold assignment gaps in OOF generation -> hard error
 - Requested submission `model_id` not present in the run manifest -> hard error
+- Missing or legacy-shaped submit artifacts outside the current manifest-backed per-model contract -> hard error
 - Submission schema or ID mismatch against `sample_submission.csv` -> hard error
 - Binary probability artifact outside `[0, 1]` for `roc_auc` or `log_loss` -> hard error
 - Binary label artifact containing values outside the observed label pair for `accuracy` -> hard error
