@@ -4,14 +4,15 @@ competition_slug: playground-series-s5e10
 task_type: regression
 primary_metric: mse
 
-# Prefer model_ids for multi-model baselines. Swap to model_id for a single-model smoke test.
+# Use canonical model_ids. For a single-model smoke test, keep a one-entry list.
 model_ids:
   - onehot_ridge
   - onehot_elasticnet
   - ordinal_lightgbm
   - native_catboost
   - ordinal_xgboost
-# model_id: onehot_elasticnet
+# model_ids:
+#   - onehot_elasticnet
 
 # Optional schema overrides when inference is ambiguous or the competition is not Playground-shaped.
 # id_column: id

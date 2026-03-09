@@ -587,7 +587,6 @@ def _build_config_snapshot(
         "competition_slug": config.competition_slug,
         "task_type": config.task_type,
         "primary_metric": config.primary_metric,
-        "model_id": model_ids[0] if len(model_ids) == 1 else None,
         "model_ids": model_ids,
         "positive_label": positive_label,
         "id_column": id_column,

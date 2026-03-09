@@ -7,8 +7,6 @@ from pydantic import BaseModel, ConfigDict, Field, model_validator
 from tabular_shenanigans.data import SUPPORTED_PRIMARY_METRICS, is_metric_valid_for_task, normalize_primary_metric
 from tabular_shenanigans.models import (
     get_default_model_id,
-    get_supported_model_ids,
-    is_model_id_valid_for_task,
     resolve_model_id,
 )
 
@@ -23,7 +21,6 @@ class AppConfig(BaseModel):
     competition_slug: str = Field(min_length=1)
     task_type: Literal["regression", "binary"]
     primary_metric: str
-    model_id: str | None = None
     model_ids: list[str] | None = None
     positive_label: str | int | bool | None = None
     id_column: str | None = None
@@ -52,34 +49,18 @@ class AppConfig(BaseModel):
             )
         self.primary_metric = normalized_primary_metric
 
-        if self.model_id is not None and self.model_ids is not None:
-            raise ValueError("model_id and model_ids are mutually exclusive. Use only one of them.")
-
         if self.model_ids is not None:
             if not self.model_ids:
-                raise ValueError("model_ids must contain at least one model_id.")
-            resolved_model_ids = self.model_ids
-        elif self.model_id is not None:
-            resolved_model_ids = [self.model_id]
+                raise ValueError("model_ids must contain at least one canonical model_id.")
+            resolved_model_ids = list(self.model_ids)
         else:
             resolved_model_ids = [get_default_model_id(self.task_type)]
 
-        supported_model_ids = get_supported_model_ids(self.task_type, include_aliases=True)
-        invalid_model_ids = [
-            model_id for model_id in resolved_model_ids if not is_model_id_valid_for_task(self.task_type, model_id)
-        ]
-        if invalid_model_ids:
-            raise ValueError(
-                f"Configured model_ids {invalid_model_ids} are not valid for task_type '{self.task_type}'. "
-                f"Supported model_ids: {supported_model_ids}"
-            )
-
         canonical_model_ids = [resolve_model_id(self.task_type, model_id) for model_id in resolved_model_ids]
         if len(set(canonical_model_ids)) != len(canonical_model_ids):
-            raise ValueError(f"model_ids must not contain duplicates after alias resolution: {canonical_model_ids}")
+            raise ValueError(f"model_ids must not contain duplicates: {canonical_model_ids}")
 
         self.model_ids = canonical_model_ids
-        self.model_id = canonical_model_ids[0] if len(canonical_model_ids) == 1 else None
 
         if self.task_type != "binary" and self.positive_label is not None:
             raise ValueError("positive_label is only supported for binary task_type.")
@@ -102,5 +83,11 @@ def load_config(path: str = "config.yaml") -> AppConfig:
 
     if not isinstance(raw_data, dict):
         raise ConfigError("Config must be a top-level mapping.")
+    if "model_id" in raw_data:
+        raise ConfigError(
+            "Config key 'model_id' is no longer supported. "
+            "Use model_ids with canonical recipe IDs instead, for example: "
+            "model_ids: [onehot_logreg]"
+        )
 
     return AppConfig.model_validate(raw_data)
