@@ -28,6 +28,25 @@ def resolve_binary_label_pair(y_values: pd.Series) -> tuple[object, object]:
     return unique_labels[0], unique_labels[1]
 
 
+def _label_signature(label: object) -> tuple[str, object]:
+    if isinstance(label, (bool, np.bool_)):
+        return ("bool", bool(label))
+    if isinstance(label, (int, np.integer)):
+        return ("int", int(label))
+    if isinstance(label, str):
+        return ("str", label)
+    return (type(label).__name__, label)
+
+
+def _matches_safe_label_pair(
+    observed_label_pair: tuple[object, object],
+    safe_label_pair: tuple[object, object],
+) -> bool:
+    observed_signatures = {_label_signature(label) for label in observed_label_pair}
+    safe_signatures = {_label_signature(label) for label in safe_label_pair}
+    return observed_signatures == safe_signatures
+
+
 def resolve_positive_label(
     y_values: pd.Series,
     configured_positive_label: object | None = None,
@@ -50,7 +69,7 @@ def resolve_positive_label(
         ("No", "Yes"),
     ]
     for negative_label, positive_label in safe_pairs:
-        if set(label_pair) == {negative_label, positive_label}:
+        if _matches_safe_label_pair(label_pair, (negative_label, positive_label)):
             return negative_label, positive_label, label_pair
 
     raise ValueError(
