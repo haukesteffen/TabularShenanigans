@@ -25,16 +25,20 @@ SUBMISSION_LEDGER_COLUMNS = [
 
 
 @dataclass(frozen=True)
-class SubmissionRunContext:
+class SubmissionContext:
     run_id: str
     competition_slug: str
     task_type: str
     primary_metric: str
     model_id: str
+    model_name: str
+    metric_name: str
+    metric_mean: float
     id_column: str
     label_column: str
     observed_label_pair: tuple[object, object] | None
     config_fingerprint: str | None
+    prediction_path: Path
 
 
 def _read_submission_ledger(ledger_path: Path) -> pd.DataFrame:
@@ -129,53 +133,41 @@ def _resolve_selected_model(
     return selected_model_id, selected_model
 
 
-def _load_submission_run_context(
-    run_dir: Path,
-    model_id: str | None = None,
-) -> SubmissionRunContext:
-    manifest = _load_run_manifest(run_dir)
-    selected_model_id, _ = _resolve_selected_model(manifest, requested_model_id=model_id)
-
+def _parse_observed_label_pair(manifest: dict[str, object]) -> tuple[object, object] | None:
     observed_label_pair_raw = manifest.get("observed_label_pair")
-    observed_label_pair = None
     if observed_label_pair_raw is not None:
         if not isinstance(observed_label_pair_raw, list) or len(observed_label_pair_raw) != 2:
             raise ValueError("Run manifest observed_label_pair must contain exactly two labels when present.")
-        observed_label_pair = (observed_label_pair_raw[0], observed_label_pair_raw[1])
-
-    return SubmissionRunContext(
-        run_id=str(_require_manifest_value(manifest, "run_id")),
-        competition_slug=str(_require_manifest_value(manifest, "competition_slug")),
-        task_type=str(_require_manifest_value(manifest, "task_type")),
-        primary_metric=str(_require_manifest_value(manifest, "primary_metric")),
-        model_id=selected_model_id,
-        id_column=str(_require_manifest_value(manifest, "id_column")),
-        label_column=str(_require_manifest_value(manifest, "label_column")),
-        observed_label_pair=observed_label_pair,
-        config_fingerprint=manifest.get("config_fingerprint"),
-    )
+        return (observed_label_pair_raw[0], observed_label_pair_raw[1])
+    return None
 
 
-def _load_run_metadata(
+def _load_submission_context(
     run_dir: Path,
     model_id: str | None = None,
-) -> dict[str, object]:
+) -> SubmissionContext:
     manifest = _load_run_manifest(run_dir)
     selected_model_id, selected_model = _resolve_selected_model(manifest, requested_model_id=model_id)
     cv_summary = selected_model.get("cv_summary")
     if not isinstance(cv_summary, dict):
         raise ValueError("Run manifest model cv_summary must be a mapping.")
+    prediction_path = _resolve_prediction_path(run_dir=run_dir, model_id=selected_model_id)
 
-    return {
-        "run_id": str(_require_manifest_value(manifest, "run_id")),
-        "model_id": selected_model_id,
-        "config_fingerprint": manifest.get("config_fingerprint"),
-        "model_name": str(selected_model["model_name"]),
-        "metric_name": str(cv_summary["metric_name"]),
-        "metric_mean": float(cv_summary["metric_mean"]),
-        "metric_std": float(cv_summary["metric_std"]) if cv_summary.get("metric_std") is not None else None,
-        "higher_is_better": cv_summary.get("higher_is_better"),
-    }
+    return SubmissionContext(
+        run_id=str(_require_manifest_value(manifest, "run_id")),
+        competition_slug=str(_require_manifest_value(manifest, "competition_slug")),
+        task_type=str(_require_manifest_value(manifest, "task_type")),
+        primary_metric=str(_require_manifest_value(manifest, "primary_metric")),
+        model_id=selected_model_id,
+        model_name=str(selected_model["model_name"]),
+        metric_name=str(cv_summary["metric_name"]),
+        metric_mean=float(cv_summary["metric_mean"]),
+        id_column=str(_require_manifest_value(manifest, "id_column")),
+        label_column=str(_require_manifest_value(manifest, "label_column")),
+        observed_label_pair=_parse_observed_label_pair(manifest),
+        config_fingerprint=manifest.get("config_fingerprint"),
+        prediction_path=prediction_path,
+    )
 
 
 def _resolve_prediction_path(
@@ -278,21 +270,16 @@ def _validate_binary_label_predictions(
         )
 
 
-def prepare_submission_file(
-    run_dir: Path,
-    model_id: str | None = None,
-) -> Path:
-    run_context = _load_submission_run_context(run_dir=run_dir, model_id=model_id)
-    prediction_path = _resolve_prediction_path(run_dir=run_dir, model_id=run_context.model_id)
-    prediction_df = pd.read_csv(prediction_path)
-    sample_submission_df = load_sample_submission_template(run_context.competition_slug)
+def _prepare_submission_file_from_context(submission_context: SubmissionContext) -> Path:
+    prediction_df = pd.read_csv(submission_context.prediction_path)
+    sample_submission_df = load_sample_submission_template(submission_context.competition_slug)
     validate_sample_submission_schema(
         sample_submission_df=sample_submission_df,
-        id_column=run_context.id_column,
-        label_column=run_context.label_column,
+        id_column=submission_context.id_column,
+        label_column=submission_context.label_column,
     )
 
-    expected_columns = [run_context.id_column, run_context.label_column]
+    expected_columns = [submission_context.id_column, submission_context.label_column]
     actual_columns = prediction_df.columns.tolist()
 
     if actual_columns != expected_columns:
@@ -305,25 +292,46 @@ def prepare_submission_file(
             "Submission row count does not match sample_submission.csv. "
             f"Expected {sample_submission_df.shape[0]}, got {prediction_df.shape[0]}"
         )
-    if run_context.task_type == "binary":
-        prediction_values = prediction_df[run_context.label_column]
-        binary_prediction_kind = get_binary_prediction_kind(run_context.primary_metric)
+    if submission_context.task_type == "binary":
+        prediction_values = prediction_df[submission_context.label_column]
+        binary_prediction_kind = get_binary_prediction_kind(submission_context.primary_metric)
         if binary_prediction_kind == "probability":
             _validate_binary_probability_predictions(prediction_values)
         else:
             _validate_binary_label_predictions(
                 prediction_values=prediction_values,
-                observed_label_pair=run_context.observed_label_pair,
+                observed_label_pair=submission_context.observed_label_pair,
             )
     _validate_submission_ids(
         prediction_df=prediction_df,
         sample_submission_df=sample_submission_df,
-        id_column=run_context.id_column,
+        id_column=submission_context.id_column,
     )
 
-    submission_path = prediction_path.parent / "submission.csv"
+    submission_path = submission_context.prediction_path.parent / "submission.csv"
     prediction_df.to_csv(submission_path, index=False)
     return submission_path
+
+
+def prepare_submission_file(
+    run_dir: Path,
+    model_id: str | None = None,
+) -> Path:
+    submission_context = _load_submission_context(run_dir=run_dir, model_id=model_id)
+    return _prepare_submission_file_from_context(submission_context)
+
+
+def _build_submission_message_from_context(
+    submission_context: SubmissionContext,
+    submit_message_prefix: str | None = None,
+) -> str:
+    message_parts = []
+    if submit_message_prefix:
+        message_parts.append(submit_message_prefix.strip())
+    message_parts.append(f"run={submission_context.run_id}")
+    message_parts.append(f"model={submission_context.model_id}")
+    message_parts.append(f"{submission_context.metric_name}={submission_context.metric_mean:.6f}")
+    return " | ".join(message_parts)
 
 
 def build_submission_message(
@@ -331,14 +339,8 @@ def build_submission_message(
     submit_message_prefix: str | None = None,
     model_id: str | None = None,
 ) -> str:
-    run_metadata = _load_run_metadata(run_dir=run_dir, model_id=model_id)
-    message_parts = []
-    if submit_message_prefix:
-        message_parts.append(submit_message_prefix.strip())
-    message_parts.append(f"run={run_metadata['run_id']}")
-    message_parts.append(f"model={run_metadata['model_id']}")
-    message_parts.append(f"{run_metadata['metric_name']}={run_metadata['metric_mean']:.6f}")
-    return " | ".join(message_parts)
+    submission_context = _load_submission_context(run_dir=run_dir, model_id=model_id)
+    return _build_submission_message_from_context(submission_context, submit_message_prefix=submit_message_prefix)
 
 
 def run_submission(
@@ -346,13 +348,11 @@ def run_submission(
     run_dir: Path,
     model_id: str | None = None,
 ) -> tuple[Path, str]:
-    run_context = _load_submission_run_context(run_dir=run_dir, model_id=model_id)
-    run_metadata = _load_run_metadata(run_dir=run_dir, model_id=model_id)
-    submission_path = prepare_submission_file(run_dir=run_dir, model_id=model_id)
-    message = build_submission_message(
-        run_dir=run_dir,
+    submission_context = _load_submission_context(run_dir=run_dir, model_id=model_id)
+    submission_path = _prepare_submission_file_from_context(submission_context)
+    message = _build_submission_message_from_context(
+        submission_context,
         submit_message_prefix=config.submit_message_prefix,
-        model_id=model_id,
     )
 
     if config.submit_enabled:
@@ -362,7 +362,7 @@ def run_submission(
                 "competitions",
                 "submit",
                 "-c",
-                run_context.competition_slug,
+                submission_context.competition_slug,
                 "-f",
                 str(submission_path),
                 "-m",
@@ -383,17 +383,17 @@ def run_submission(
 
     ledger_row = {
         "timestamp_utc": datetime.now(timezone.utc).isoformat(),
-        "competition_slug": run_context.competition_slug,
-        "run_id": run_context.run_id,
-        "model_id": run_context.model_id,
-        "model_name": run_metadata["model_name"],
-        "config_fingerprint": run_context.config_fingerprint,
+        "competition_slug": submission_context.competition_slug,
+        "run_id": submission_context.run_id,
+        "model_id": submission_context.model_id,
+        "model_name": submission_context.model_name,
+        "config_fingerprint": submission_context.config_fingerprint,
         "submission_path": str(submission_path),
         "submit_enabled": config.submit_enabled,
         "status": status,
         "message": message,
     }
-    ledger_path = Path("artifacts") / run_context.competition_slug / "train" / "submissions.csv"
+    ledger_path = Path("artifacts") / submission_context.competition_slug / "train" / "submissions.csv"
     _append_submission_ledger(ledger_path=ledger_path, row=ledger_row)
 
     return submission_path, status
