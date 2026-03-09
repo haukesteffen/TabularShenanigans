@@ -30,7 +30,7 @@ The repository is developed and manually verified primarily against these Playgr
   - `ordinal` preprocessing: `ordinal_randomforest`, `ordinal_extratrees`, `ordinal_hgb`, `ordinal_lightgbm`, `ordinal_xgboost`
   - `native` preprocessing: `native_catboost`
 - Write a run-root `model_summary.csv`, task-aware run diagnostics, and a canonical `run_manifest.json` under `artifacts/<competition_slug>/train/<run_id>/`, with per-model prediction artifacts under `<run_id>/<model_id>/`.
-- Validate predictions against `sample_submission.csv`, including exact ID content and order, and optionally submit to Kaggle from the best model in the run or an explicitly selected model artifact.
+- Validate predictions against `sample_submission.csv`, including exact ID content and order, with task-aware binary prediction checks, and optionally submit to Kaggle from the best model in the run or an explicitly selected model artifact.
 
 ## Tooling
 - Python for orchestration
@@ -103,6 +103,10 @@ Optional submission keys:
 - `submit_enabled`: if `true`, submit to Kaggle after training (default `false`)
 - `submit_message_prefix`: optional prefix used in auto-generated submission messages
 
+Binary prediction artifact contract:
+- `roc_auc` and `log_loss`: `test_predictions.csv` and `submission.csv` contain positive-class probabilities in `[0, 1]`
+- `accuracy`: `test_predictions.csv` and `submission.csv` contain predicted class labels from the observed binary label set
+
 If `id_column` or `label_column` are omitted, the training pipeline infers them from `train.csv`, `test.csv`, and `sample_submission.csv`. The resolved `id_column` is preserved for prediction outputs and in `run_manifest.json`, but it is not part of the model feature matrix. Submission preparation consumes the selected run manifest as the schema/task source of truth and uses `sample_submission.csv` only for validation. Invalid overrides, ambiguous inference, a `sample_submission.csv` shape that does not exactly match `[id_column, label_column]`, or a submission ID column that differs from `sample_submission.csv` in values or ordering are hard errors.
 
 `model_ids` is the preferred config-driven model interface. If both `model_id` and `model_ids` are omitted, the workflow selects the current default recipe for the configured task: `onehot_elasticnet` for regression and `onehot_logreg` for binary classification. If `model_id` is provided, it resolves to a single-entry `model_ids` list. Backward-compatible aliases are normalized to the canonical preprocessing-first IDs during config loading, so run artifacts always use the canonical IDs.
@@ -126,6 +130,7 @@ Manual verification for each target:
 - confirm `artifacts/<competition_slug>/train/<run_id>/model_summary.csv` is written
 - confirm `artifacts/<competition_slug>/train/<run_id>/<model_id>/test_predictions.csv` is written for each selected model
 - confirm `artifacts/<competition_slug>/train/<run_id>/<model_id>/submission.csv` is written and validated against `sample_submission.csv`, including exact ID values and order, for the submitted model
+- confirm binary outputs match the configured metric contract: probabilities for `roc_auc`/`log_loss`, labels for `accuracy`
 
 ## Outputs
 - Competition data: `data/<competition_slug>/`
@@ -148,7 +153,9 @@ Manual verification for each target:
 - Submission uses `run_manifest.json` as the canonical source for `competition_slug`, `task_type`, `id_column`, and `label_column`.
 - Submission metadata includes the selected `model_id`; when no model is selected explicitly, submission defaults to the run manifest `best_model_id`.
 - Submission validation requires the selected model artifact `test_predictions.csv[id_column]` to match `sample_submission.csv[id_column]` exactly in both values and row order.
-- Binary classification supports any two-class labels accepted by scikit-learn; probability outputs are aligned to the resolved positive class.
+- Binary classification supports any two-class labels accepted by scikit-learn.
+- For binary `roc_auc` and `log_loss`, prediction artifacts use probabilities aligned to the resolved positive class.
+- For binary `accuracy`, prediction artifacts use class labels from the observed binary label set.
 - Binary classification requires an explicit positive-class contract. If `positive_label` is omitted, the workflow only auto-resolves the positive class for labels `[0, 1]`, `[False, True]`, or `["No", "Yes"]`; other two-class label pairs fail fast.
 - `task_type` and `primary_metric` are explicitly configured for every run.
 - Runtime config comes from local repository-root `config.yaml` only; tracked example files are just starting points, and there are no CLI or environment overrides.
