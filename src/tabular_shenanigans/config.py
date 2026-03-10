@@ -61,7 +61,7 @@ class ModelCandidateConfig(BaseModel):
 
     candidate_type: Literal["model"] = "model"
     candidate_id: str = Field(min_length=1)
-    preprocessor: Literal["onehot", "ordinal", "native"]
+    preprocessor: Literal["onehot", "ordinal", "native", "frequency"]
     model_family: Literal[
         "ridge",
         "elasticnet",

@@ -15,9 +15,10 @@ The intended operating scope is Kaggle Playground Series tabular competitions. C
    - `onehot`: numeric median imputation + `StandardScaler`; categorical most-frequent imputation + `OneHotEncoder`
    - `ordinal`: numeric median imputation; categorical most-frequent imputation + `OrdinalEncoder`
    - `native`: numeric median imputation inside a pandas frame; categorical missing-value fill with native categorical columns preserved for CatBoost
+   - `frequency`: numeric median imputation; categorical values replaced by fold-local relative frequencies, with unseen categories mapped to `0.0`
 8. Resolve the current `experiment.candidate.model_family + preprocessor` combination to one internal canonical model recipe, then train that one configured candidate:
-   - regression: `ridge + onehot`, `elasticnet + onehot`, `random_forest + ordinal`, `extra_trees + ordinal`, `hist_gradient_boosting + ordinal`, `lightgbm + ordinal`, `catboost + native`, `xgboost + ordinal`
-   - binary classification: `logistic_regression + onehot`, `random_forest + ordinal`, `extra_trees + ordinal`, `hist_gradient_boosting + ordinal`, `lightgbm + ordinal`, `catboost + native`, `xgboost + ordinal`
+   - regression: `ridge + onehot`, `elasticnet + onehot`, `random_forest + ordinal`, `extra_trees + ordinal`, `hist_gradient_boosting + ordinal`, `hist_gradient_boosting + frequency`, `lightgbm + ordinal`, `lightgbm + frequency`, `catboost + native`, `xgboost + ordinal`, `xgboost + frequency`
+   - binary classification: `logistic_regression + onehot`, `random_forest + ordinal`, `extra_trees + ordinal`, `hist_gradient_boosting + ordinal`, `hist_gradient_boosting + frequency`, `lightgbm + ordinal`, `lightgbm + frequency`, `catboost + native`, `xgboost + ordinal`, `xgboost + frequency`
 9. When `experiment.candidate.optimization.enabled=true`, `train` runs an Optuna study on the frozen fold assignments, retrains the best trial into the standard candidate artifact layout, and writes optimization metadata inside the candidate directory.
 10. Write one candidate artifact directory under `artifacts/<competition_slug>/candidates/<candidate_id>/` with `candidate.json`, `fold_metrics.csv`, `oof_predictions.csv`, `test_predictions.csv`, and optional optimization metadata files.
 11. Validate predictions against `sample_submission.csv`, including exact ID content and order, using `candidate.json` as the submission metadata contract, apply metric-aware binary prediction validation, write `submission.csv` in the selected candidate directory, and optionally submit to Kaggle.
@@ -79,7 +80,7 @@ Input:
 - Current `experiment.candidate` keys:
   - `candidate_type` (currently only `model`)
   - `candidate_id`
-  - `preprocessor` (`onehot`, `ordinal`, or `native`)
+  - `preprocessor` (`onehot`, `ordinal`, `native`, or `frequency`)
   - `model_family`
     - regression: `ridge`, `elasticnet`, `random_forest`, `extra_trees`, `hist_gradient_boosting`, `lightgbm`, `catboost`, `xgboost`
     - binary classification: `logistic_regression`, `random_forest`, `extra_trees`, `hist_gradient_boosting`, `lightgbm`, `catboost`, `xgboost`
@@ -104,6 +105,7 @@ The old flat config layout is unsupported and fails fast.
 The current runtime resolves `experiment.candidate.model_family + experiment.candidate.preprocessor` to one internal canonical `model_id`.
 optimization requires at least one stopping condition: `experiment.candidate.optimization.n_trials` or `experiment.candidate.optimization.timeout_seconds`.
 enabled optimization is consumed by `train` and uses the current experiment candidate only.
+Frequency encoding is fold-local and maps unseen categorical values to `0.0`.
 LightGBM, CatBoost, and XGBoost require the optional booster dependencies installed via `uv sync --extra boosters`.
 
 ## Preferred Verification Targets

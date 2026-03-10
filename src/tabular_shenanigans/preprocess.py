@@ -28,6 +28,10 @@ def _coerce_object(frame: pd.DataFrame) -> pd.DataFrame:
     return frame.astype(object)
 
 
+def _normalize_categorical_series(series: pd.Series, missing_value: str) -> pd.Series:
+    return series.astype(object).where(series.notna(), missing_value).astype(str)
+
+
 def _resolve_feature_types(
     x_train_raw: pd.DataFrame,
     force_categorical: list[str],
@@ -111,6 +115,70 @@ class NativeFramePreprocessor:
             categorical_frame = categorical_frame.astype(str)
             for column in self.categorical_columns:
                 transformed_frame.loc[:, column] = categorical_frame.loc[:, column]
+
+        return transformed_frame
+
+    def fit_transform(self, frame: pd.DataFrame) -> pd.DataFrame:
+        return self.fit(frame).transform(frame)
+
+
+class FrequencyFramePreprocessor:
+    CATEGORICAL_MISSING_VALUE = "__missing__"
+
+    def __init__(
+        self,
+        feature_columns: list[str],
+        numeric_columns: list[str],
+        categorical_columns: list[str],
+    ) -> None:
+        self.feature_columns = feature_columns
+        self.numeric_columns = numeric_columns
+        self.categorical_columns = categorical_columns
+        self.numeric_fill_values: pd.Series | None = None
+        self.category_frequencies: dict[str, dict[str, float]] = {}
+
+    def fit(self, frame: pd.DataFrame) -> "FrequencyFramePreprocessor":
+        training_frame = frame.loc[:, self.feature_columns]
+
+        if self.numeric_columns:
+            self.numeric_fill_values = training_frame.loc[:, self.numeric_columns].median()
+        else:
+            self.numeric_fill_values = pd.Series(dtype=float)
+
+        for column in self.categorical_columns:
+            normalized_series = _normalize_categorical_series(
+                training_frame[column],
+                missing_value=self.CATEGORICAL_MISSING_VALUE,
+            )
+            value_frequencies = normalized_series.value_counts(normalize=True, dropna=False)
+            self.category_frequencies[column] = {
+                category_value: float(frequency)
+                for category_value, frequency in value_frequencies.items()
+            }
+
+        return self
+
+    def transform(self, frame: pd.DataFrame) -> pd.DataFrame:
+        transformed_frame = frame.loc[:, self.feature_columns].copy()
+
+        if self.numeric_columns:
+            transformed_frame.loc[:, self.numeric_columns] = transformed_frame.loc[:, self.numeric_columns].fillna(
+                self.numeric_fill_values
+            )
+
+        encoded_categorical_columns: dict[str, pd.Series] = {}
+        for column in self.categorical_columns:
+            normalized_series = _normalize_categorical_series(
+                transformed_frame[column],
+                missing_value=self.CATEGORICAL_MISSING_VALUE,
+            )
+            encoded_categorical_columns[column] = normalized_series.map(self.category_frequencies[column]).fillna(0.0)
+
+        if encoded_categorical_columns:
+            transformed_frame = transformed_frame.drop(columns=self.categorical_columns)
+            encoded_categorical_frame = pd.DataFrame(encoded_categorical_columns, index=frame.index).astype(float)
+            transformed_frame = transformed_frame.join(encoded_categorical_frame)
+            transformed_frame = transformed_frame.loc[:, self.feature_columns]
 
         return transformed_frame
 
@@ -229,6 +297,18 @@ def _build_native_preprocessor(
     )
 
 
+def _build_frequency_preprocessor(
+    feature_columns: list[str],
+    numeric_columns: list[str],
+    categorical_columns: list[str],
+) -> FrequencyFramePreprocessor:
+    return FrequencyFramePreprocessor(
+        feature_columns=feature_columns,
+        numeric_columns=numeric_columns,
+        categorical_columns=categorical_columns,
+    )
+
+
 PREPROCESSING_REGISTRY = {
     "onehot": PreprocessingDefinition(
         scheme_id="onehot",
@@ -244,6 +324,11 @@ PREPROCESSING_REGISTRY = {
         scheme_id="native",
         scheme_name="NativeFrame",
         builder=_build_native_preprocessor,
+    ),
+    "frequency": PreprocessingDefinition(
+        scheme_id="frequency",
+        scheme_name="FrequencyEncoded",
+        builder=_build_frequency_preprocessor,
     ),
 }
 
@@ -264,7 +349,7 @@ def build_preprocessor(
     force_categorical: list[str] | None = None,
     force_numeric: list[str] | None = None,
     low_cardinality_int_threshold: int | None = None,
-) -> tuple[ColumnTransformer, list[str], list[str]]:
+) -> tuple[object, list[str], list[str]]:
     force_categorical = force_categorical or []
     force_numeric = force_numeric or []
 
