@@ -16,7 +16,6 @@ from tabular_shenanigans.train import (
     _build_target_summary,
     _evaluate_model_spec,
     _materialize_split_indices,
-    _resolve_training_model_specs,
     _json_ready,
     run_training,
 )
@@ -39,29 +38,16 @@ def _build_study_config_snapshot(
     id_column: str,
     label_column: str,
 ) -> dict[str, object]:
-    resolved_training_model_specs = _resolve_training_model_specs(config=config)
     return {
-        "competition_slug": config.competition_slug,
-        "task_type": config.task_type,
-        "primary_metric": config.primary_metric,
-        "model_ids": [model_spec.model_id for model_spec in resolved_training_model_specs],
-        "positive_label": positive_label,
-        "id_column": id_column,
-        "label_column": label_column,
-        "force_categorical": config.force_categorical,
-        "force_numeric": config.force_numeric,
-        "drop_columns": config.drop_columns,
-        "low_cardinality_int_threshold": config.low_cardinality_int_threshold,
-        "cv_n_splits": config.cv_n_splits,
-        "cv_shuffle": config.cv_shuffle,
-        "cv_random_state": config.cv_random_state,
-        "tuning": {
-            "enabled": True,
-            "model_id": tuning_model_spec.model_id,
-            "n_trials": config.tuning.n_trials if config.tuning is not None else None,
-            "timeout_seconds": config.tuning.timeout_seconds if config.tuning is not None else None,
-            "random_state": config.tuning.random_state if config.tuning is not None else None,
+        "competition": {
+            **config.competition.model_dump(mode="python"),
+            "primary_metric": config.primary_metric,
+            "positive_label": positive_label,
+            "id_column": id_column,
+            "label_column": label_column,
         },
+        "experiment": config.experiment.model_dump(mode="python"),
+        "resolved_model_ids": [tuning_model_spec.model_id],
     }
 
 

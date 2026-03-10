@@ -534,6 +534,73 @@ MODEL_REGISTRY: dict[str, dict[str, ModelDefinition]] = {
     },
 }
 
+
+CANDIDATE_MODEL_REGISTRY: dict[str, dict[tuple[str, str], str]] = {
+    "regression": {
+        ("ridge", "onehot"): "onehot_ridge",
+        ("elasticnet", "onehot"): "onehot_elasticnet",
+        ("random_forest", "ordinal"): "ordinal_randomforest",
+        ("extra_trees", "ordinal"): "ordinal_extratrees",
+        ("hist_gradient_boosting", "ordinal"): "ordinal_hgb",
+        ("lightgbm", "ordinal"): "ordinal_lightgbm",
+        ("catboost", "native"): "native_catboost",
+        ("xgboost", "ordinal"): "ordinal_xgboost",
+    },
+    "binary": {
+        ("logistic_regression", "onehot"): "onehot_logreg",
+        ("random_forest", "ordinal"): "ordinal_randomforest",
+        ("extra_trees", "ordinal"): "ordinal_extratrees",
+        ("hist_gradient_boosting", "ordinal"): "ordinal_hgb",
+        ("lightgbm", "ordinal"): "ordinal_lightgbm",
+        ("catboost", "native"): "native_catboost",
+        ("xgboost", "ordinal"): "ordinal_xgboost",
+    },
+}
+
+
+def _get_task_candidate_model_registry(task_type: str) -> dict[tuple[str, str], str]:
+    try:
+        return CANDIDATE_MODEL_REGISTRY[task_type]
+    except KeyError as exc:
+        raise ValueError(f"Unsupported task_type for candidate model selection: {task_type}") from exc
+
+
+def get_supported_candidate_model_specs(task_type: str) -> list[tuple[str, str, str]]:
+    task_registry = _get_task_candidate_model_registry(task_type)
+    return sorted(
+        (model_family, preprocessor, model_id)
+        for (model_family, preprocessor), model_id in task_registry.items()
+    )
+
+
+def get_tunable_candidate_model_specs(task_type: str) -> list[tuple[str, str, str]]:
+    return sorted(
+        (model_family, preprocessor, model_id)
+        for model_family, preprocessor, model_id in get_supported_candidate_model_specs(task_type)
+        if is_model_tunable(task_type, model_id)
+    )
+
+
+def resolve_candidate_model_id(
+    task_type: str,
+    model_family: str,
+    preprocessor: str,
+) -> str:
+    task_registry = _get_task_candidate_model_registry(task_type)
+    candidate_key = (model_family, preprocessor)
+    if candidate_key in task_registry:
+        return resolve_model_id(task_type, task_registry[candidate_key])
+
+    supported_combinations = [
+        f"{supported_model_family}+{supported_preprocessor}"
+        for supported_model_family, supported_preprocessor, _ in get_supported_candidate_model_specs(task_type)
+    ]
+    raise ValueError(
+        f"Candidate model_family '{model_family}' with preprocessor '{preprocessor}' is not valid for task_type "
+        f"'{task_type}'. Supported combinations: {supported_combinations}"
+    )
+
+
 def _get_task_model_registry(task_type: str) -> dict[str, ModelDefinition]:
     try:
         return MODEL_REGISTRY[task_type]

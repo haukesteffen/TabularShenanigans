@@ -170,7 +170,13 @@ def _resolve_training_model_specs(
         if not model_specs:
             raise ValueError("Training requires at least one model specification.")
         return model_specs
-    return [TrainingModelSpec(model_id=model_id) for model_id in config.model_ids]
+    return [
+        TrainingModelSpec(
+            model_id=model_id,
+            parameter_overrides=config.model_parameter_overrides,
+        )
+        for model_id in config.model_ids
+    ]
 
 
 def _read_run_ledger(ledger_path: Path) -> pd.DataFrame:
@@ -682,20 +688,15 @@ def _build_config_snapshot(
     tuning_provenance: dict[str, object] | None = None,
 ) -> dict[str, object]:
     config_snapshot = {
-        "competition_slug": config.competition_slug,
-        "task_type": config.task_type,
-        "primary_metric": config.primary_metric,
-        "model_ids": [model_spec.model_id for model_spec in model_specs],
-        "positive_label": positive_label,
-        "id_column": id_column,
-        "label_column": label_column,
-        "force_categorical": config.force_categorical,
-        "force_numeric": config.force_numeric,
-        "drop_columns": config.drop_columns,
-        "low_cardinality_int_threshold": config.low_cardinality_int_threshold,
-        "cv_n_splits": config.cv_n_splits,
-        "cv_shuffle": config.cv_shuffle,
-        "cv_random_state": config.cv_random_state,
+        "competition": {
+            **config.competition.model_dump(mode="python"),
+            "primary_metric": config.primary_metric,
+            "positive_label": positive_label,
+            "id_column": id_column,
+            "label_column": label_column,
+        },
+        "experiment": config.experiment.model_dump(mode="python"),
+        "resolved_model_ids": [model_spec.model_id for model_spec in model_specs],
     }
     parameter_overrides = {
         model_spec.model_id: model_spec.parameter_overrides
@@ -703,7 +704,7 @@ def _build_config_snapshot(
         if model_spec.parameter_overrides
     }
     if parameter_overrides:
-        config_snapshot["model_parameter_overrides"] = parameter_overrides
+        config_snapshot["resolved_model_parameter_overrides"] = parameter_overrides
     if tuning_provenance is not None:
         config_snapshot["tuning_provenance"] = tuning_provenance
     return config_snapshot
