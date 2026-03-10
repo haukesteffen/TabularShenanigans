@@ -33,11 +33,24 @@ def build_parser() -> argparse.ArgumentParser:
 
 
 def _print_resolved_setup(config: AppConfig) -> None:
+    if config.is_blend_candidate:
+        blend_weights = config.blend_weights
+        weight_summary = "equal-weight"
+        if blend_weights is not None:
+            weight_summary = ",".join(str(weight) for weight in blend_weights)
+        print(
+            "Resolved competition setup: "
+            f"task_type={config.task_type}, primary_metric={config.primary_metric}, "
+            f"candidate_id={config.candidate_id}, candidate_type=blend, "
+            f"base_candidates={config.base_candidate_ids}, weights={weight_summary}"
+        )
+        return
+
     print(
         "Resolved competition setup: "
         f"task_type={config.task_type}, primary_metric={config.primary_metric}, "
-        f"candidate_id={config.candidate_id}, feature_recipe={config.feature_recipe_id}, "
-        f"model_family={config.model_family}, "
+        f"candidate_id={config.candidate_id}, candidate_type=model, "
+        f"feature_recipe={config.feature_recipe_id}, model_family={config.model_family}, "
         f"preprocessor={config.preprocessor}, model_id={config.resolved_model_id}"
     )
 

@@ -115,6 +115,9 @@ def run_optimization(
     config: AppConfig,
     dataset_context: CompetitionDatasetContext,
 ) -> OptimizationResult:
+    if not config.is_model_candidate:
+        raise ValueError("Optimization only supports experiment.candidate.candidate_type=model.")
+
     optimization = config.experiment.candidate.optimization
     if not optimization.enabled:
         raise ValueError("Optimization requires experiment.candidate.optimization.enabled=true in config.yaml.")
