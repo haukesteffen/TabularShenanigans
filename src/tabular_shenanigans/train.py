@@ -159,7 +159,7 @@ def _json_ready(value: object) -> object:
 
 
 def _make_run_id() -> str:
-    return datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
+    return datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%S%fZ")
 
 
 def _resolve_training_model_specs(
@@ -782,7 +782,7 @@ def run_training(
 
     run_id = _make_run_id()
     run_dir = Path("artifacts") / competition_slug / "train" / run_id
-    run_dir.mkdir(parents=True, exist_ok=True)
+    run_dir.mkdir(parents=True, exist_ok=False)
     run_diagnostics_df.to_csv(run_dir / "run_diagnostics.csv", index=False)
 
     model_results: list[ModelRunResult] = []
