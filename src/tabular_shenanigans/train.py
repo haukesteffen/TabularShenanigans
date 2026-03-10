@@ -7,8 +7,9 @@ from pathlib import Path
 import numpy as np
 import pandas as pd
 
+from tabular_shenanigans.competition import ensure_prepared_competition_context
 from tabular_shenanigans.config import AppConfig
-from tabular_shenanigans.cv import build_splitter, is_higher_better, resolve_positive_label, score_predictions
+from tabular_shenanigans.cv import is_higher_better, resolve_positive_label, score_predictions
 from tabular_shenanigans.data import CompetitionDatasetContext, get_binary_prediction_kind
 from tabular_shenanigans.models import build_model, build_model_fit_kwargs
 from tabular_shenanigans.preprocess import build_preprocessor, prepare_feature_frames
@@ -310,40 +311,6 @@ def _build_diagnostic_rows(
         return [row]
 
     raise ValueError(f"Unsupported task_type for diagnostics: {task_type}")
-
-
-def _materialize_split_indices(
-    task_type: str,
-    x_train_raw: pd.DataFrame,
-    y_train: pd.Series,
-    n_splits: int,
-    shuffle: bool,
-    random_state: int,
-) -> list[tuple[int, np.ndarray, np.ndarray]]:
-    splitter = build_splitter(
-        task_type=task_type,
-        n_splits=n_splits,
-        shuffle=shuffle,
-        random_state=random_state,
-    )
-    split_indices: list[tuple[int, np.ndarray, np.ndarray]] = []
-    for fold_index, (train_idx, valid_idx) in enumerate(splitter.split(x_train_raw, y_train), start=1):
-        split_indices.append((fold_index, train_idx, valid_idx))
-    return split_indices
-
-
-def _build_fold_assignments(
-    row_count: int,
-    split_indices: list[tuple[int, np.ndarray, np.ndarray]],
-) -> np.ndarray:
-    fold_assignments = np.full(row_count, fill_value=-1, dtype=int)
-    for fold_index, _, valid_idx in split_indices:
-        if (fold_assignments[valid_idx] >= 0).any():
-            raise ValueError("Fold assignment failed: at least one training row received multiple validation folds.")
-        fold_assignments[valid_idx] = fold_index
-    if (fold_assignments < 0).any():
-        raise ValueError("Fold assignment failed: at least one training row did not receive a validation fold.")
-    return fold_assignments
 
 
 def _build_run_diagnostics(
@@ -758,15 +725,13 @@ def run_training(
             configured_positive_label=positive_label,
         )
 
-    split_indices = _materialize_split_indices(
-        task_type=task_type,
-        x_train_raw=x_train_raw,
-        y_train=y_train,
-        n_splits=config.cv_n_splits,
-        shuffle=config.cv_shuffle,
-        random_state=config.cv_random_state,
+    prepared_context = ensure_prepared_competition_context(
+        config=config,
+        dataset_context=dataset_context,
+        expected_feature_columns=x_train_raw.columns.tolist(),
     )
-    fold_assignments = _build_fold_assignments(x_train_raw.shape[0], split_indices)
+    split_indices = prepared_context.split_indices
+    fold_assignments = prepared_context.fold_assignments
     run_diagnostics_df = _build_run_diagnostics(
         task_type=task_type,
         y_train=y_train,

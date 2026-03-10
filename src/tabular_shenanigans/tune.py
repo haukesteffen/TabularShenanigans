@@ -6,6 +6,7 @@ from pathlib import Path
 import optuna
 import pandas as pd
 
+from tabular_shenanigans.competition import ensure_prepared_competition_context
 from tabular_shenanigans.config import AppConfig
 from tabular_shenanigans.cv import is_higher_better, resolve_positive_label
 from tabular_shenanigans.data import CompetitionDatasetContext
@@ -15,7 +16,6 @@ from tabular_shenanigans.train import (
     TrainingModelSpec,
     _build_target_summary,
     _evaluate_model_spec,
-    _materialize_split_indices,
     _json_ready,
     run_training,
 )
@@ -183,14 +183,12 @@ def run_tuning(
             configured_positive_label=positive_label,
         )
 
-    split_indices = _materialize_split_indices(
-        task_type=task_type,
-        x_train_raw=x_train_raw,
-        y_train=y_train,
-        n_splits=config.cv_n_splits,
-        shuffle=config.cv_shuffle,
-        random_state=config.cv_random_state,
+    prepared_context = ensure_prepared_competition_context(
+        config=config,
+        dataset_context=dataset_context,
+        expected_feature_columns=x_train_raw.columns.tolist(),
     )
+    split_indices = prepared_context.split_indices
     target_summary = _build_target_summary(
         task_type=task_type,
         y_train=y_train,
