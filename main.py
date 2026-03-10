@@ -24,23 +24,23 @@ def build_parser() -> argparse.ArgumentParser:
     subparsers.add_parser("prepare", help="Persist EDA reports, competition metadata, and frozen folds.")
     subparsers.add_parser("eda", help="Run EDA reports only.")
     subparsers.add_parser("preprocess", help="Write preprocessing diagnostics only.")
-    subparsers.add_parser("train", help="Run training only.")
+    subparsers.add_parser("train", help="Train the current candidate only.")
     subparsers.add_parser("tune", help="Run Optuna tuning and retrain the best trial.")
 
-    submit_parser = subparsers.add_parser("submit", help="Prepare or submit from an existing run artifact.")
+    submit_parser = subparsers.add_parser("submit", help="Prepare or submit from an existing artifact directory.")
     run_selection = submit_parser.add_mutually_exclusive_group(required=True)
     run_selection.add_argument(
         "--run-dir",
         type=Path,
-        help="Explicit run directory such as artifacts/<competition_slug>/train/<run_id>.",
+        help="Explicit artifact directory such as artifacts/<competition_slug>/candidates/<candidate_id>.",
     )
     run_selection.add_argument(
         "--run-id",
-        help="Run identifier resolved under artifacts/<competition_slug>/train/<run_id> using config.competition_slug.",
+        help="Legacy run identifier resolved under artifacts/<competition_slug>/train/<run_id> using config.competition_slug.",
     )
     submit_parser.add_argument(
         "--model-id",
-        help="Optional model_id to submit from a multi-model run; defaults to the run manifest best_model_id.",
+        help="Optional model_id for legacy multi-model run artifacts; ignored for current single-candidate artifacts.",
     )
 
     return parser
@@ -69,7 +69,7 @@ def _load_shared_dataset_context(config: AppConfig):
     )
 
 
-def _resolve_run_dir(config: AppConfig, args: argparse.Namespace) -> Path:
+def _resolve_artifact_dir(config: AppConfig, args: argparse.Namespace) -> Path:
     if args.run_dir is not None:
         return args.run_dir
     return Path("artifacts") / config.competition_slug / "train" / str(args.run_id)
@@ -87,9 +87,9 @@ def _prepare_competition_stage(config: AppConfig):
 
 def _run_full_pipeline(config: AppConfig) -> None:
     dataset_context, _ = _prepare_competition_stage(config)
-    train_dir = run_training(config=config, dataset_context=dataset_context)
-    print(f"Training artifacts ready: {train_dir}")
-    submission_path, submission_status = run_submission(config=config, run_dir=train_dir)
+    candidate_dir = run_training(config=config, dataset_context=dataset_context)
+    print(f"Candidate artifacts ready: {candidate_dir}")
+    submission_path, submission_status = run_submission(config=config, artifact_dir=candidate_dir)
     print(f"Submission file ready: {submission_path} ({submission_status})")
 
 
@@ -110,8 +110,8 @@ def _run_preprocess_stage(config: AppConfig) -> None:
 def _run_train_stage(config: AppConfig) -> None:
     _ensure_data_ready(config)
     dataset_context = _load_shared_dataset_context(config)
-    train_dir = run_training(config=config, dataset_context=dataset_context)
-    print(f"Training artifacts ready: {train_dir}")
+    candidate_dir = run_training(config=config, dataset_context=dataset_context)
+    print(f"Candidate artifacts ready: {candidate_dir}")
 
 
 def _run_tune_stage(config: AppConfig) -> None:
@@ -119,15 +119,15 @@ def _run_tune_stage(config: AppConfig) -> None:
     dataset_context = _load_shared_dataset_context(config)
     tuning_result = run_tuning(config=config, dataset_context=dataset_context)
     print(f"Tuning artifacts ready: {tuning_result.study_dir}")
-    print(f"Best-trial training artifacts ready: {tuning_result.train_dir}")
+    print(f"Best-trial candidate artifacts ready: {tuning_result.candidate_dir}")
 
 
 def _run_submit_stage(config: AppConfig, args: argparse.Namespace) -> None:
-    run_dir = _resolve_run_dir(config, args)
-    print(f"Using run_dir: {run_dir}")
+    artifact_dir = _resolve_artifact_dir(config, args)
+    print(f"Using artifact_dir: {artifact_dir}")
     submission_path, submission_status = run_submission(
         config=config,
-        run_dir=run_dir,
+        artifact_dir=artifact_dir,
         model_id=args.model_id,
     )
     print(f"Submission file ready: {submission_path} ({submission_status})")

@@ -24,7 +24,7 @@ from tabular_shenanigans.train import (
 @dataclass(frozen=True)
 class TuningResult:
     study_dir: Path
-    train_dir: Path
+    candidate_dir: Path
 
 
 def _make_study_id() -> str:
@@ -47,7 +47,7 @@ def _build_study_config_snapshot(
             "label_column": label_column,
         },
         "experiment": config.experiment.model_dump(mode="python"),
-        "resolved_model_ids": [tuning_model_spec.model_id],
+        "resolved_model_id": tuning_model_spec.model_id,
     }
 
 
@@ -82,7 +82,7 @@ def _build_study_manifest(
     model_name: str,
     preprocessing_scheme_id: str,
     target_summary: dict[str, object],
-    train_dir: Path | None = None,
+    candidate_dir: Path | None = None,
 ) -> dict[str, object]:
     best_trial = study.best_trial
     return {
@@ -103,8 +103,8 @@ def _build_study_manifest(
         "best_params": best_trial.params,
         "best_model_params": best_trial.user_attrs.get("model_params"),
         "target_summary": target_summary,
-        "train_run_id": train_dir.name if train_dir is not None else None,
-        "train_run_dir": str(train_dir) if train_dir is not None else None,
+        "train_candidate_id": candidate_dir.name if candidate_dir is not None else None,
+        "train_candidate_dir": str(candidate_dir) if candidate_dir is not None else None,
     }
 
 
@@ -129,7 +129,7 @@ def _write_tuning_artifacts(
                 "completed_trial_count": study_manifest["completed_trial_count"],
                 "best_trial_number": study_manifest["best_trial_number"],
                 "best_value": study_manifest["best_value"],
-                "train_run_id": study_manifest["train_run_id"],
+                "train_candidate_id": study_manifest["train_candidate_id"],
             }
         ]
     )
@@ -271,15 +271,13 @@ def run_tuning(
         "base_model_id": tuning_model_spec.model_id,
         "parameter_overrides": best_parameter_overrides,
     }
-    train_dir = run_training(
+    candidate_dir = run_training(
         config=config,
         dataset_context=dataset_context,
-        model_specs=[
-            TrainingModelSpec(
-                model_id=tuning_model_spec.model_id,
-                parameter_overrides=best_parameter_overrides,
-            )
-        ],
+        model_spec=TrainingModelSpec(
+            model_id=tuning_model_spec.model_id,
+            parameter_overrides=best_parameter_overrides,
+        ),
         tuning_provenance=tuning_provenance,
     )
 
@@ -292,11 +290,11 @@ def run_tuning(
         model_name=model_definition.model_name,
         preprocessing_scheme_id=model_definition.preprocessing_scheme_id,
         target_summary=target_summary,
-        train_dir=train_dir,
+        candidate_dir=candidate_dir,
     )
     _write_tuning_artifacts(study_dir=study_dir, study_manifest=updated_study_manifest, trials_df=trials_df)
     print(
         f"Tuning complete: best_trial={study.best_trial.number}, "
-        f"best_{primary_metric}={study.best_value:.6f}, train_run={train_dir.name}"
+        f"best_{primary_metric}={study.best_value:.6f}, candidate={candidate_dir.name}"
     )
-    return TuningResult(study_dir=study_dir, train_dir=train_dir)
+    return TuningResult(study_dir=study_dir, candidate_dir=candidate_dir)
