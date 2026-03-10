@@ -4,6 +4,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parent / "src"))
 
+from tabular_shenanigans.competition import prepare_competition
 from tabular_shenanigans.config import AppConfig, load_config
 from tabular_shenanigans.data import fetch_competition_data, load_competition_dataset_context
 from tabular_shenanigans.eda import run_eda
@@ -20,6 +21,7 @@ def build_parser() -> argparse.ArgumentParser:
     subparsers = parser.add_subparsers(dest="stage")
 
     subparsers.add_parser("fetch", help="Download competition data if it is missing.")
+    subparsers.add_parser("prepare", help="Persist EDA reports, competition metadata, and frozen folds.")
     subparsers.add_parser("eda", help="Run EDA reports only.")
     subparsers.add_parser("preprocess", help="Write preprocessing diagnostics only.")
     subparsers.add_parser("train", help="Run training only.")
@@ -73,11 +75,18 @@ def _resolve_run_dir(config: AppConfig, args: argparse.Namespace) -> Path:
     return Path("artifacts") / config.competition_slug / "train" / str(args.run_id)
 
 
-def _run_full_pipeline(config: AppConfig) -> None:
+def _prepare_competition_stage(config: AppConfig):
     _ensure_data_ready(config)
     dataset_context = _load_shared_dataset_context(config)
-    report_dir = run_eda(config=config, dataset_context=dataset_context)
-    print(f"EDA reports ready: {report_dir}")
+    prepared_context = prepare_competition(config=config, dataset_context=dataset_context)
+    print(f"Competition context ready: {prepared_context.manifest_path}")
+    print(f"Frozen folds ready: {prepared_context.folds_path}")
+    print(f"EDA reports ready: {prepared_context.report_dir}")
+    return dataset_context, prepared_context
+
+
+def _run_full_pipeline(config: AppConfig) -> None:
+    dataset_context, _ = _prepare_competition_stage(config)
     train_dir = run_training(config=config, dataset_context=dataset_context)
     print(f"Training artifacts ready: {train_dir}")
     submission_path, submission_status = run_submission(config=config, run_dir=train_dir)
@@ -136,6 +145,10 @@ def main(argv: list[str] | None = None) -> None:
 
     if args.stage == "fetch":
         _ensure_data_ready(config)
+        return
+
+    if args.stage == "prepare":
+        _prepare_competition_stage(config)
         return
 
     if args.stage == "eda":

@@ -20,12 +20,14 @@ The repository is developed and manually verified primarily against these Playgr
 - Require explicit `task_type` and `primary_metric` in config.
 - Separate stable competition settings from the current experiment candidate in config via top-level `competition` and `experiment` sections.
 - Ship tracked binary and regression example configs that can be copied into the local runtime config.
+- Persist a competition-level context under `artifacts/<competition_slug>/` with `competition.json` and `folds.csv`.
 - Infer Playground-style submission schema from dataset files:
   - `id_column` as the only column shared by `train.csv`, `test.csv`, and `sample_submission.csv`
   - `label_column` as the only column shared by `train.csv` and `sample_submission.csv` but not `test.csv`
 - Exclude the resolved `id_column` from modeled features by default; identifier columns are treated as metadata, not training signal.
 - Generate terminal and CSV EDA summaries under `reports/<competition_slug>/`, including missingness, categorical cardinality, target summary, and feature-type counts.
-- Run stage-specific CLI entrypoints for `fetch`, `eda`, `preprocess`, `train`, and submit-only flows against explicit run artifacts.
+- Freeze CV assignments once per prepared competition context and reuse them across `train` and `tune`.
+- Run stage-specific CLI entrypoints for `fetch`, `prepare`, `eda`, `preprocess`, `train`, and submit-only flows against explicit run artifacts.
 - Run an explicit `tune` stage that evaluates Optuna trials for the current experiment candidate when `experiment.candidate.optimization.enabled=true`, writes study artifacts, and retrains the best trial into the standard training artifact layout.
 - Train one cross-validated model candidate at a time using config-selected preprocessing and model-family choices that resolve internally to the current canonical recipe IDs.
 - Write a run-root `model_summary.csv`, task-aware run diagnostics, and a canonical `run_manifest.json` under `artifacts/<competition_slug>/train/<run_id>/`, with per-model prediction artifacts under `<run_id>/<model_id>/`.
@@ -54,13 +56,14 @@ cp config.regression.example.yaml config.yaml
 
 `config.yaml` is the only runtime config source. It is intentionally ignored by Git so you can keep local competition-specific settings without committing them.
 
-The current pipeline fetches competition data if needed, runs config-aware EDA, trains the current experiment candidate with fold-local preprocessing and task-aware diagnostics, writes prediction artifacts, and prepares a validated submission file.
+The current pipeline fetches competition data if needed, prepares competition metadata plus frozen folds, trains the current experiment candidate with fold-local preprocessing and task-aware diagnostics, writes prediction artifacts, and prepares a validated submission file.
 
 ## Stage Commands
-`uv run python main.py` still runs the full default pipeline: fetch, EDA, train, and submit.
+`uv run python main.py` still runs the full default pipeline: fetch, prepare, train, and submit.
 
 Available stage-specific commands:
 - `uv run python main.py fetch`
+- `uv run python main.py prepare`
 - `uv run python main.py eda`
 - `uv run python main.py preprocess`
 - `uv run python main.py train`
@@ -70,10 +73,11 @@ Available stage-specific commands:
 
 Stage behavior:
 - `fetch`: ensures competition data is present locally
+- `prepare`: fetches if needed, writes EDA report CSVs, persists `competition.json`, and freezes `folds.csv`
 - `eda`: fetches if needed, then writes EDA report CSVs
 - `preprocess`: fetches if needed, then writes preprocessing diagnostics under `reports/<competition_slug>/`
-- `train`: fetches if needed, then trains and writes normal training artifacts
-- `tune`: fetches if needed, runs an Optuna study for the current experiment candidate when `experiment.candidate.optimization.enabled=true`, writes tuning artifacts, then retrains the best trial into the normal training artifact layout
+- `train`: fetches if needed, prepares competition context when it is missing, then trains and writes normal training artifacts on the frozen folds
+- `tune`: fetches if needed, prepares competition context when it is missing, runs an Optuna study for the current experiment candidate when `experiment.candidate.optimization.enabled=true` on the frozen folds, writes tuning artifacts, then retrains the best trial into the normal training artifact layout
 - `submit`: requires an explicit existing run selection and never retrains implicitly
 
 The `preprocess` stage is a diagnostic/export path, not a separate required step in the normal runtime contract. It writes:
@@ -172,6 +176,8 @@ Tracked example configs for those targets:
 Manual verification for each target:
 - copy the corresponding example file to `config.yaml`
 - confirm the competition archive includes `train.csv`, `test.csv`, and `sample_submission.csv`
+- run `uv run python main.py prepare`
+- confirm `artifacts/<competition_slug>/competition.json` and `artifacts/<competition_slug>/folds.csv` are written
 - confirm the pipeline infers `id_column` and `label_column` without overrides
 - confirm `artifacts/<competition_slug>/train/<run_id>/model_summary.csv` is written
 - confirm `artifacts/<competition_slug>/train/<run_id>/<model_id>/test_predictions.csv` is written for the resolved internal model artifact
@@ -189,6 +195,9 @@ Manual verification for tuning:
 
 ## Outputs
 - Competition data: `data/<competition_slug>/`
+- Competition context artifacts: `artifacts/<competition_slug>/`
+  - `competition.json`
+  - `folds.csv`
 - EDA reports: `reports/<competition_slug>/`
   - when `preprocess` stage is run, also includes `preprocess_summary.csv`, `preprocess_features.csv`, and `preprocess_models.csv`
 - Tuning artifacts: `artifacts/<competition_slug>/tune/<study_id>/`
@@ -210,6 +219,7 @@ Manual verification for tuning:
 - The resolved `id_column` is identifier metadata and is excluded from preprocessing and model fitting by default.
 - `config.yaml` must use top-level `competition` and `experiment` sections; the old flat layout is unsupported.
 - The current runtime resolves `experiment.candidate.model_family + experiment.candidate.preprocessor` to one canonical internal `model_id`; run artifacts still record that resolved `model_id` and `preprocessing_scheme_id`.
+- `prepare` is the competition-level source of truth for `competition.json` and `folds.csv`; `train` and `tune` consume that frozen context and auto-run `prepare` only when it is missing.
 - The `tune` stage uses the current experiment candidate only, and the tuned best-trial retrain writes a standard single-model train artifact with `tuning_provenance`.
 - Submission uses `run_manifest.json` as the canonical source for `competition_slug`, `task_type`, `id_column`, and `label_column`.
 - Submission metadata includes the selected `model_id`; when no model is selected explicitly, submission defaults to the run manifest `best_model_id`.
