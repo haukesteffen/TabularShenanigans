@@ -36,7 +36,8 @@ def _print_resolved_setup(config: AppConfig) -> None:
     print(
         "Resolved competition setup: "
         f"task_type={config.task_type}, primary_metric={config.primary_metric}, "
-        f"candidate_id={config.candidate_id}, model_family={config.model_family}, "
+        f"candidate_id={config.candidate_id}, feature_recipe={config.feature_recipe_id}, "
+        f"model_family={config.model_family}, "
         f"preprocessor={config.preprocessor}, model_id={config.resolved_model_id}"
     )
 

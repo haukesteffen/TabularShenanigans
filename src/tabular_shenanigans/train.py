@@ -11,6 +11,7 @@ from tabular_shenanigans.competition import ensure_prepared_competition_context
 from tabular_shenanigans.config import AppConfig
 from tabular_shenanigans.cv import is_higher_better, resolve_positive_label, score_predictions
 from tabular_shenanigans.data import CompetitionDatasetContext, get_binary_prediction_kind
+from tabular_shenanigans.feature_recipes import apply_feature_recipe
 from tabular_shenanigans.models import build_model, build_model_fit_kwargs
 from tabular_shenanigans.preprocess import build_preprocessor, prepare_feature_frames
 
@@ -317,6 +318,8 @@ def _build_candidate_manifest(
     positive_label: object | None,
     id_column: str,
     label_column: str,
+    feature_recipe_id: str,
+    feature_columns: list[str],
     target_summary: dict[str, object],
     train_rows: int,
     train_cols: int,
@@ -335,6 +338,8 @@ def _build_candidate_manifest(
         "config_fingerprint": config_fingerprint,
         "config_snapshot": config_snapshot,
         "model_family": config.model_family,
+        "feature_recipe_id": feature_recipe_id,
+        "feature_columns": feature_columns,
         "preprocessor": config.preprocessor,
         "model_id": model_result.model_id,
         "model_name": model_result.model_name,
@@ -456,6 +461,11 @@ def run_training(
     )
     split_indices = prepared_context.split_indices
     fold_assignments = prepared_context.fold_assignments
+    x_train_features, x_test_features = apply_feature_recipe(
+        recipe_id=config.feature_recipe_id,
+        x_train_raw=x_train_raw,
+        x_test_raw=x_test_raw,
+    )
     target_summary = _build_target_summary(
         task_type=task_type,
         y_train=y_train,
@@ -468,8 +478,8 @@ def run_training(
         task_type=task_type,
         primary_metric=primary_metric,
         model_spec=resolved_model_spec,
-        x_train_raw=x_train_raw,
-        x_test_raw=x_test_raw,
+        x_train_raw=x_train_features,
+        x_test_raw=x_test_features,
         y_train=y_train,
         split_indices=split_indices,
         force_categorical=config.force_categorical,
@@ -482,8 +492,10 @@ def run_training(
     model_result = evaluation_artifacts.model_result
     print(
         f"Training candidate: {config.candidate_id} | "
+        f"feature_recipe={config.feature_recipe_id} | "
         f"model={model_result.model_id} ({model_result.model_name}) | "
         f"preprocessing={model_result.preprocessing_scheme_id} | "
+        f"features={x_train_features.shape[1]} | "
         f"CV {primary_metric}: mean={model_result.cv_summary.metric_mean:.6f}, "
         f"std={model_result.cv_summary.metric_std:.6f}"
     )
@@ -512,11 +524,13 @@ def run_training(
         positive_label=positive_label,
         id_column=id_column,
         label_column=label_column,
+        feature_recipe_id=config.feature_recipe_id,
+        feature_columns=x_train_features.columns.tolist(),
         target_summary=target_summary,
-        train_rows=int(x_train_raw.shape[0]),
-        train_cols=int(x_train_raw.shape[1]),
-        test_rows=int(x_test_raw.shape[0]),
-        test_cols=int(x_test_raw.shape[1]),
+        train_rows=int(x_train_features.shape[0]),
+        train_cols=int(x_train_features.shape[1]),
+        test_rows=int(x_test_features.shape[0]),
+        test_cols=int(x_test_features.shape[1]),
         tuning_provenance=tuning_provenance,
     )
 

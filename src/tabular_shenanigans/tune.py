@@ -9,6 +9,7 @@ from tabular_shenanigans.competition import ensure_prepared_competition_context
 from tabular_shenanigans.config import AppConfig
 from tabular_shenanigans.cv import is_higher_better, resolve_positive_label
 from tabular_shenanigans.data import CompetitionDatasetContext
+from tabular_shenanigans.feature_recipes import apply_feature_recipe
 from tabular_shenanigans.models import build_tuning_space, get_model_definition
 from tabular_shenanigans.preprocess import prepare_feature_frames
 from tabular_shenanigans.train import (
@@ -153,6 +154,11 @@ def run_optimization(
         expected_feature_columns=x_train_raw.columns.tolist(),
     )
     split_indices = prepared_context.split_indices
+    x_train_features, x_test_features = apply_feature_recipe(
+        recipe_id=config.feature_recipe_id,
+        x_train_raw=x_train_raw,
+        x_test_raw=x_test_raw,
+    )
     target_summary = _build_target_summary(
         task_type=task_type,
         y_train=y_train,
@@ -184,8 +190,8 @@ def run_optimization(
                 model_id=tuning_model_spec.model_id,
                 parameter_overrides=parameter_overrides,
             ),
-            x_train_raw=x_train_raw,
-            x_test_raw=x_test_raw,
+            x_train_raw=x_train_features,
+            x_test_raw=x_test_features,
             y_train=y_train,
             split_indices=split_indices,
             force_categorical=config.force_categorical,

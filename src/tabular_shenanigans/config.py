@@ -5,6 +5,7 @@ import yaml
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from tabular_shenanigans.data import SUPPORTED_PRIMARY_METRICS, is_metric_valid_for_task, normalize_primary_metric
+from tabular_shenanigans.feature_recipes import resolve_feature_recipe_id
 from tabular_shenanigans.models import (
     get_tunable_candidate_model_specs,
     is_model_tunable,
@@ -61,6 +62,7 @@ class ModelCandidateConfig(BaseModel):
 
     candidate_type: Literal["model"] = "model"
     candidate_id: str = Field(min_length=1)
+    feature_recipe_id: str = Field(default="identity", min_length=1)
     preprocessor: Literal["onehot", "ordinal", "native", "frequency"]
     model_family: Literal[
         "ridge",
@@ -125,6 +127,10 @@ class AppConfig(BaseModel):
 
         if self.competition.task_type != "binary" and self.competition.positive_label is not None:
             raise ValueError("competition.positive_label is only supported for binary task_type.")
+
+        self.experiment.candidate.feature_recipe_id = resolve_feature_recipe_id(
+            self.experiment.candidate.feature_recipe_id
+        )
 
         resolved_model_id = self.resolved_model_id
         optimization = self.experiment.candidate.optimization
@@ -210,6 +216,10 @@ class AppConfig(BaseModel):
     @property
     def model_family(self) -> str:
         return self.experiment.candidate.model_family
+
+    @property
+    def feature_recipe_id(self) -> str:
+        return self.experiment.candidate.feature_recipe_id
 
     @property
     def preprocessor(self) -> str:
