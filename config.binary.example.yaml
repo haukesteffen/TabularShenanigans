@@ -35,9 +35,13 @@ experiment:
   candidate:
     candidate_type: model
     candidate_id: baseline_logreg_v1
+    feature_recipe_id: identity
     preprocessor: onehot
     model_family: logistic_regression
     model_params: {}
+
+    # Keep identity for new competitions, then switch to a tracked code recipe
+    # such as s6e3_v1 only when you need competition-specific features.
 
     # Alternative binary model candidates:
     # preprocessor: ordinal
@@ -45,7 +49,7 @@ experiment:
     # preprocessor: native
     # model_family: catboost
 
-    # Optional tuning settings for `uv run python main.py tune`.
+    # Optional tuning settings for `uv run python main.py train`.
     optimization:
       enabled: false
       # method: optuna
