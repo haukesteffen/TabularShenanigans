@@ -47,7 +47,9 @@ def build_parser() -> argparse.ArgumentParser:
 def _print_resolved_setup(config: AppConfig) -> None:
     print(
         "Resolved competition setup: "
-        f"task_type={config.task_type}, primary_metric={config.primary_metric}, model_ids={config.model_ids}"
+        f"task_type={config.task_type}, primary_metric={config.primary_metric}, "
+        f"candidate_id={config.candidate_id}, model_family={config.model_family}, "
+        f"preprocessor={config.preprocessor}, model_id={config.resolved_model_id}"
     )
 
 

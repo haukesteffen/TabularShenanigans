@@ -18,7 +18,7 @@ The repository is developed and manually verified primarily against these Playgr
 - Load and validate a single local repository-root `config.yaml`.
 - Fetch Kaggle competition data into `data/<competition_slug>/` when the zip is missing.
 - Require explicit `task_type` and `primary_metric` in config.
-- Select one or more baseline or booster model recipes per run from config via canonical `model_ids`.
+- Separate stable competition settings from the current experiment candidate in config via top-level `competition` and `experiment` sections.
 - Ship tracked binary and regression example configs that can be copied into the local runtime config.
 - Infer Playground-style submission schema from dataset files:
   - `id_column` as the only column shared by `train.csv`, `test.csv`, and `sample_submission.csv`
@@ -26,11 +26,8 @@ The repository is developed and manually verified primarily against these Playgr
 - Exclude the resolved `id_column` from modeled features by default; identifier columns are treated as metadata, not training signal.
 - Generate terminal and CSV EDA summaries under `reports/<competition_slug>/`, including missingness, categorical cardinality, target summary, and feature-type counts.
 - Run stage-specific CLI entrypoints for `fetch`, `eda`, `preprocess`, `train`, and submit-only flows against explicit run artifacts.
-- Run an explicit `tune` stage that evaluates Optuna trials for one configured model recipe, writes study artifacts, and retrains the best trial into the standard training artifact layout.
-- Train one or more cross-validated model recipes with fold-local, model-specific preprocessing:
-  - `onehot` preprocessing: `onehot_ridge`, `onehot_elasticnet`, `onehot_logreg`
-  - `ordinal` preprocessing: `ordinal_randomforest`, `ordinal_extratrees`, `ordinal_hgb`, `ordinal_lightgbm`, `ordinal_xgboost`
-  - `native` preprocessing: `native_catboost`
+- Run an explicit `tune` stage that evaluates Optuna trials for the current experiment candidate when `experiment.candidate.optimization.enabled=true`, writes study artifacts, and retrains the best trial into the standard training artifact layout.
+- Train one cross-validated model candidate at a time using config-selected preprocessing and model-family choices that resolve internally to the current canonical recipe IDs.
 - Write a run-root `model_summary.csv`, task-aware run diagnostics, and a canonical `run_manifest.json` under `artifacts/<competition_slug>/train/<run_id>/`, with per-model prediction artifacts under `<run_id>/<model_id>/`.
 - Write tuning artifacts under `artifacts/<competition_slug>/tune/<study_id>/`, including `study_manifest.json`, `study_summary.csv`, `trials.csv`, and `best_params.json`.
 - Validate predictions against `sample_submission.csv`, including exact ID content and order, with task-aware binary prediction checks, and optionally submit to Kaggle from the best model in the run or an explicitly selected model artifact.
@@ -57,7 +54,7 @@ cp config.regression.example.yaml config.yaml
 
 `config.yaml` is the only runtime config source. It is intentionally ignored by Git so you can keep local competition-specific settings without committing them.
 
-The current pipeline fetches competition data if needed, runs config-aware EDA, trains one or more CV model recipes with fold-local preprocessing and task-aware diagnostics, writes prediction artifacts, and prepares a validated submission file.
+The current pipeline fetches competition data if needed, runs config-aware EDA, trains the current experiment candidate with fold-local preprocessing and task-aware diagnostics, writes prediction artifacts, and prepares a validated submission file.
 
 ## Stage Commands
 `uv run python main.py` still runs the full default pipeline: fetch, EDA, train, and submit.
@@ -76,7 +73,7 @@ Stage behavior:
 - `eda`: fetches if needed, then writes EDA report CSVs
 - `preprocess`: fetches if needed, then writes preprocessing diagnostics under `reports/<competition_slug>/`
 - `train`: fetches if needed, then trains and writes normal training artifacts
-- `tune`: fetches if needed, runs an Optuna study for `tuning.model_id`, writes tuning artifacts, then retrains the best trial into the normal training artifact layout
+- `tune`: fetches if needed, runs an Optuna study for the current experiment candidate when `experiment.candidate.optimization.enabled=true`, writes tuning artifacts, then retrains the best trial into the normal training artifact layout
 - `submit`: requires an explicit existing run selection and never retrains implicitly
 
 The `preprocess` stage is a diagnostic/export path, not a separate required step in the normal runtime contract. It writes:
@@ -97,50 +94,58 @@ Runtime config workflow:
 - edit only `config.yaml` for local runs
 - keep `config.yaml` untracked; the application does not read the example files directly
 
-Required keys:
-- `competition_slug`
+The flat config layout is no longer supported. `config.yaml` must now contain top-level `competition` and `experiment` sections.
+
+Required top-level sections:
+- `competition`
+- `experiment`
+
+`competition` keys:
+- `slug`
 - `task_type`: `regression` or `binary`
 - `primary_metric`: one of `rmse`, `mse`, `rmsle`, `mae`, `roc_auc`, `log_loss`, `accuracy`
+- optional `positive_label`: explicit positive class for binary competitions; required unless the observed training labels follow one of the documented safe conventions: `[0, 1]`, `[False, True]`, or `["No", "Yes"]`
+- optional schema overrides:
+  - `id_column`
+  - `label_column`
+- `cv`:
+  - `n_splits` (default `7`)
+  - `shuffle` (default `true`)
+  - `random_state` (default `42`)
+- optional `features` block:
+  - `force_categorical`
+  - `force_numeric`
+  - `drop_columns`
+  - `low_cardinality_int_threshold`
 
-Optional binary-classification key:
-- `positive_label`: explicit positive class for binary competitions; required unless the observed training labels follow one of the documented safe conventions: `[0, 1]`, `[False, True]`, or `["No", "Yes"]`
+`experiment` keys:
+- `name`
+- optional `notes`
+- required `candidate` block
+- optional `submit` block
 
-Optional model-selection key:
-- `model_ids`: ordered list of canonical baseline model recipes for the configured task
-  - regression: `onehot_ridge`, `onehot_elasticnet` (default), `ordinal_randomforest`, `ordinal_extratrees`, `ordinal_hgb`, `ordinal_lightgbm`, `native_catboost`, `ordinal_xgboost`
-  - binary classification: `onehot_logreg` (default), `ordinal_randomforest`, `ordinal_extratrees`, `ordinal_hgb`, `ordinal_lightgbm`, `native_catboost`, `ordinal_xgboost`
+Current `experiment.candidate` contract:
+- `candidate_type`: currently only `model` is supported
+- `candidate_id`
+- `preprocessor`: `onehot`, `ordinal`, or `native`
+- `model_family`
+  - regression: `ridge`, `elasticnet`, `random_forest`, `extra_trees`, `hist_gradient_boosting`, `lightgbm`, `catboost`, `xgboost`
+  - binary classification: `logistic_regression`, `random_forest`, `extra_trees`, `hist_gradient_boosting`, `lightgbm`, `catboost`, `xgboost`
+- optional `model_params`
+- optional `optimization`:
+  - `enabled`
+  - `method`: currently only `optuna`
+  - `n_trials`
+  - `timeout_seconds`
+  - `random_state`
 
-Optional submission schema keys:
-- `id_column`: override for the inferred identifier column; the resolved ID column is excluded from modeled features by default
-- `label_column`: override for the inferred submission/target column
+Supported `model_family + preprocessor` combinations:
+- regression: `ridge + onehot`, `elasticnet + onehot`, `random_forest + ordinal`, `extra_trees + ordinal`, `hist_gradient_boosting + ordinal`, `lightgbm + ordinal`, `catboost + native`, `xgboost + ordinal`
+- binary classification: `logistic_regression + onehot`, `random_forest + ordinal`, `extra_trees + ordinal`, `hist_gradient_boosting + ordinal`, `lightgbm + ordinal`, `catboost + native`, `xgboost + ordinal`
 
-Optional preprocessing keys:
-- `force_categorical`: list of feature names to force into the categorical pipeline
-- `force_numeric`: list of feature names to force into the numeric pipeline
-- `drop_columns`: additional feature names to remove before preprocessing after the ID column is already excluded by default
-- `low_cardinality_int_threshold`: integer columns at or below this unique-count threshold are treated as categorical by default
-
-Model preprocessing notes:
-- `native_catboost` preserves a pandas feature frame and uses CatBoost native categorical handling.
-- `ordinal_lightgbm` and `ordinal_xgboost` reuse the repository ordinal categorical path.
-
-Optional CV keys:
-- `cv_n_splits`: number of CV folds (default `7`)
-- `cv_shuffle`: whether to shuffle before splitting (default `true`)
-- `cv_random_state`: random seed for deterministic folds (default `42`)
-
-Optional tuning block:
-- `tuning.enabled`: enables the `tune` stage for the current config (default `false`)
-- `tuning.model_id`: one canonical tunable model recipe for the configured task
-  - regression: `ordinal_randomforest`, `ordinal_extratrees`, `ordinal_hgb`
-  - binary classification: `onehot_logreg`, `ordinal_randomforest`, `ordinal_extratrees`, `ordinal_hgb`
-- `tuning.n_trials`: optional Optuna trial limit
-- `tuning.timeout_seconds`: optional wall-clock limit
-- `tuning.random_state`: Optuna sampler seed (default `42`)
-
-Optional submission keys:
-- `submit_enabled`: if `true`, submit to Kaggle after training (default `false`)
-- `submit_message_prefix`: optional prefix used in auto-generated submission messages
+Current `experiment.submit` keys:
+- `enabled`: if `true`, submit to Kaggle after training (default `false`)
+- `message_prefix`: optional prefix used in auto-generated submission messages
 
 Binary prediction artifact contract:
 - `roc_auc` and `log_loss`: `test_predictions.csv` and `submission.csv` contain positive-class probabilities in `[0, 1]`
@@ -148,9 +153,9 @@ Binary prediction artifact contract:
 
 If `id_column` or `label_column` are omitted, the training pipeline infers them from `train.csv`, `test.csv`, and `sample_submission.csv`. The resolved `id_column` is preserved for prediction outputs and in `run_manifest.json`, but it is not part of the model feature matrix. Submission preparation consumes the selected run manifest as the schema/task source of truth and uses `sample_submission.csv` only for validation. Invalid overrides, ambiguous inference, a `sample_submission.csv` shape that does not exactly match `[id_column, label_column]`, or a submission ID column that differs from `sample_submission.csv` in values or ordering are hard errors.
 
-`model_ids` is the config-driven model-selection interface. If `model_ids` is omitted, the workflow selects the current default recipe for the configured task: `onehot_elasticnet` for regression and `onehot_logreg` for binary classification. For a single-model run, use a one-entry `model_ids` list. Config-time model selection accepts canonical preprocessing-first recipe IDs only. Submit-time `--model-id` still selects one trained model artifact from an existing run.
+The current runtime resolves `experiment.candidate.model_family + experiment.candidate.preprocessor` into one internal canonical `model_id` so the existing train, tune, and submit paths can continue working during the transition to the broader candidate-centric workflow.
 
-`tune` uses `tuning.model_id` only. It does not reuse the top-level `model_ids` list for trial evaluation. After the study completes, the best trial is retrained as a single-model normal training run and the resulting `run_manifest.json` records `tuning_provenance`.
+`tune` uses the current experiment candidate only. When `experiment.candidate.optimization.enabled=true`, the tune stage evaluates that candidate, writes study artifacts, and retrains the best trial into the normal single-model training artifact layout.
 
 `task_type` and `primary_metric` are always config-driven. The pipeline does not infer them from Kaggle metadata.
 
@@ -169,15 +174,15 @@ Manual verification for each target:
 - confirm the competition archive includes `train.csv`, `test.csv`, and `sample_submission.csv`
 - confirm the pipeline infers `id_column` and `label_column` without overrides
 - confirm `artifacts/<competition_slug>/train/<run_id>/model_summary.csv` is written
-- confirm `artifacts/<competition_slug>/train/<run_id>/<model_id>/test_predictions.csv` is written for each selected model
+- confirm `artifacts/<competition_slug>/train/<run_id>/<model_id>/test_predictions.csv` is written for the resolved internal model artifact
 - confirm `artifacts/<competition_slug>/train/<run_id>/<model_id>/submission.csv` is written and validated against `sample_submission.csv`, including exact ID values and order, for the submitted model
 - confirm binary outputs match the configured metric contract: probabilities for `roc_auc`/`log_loss`, labels for `accuracy`
 
 Manual verification for tuning:
-- run `uv run python main.py tune` with `tuning.enabled: true`, one supported `tuning.model_id`, and at least one stopping condition
-- supported tunable `model_id`s are:
-  - binary: `onehot_logreg`, `ordinal_randomforest`, `ordinal_extratrees`, `ordinal_hgb`, `ordinal_lightgbm`, `native_catboost`, `ordinal_xgboost`
-  - regression: `ordinal_randomforest`, `ordinal_extratrees`, `ordinal_hgb`, `ordinal_lightgbm`, `native_catboost`, `ordinal_xgboost`
+- run `uv run python main.py tune` with `experiment.candidate.optimization.enabled: true` and at least one stopping condition
+- supported tunable combinations are:
+  - binary: `logistic_regression + onehot`, `random_forest + ordinal`, `extra_trees + ordinal`, `hist_gradient_boosting + ordinal`, `lightgbm + ordinal`, `catboost + native`, `xgboost + ordinal`
+  - regression: `random_forest + ordinal`, `extra_trees + ordinal`, `hist_gradient_boosting + ordinal`, `lightgbm + ordinal`, `catboost + native`, `xgboost + ordinal`
 - confirm `artifacts/<competition_slug>/tune/<study_id>/study_manifest.json` is written
 - confirm `artifacts/<competition_slug>/tune/<study_id>/trials.csv` records trial state, score, and params
 - confirm `artifacts/<competition_slug>/train/<run_id>/run_manifest.json` records `tuning_provenance`
@@ -203,8 +208,9 @@ Manual verification for tuning:
 - Competition zip contents include `train.csv`, `test.csv`, and `sample_submission.csv`.
 - The competition follows a simple two-column Playground submission contract: `sample_submission.csv` must be exactly `[id_column, label_column]`.
 - The resolved `id_column` is identifier metadata and is excluded from preprocessing and model fitting by default.
-- Configured `model_ids` must use canonical preprocessing-aware training recipe IDs; run artifacts record the canonical `model_id` and `preprocessing_scheme_id`.
-- The `tune` stage uses `tuning.model_id` only, and the tuned best-trial retrain writes a standard single-model train artifact with `tuning_provenance`.
+- `config.yaml` must use top-level `competition` and `experiment` sections; the old flat layout is unsupported.
+- The current runtime resolves `experiment.candidate.model_family + experiment.candidate.preprocessor` to one canonical internal `model_id`; run artifacts still record that resolved `model_id` and `preprocessing_scheme_id`.
+- The `tune` stage uses the current experiment candidate only, and the tuned best-trial retrain writes a standard single-model train artifact with `tuning_provenance`.
 - Submission uses `run_manifest.json` as the canonical source for `competition_slug`, `task_type`, `id_column`, and `label_column`.
 - Submission metadata includes the selected `model_id`; when no model is selected explicitly, submission defaults to the run manifest `best_model_id`.
 - Submission validation requires the selected model artifact `test_predictions.csv[id_column]` to match `sample_submission.csv[id_column]` exactly in both values and row order.
