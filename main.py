@@ -27,20 +27,10 @@ def build_parser() -> argparse.ArgumentParser:
     subparsers.add_parser("train", help="Train the current candidate only.")
     subparsers.add_parser("tune", help="Run Optuna tuning and retrain the best trial.")
 
-    submit_parser = subparsers.add_parser("submit", help="Prepare or submit from an existing artifact directory.")
-    run_selection = submit_parser.add_mutually_exclusive_group(required=True)
-    run_selection.add_argument(
-        "--run-dir",
-        type=Path,
-        help="Explicit artifact directory such as artifacts/<competition_slug>/candidates/<candidate_id>.",
-    )
-    run_selection.add_argument(
-        "--run-id",
-        help="Legacy run identifier resolved under artifacts/<competition_slug>/train/<run_id> using config.competition_slug.",
-    )
+    submit_parser = subparsers.add_parser("submit", help="Prepare or submit from a candidate artifact.")
     submit_parser.add_argument(
-        "--model-id",
-        help="Optional model_id for legacy multi-model run artifacts; ignored for current single-candidate artifacts.",
+        "--candidate-id",
+        help="Optional candidate_id resolved under artifacts/<competition_slug>/candidates/<candidate_id>. Defaults to config.candidate_id.",
     )
 
     return parser
@@ -69,12 +59,6 @@ def _load_shared_dataset_context(config: AppConfig):
     )
 
 
-def _resolve_artifact_dir(config: AppConfig, args: argparse.Namespace) -> Path:
-    if args.run_dir is not None:
-        return args.run_dir
-    return Path("artifacts") / config.competition_slug / "train" / str(args.run_id)
-
-
 def _prepare_competition_stage(config: AppConfig):
     _ensure_data_ready(config)
     dataset_context = _load_shared_dataset_context(config)
@@ -89,7 +73,7 @@ def _run_full_pipeline(config: AppConfig) -> None:
     dataset_context, _ = _prepare_competition_stage(config)
     candidate_dir = run_training(config=config, dataset_context=dataset_context)
     print(f"Candidate artifacts ready: {candidate_dir}")
-    submission_path, submission_status = run_submission(config=config, artifact_dir=candidate_dir)
+    submission_path, submission_status = run_submission(config=config)
     print(f"Submission file ready: {submission_path} ({submission_status})")
 
 
@@ -123,12 +107,11 @@ def _run_tune_stage(config: AppConfig) -> None:
 
 
 def _run_submit_stage(config: AppConfig, args: argparse.Namespace) -> None:
-    artifact_dir = _resolve_artifact_dir(config, args)
-    print(f"Using artifact_dir: {artifact_dir}")
+    resolved_candidate_id = args.candidate_id or config.candidate_id
+    print(f"Using candidate_id: {resolved_candidate_id}")
     submission_path, submission_status = run_submission(
         config=config,
-        artifact_dir=artifact_dir,
-        model_id=args.model_id,
+        candidate_id=resolved_candidate_id,
     )
     print(f"Submission file ready: {submission_path} ({submission_status})")
 

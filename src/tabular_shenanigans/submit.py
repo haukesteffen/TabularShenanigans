@@ -13,7 +13,7 @@ from tabular_shenanigans.data import get_binary_prediction_kind, load_sample_sub
 SUBMISSION_LEDGER_COLUMNS = [
     "timestamp_utc",
     "competition_slug",
-    "run_id",
+    "candidate_id",
     "model_id",
     "model_name",
     "config_fingerprint",
@@ -26,8 +26,7 @@ SUBMISSION_LEDGER_COLUMNS = [
 
 @dataclass(frozen=True)
 class SubmissionContext:
-    artifact_kind: str
-    artifact_id: str
+    candidate_id: str
     competition_slug: str
     task_type: str
     primary_metric: str
@@ -40,6 +39,14 @@ class SubmissionContext:
     observed_label_pair: tuple[object, object] | None
     config_fingerprint: str | None
     prediction_path: Path
+
+
+def _candidate_dir(competition_slug: str, candidate_id: str) -> Path:
+    return Path("artifacts") / competition_slug / "candidates" / candidate_id
+
+
+def _submission_ledger_path(competition_slug: str) -> Path:
+    return Path("artifacts") / competition_slug / "submissions.csv"
 
 
 def _read_submission_ledger(ledger_path: Path) -> pd.DataFrame:
@@ -64,125 +71,35 @@ def _append_submission_ledger(ledger_path: Path, row: dict[str, object]) -> None
     ledger_df.to_csv(ledger_path, index=False)
 
 
-def _load_json_manifest(manifest_path: Path, description: str) -> dict[str, object]:
+def _load_candidate_manifest(candidate_dir: Path) -> dict[str, object]:
+    manifest_path = candidate_dir / "candidate.json"
     if not manifest_path.exists():
-        raise ValueError(f"Missing {description}: {manifest_path}")
+        raise ValueError(
+            f"Missing candidate manifest: {manifest_path}. Submission requires current candidate artifacts."
+        )
     manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
     if not isinstance(manifest, dict):
-        raise ValueError(f"{description.capitalize()} must be a JSON object: {manifest_path}")
+        raise ValueError(f"Candidate manifest must be a JSON object: {manifest_path}")
     return manifest
 
 
-def _require_manifest_value(manifest: dict[str, object], field_name: str, description: str) -> object:
+def _require_manifest_value(manifest: dict[str, object], field_name: str) -> object:
     field_value = manifest.get(field_name)
     if field_value is None:
-        raise ValueError(f"{description.capitalize()} is missing required field '{field_name}'.")
+        raise ValueError(f"Candidate manifest is missing required field '{field_name}'.")
     return field_value
 
 
-def _parse_observed_label_pair(manifest: dict[str, object], description: str) -> tuple[object, object] | None:
+def _parse_observed_label_pair(manifest: dict[str, object]) -> tuple[object, object] | None:
     observed_label_pair_raw = manifest.get("observed_label_pair")
     if observed_label_pair_raw is None:
         return None
     if not isinstance(observed_label_pair_raw, list) or len(observed_label_pair_raw) != 2:
-        raise ValueError(f"{description.capitalize()} observed_label_pair must contain exactly two labels when present.")
+        raise ValueError("Candidate manifest observed_label_pair must contain exactly two labels when present.")
     return (observed_label_pair_raw[0], observed_label_pair_raw[1])
 
 
-def _load_manifest_models(run_manifest: dict[str, object]) -> list[dict[str, object]]:
-    manifest_models = run_manifest.get("models")
-    if not isinstance(manifest_models, list) or not manifest_models:
-        raise ValueError(
-            "Run manifest must contain a non-empty 'models' list. "
-            "Submission requires current multi-model-aware run artifacts."
-        )
-    if not all(isinstance(model, dict) for model in manifest_models):
-        raise ValueError("Run manifest models must be a list of mappings.")
-    return manifest_models
-
-
-def _resolve_selected_legacy_model(
-    run_manifest: dict[str, object],
-    requested_model_id: str | None = None,
-) -> tuple[str, dict[str, object]]:
-    manifest_models = _load_manifest_models(run_manifest)
-    available_model_ids = [str(model["model_id"]) for model in manifest_models]
-
-    if requested_model_id is not None:
-        selected_model_id = requested_model_id
-        if selected_model_id not in available_model_ids:
-            raise ValueError(
-                f"Requested model_id '{selected_model_id}' is not present in the run manifest. "
-                f"Available model_ids: {available_model_ids}"
-            )
-    else:
-        best_model_id = run_manifest.get("best_model_id")
-        if best_model_id is None:
-            raise ValueError(
-                "Run manifest is missing required submission field 'best_model_id'. "
-                f"Available model_ids: {available_model_ids}"
-            )
-        selected_model_id = str(best_model_id)
-        if selected_model_id not in available_model_ids:
-            raise ValueError(
-                "Run manifest best_model_id must match one of the available model entries. "
-                f"Available model_ids: {available_model_ids}"
-            )
-
-    selected_model = next(
-        (model for model in manifest_models if str(model["model_id"]) == selected_model_id),
-        None,
-    )
-    if selected_model is None:
-        raise ValueError(
-            f"Requested model_id '{selected_model_id}' is missing from the run manifest model entries."
-        )
-    return selected_model_id, selected_model
-
-
-def _resolve_legacy_prediction_path(run_dir: Path, model_id: str) -> Path:
-    prediction_path = run_dir / model_id / "test_predictions.csv"
-    if prediction_path.exists():
-        return prediction_path
-    raise ValueError(
-        "Missing test predictions file for submission. "
-        f"Expected current per-model artifact at {prediction_path}"
-    )
-
-
-def _load_legacy_submission_context(
-    run_dir: Path,
-    model_id: str | None = None,
-) -> SubmissionContext:
-    run_manifest = _load_json_manifest(
-        manifest_path=run_dir / "run_manifest.json",
-        description="run manifest",
-    )
-    selected_model_id, selected_model = _resolve_selected_legacy_model(run_manifest, requested_model_id=model_id)
-    cv_summary = selected_model.get("cv_summary")
-    if not isinstance(cv_summary, dict):
-        raise ValueError("Run manifest model cv_summary must be a mapping.")
-    prediction_path = _resolve_legacy_prediction_path(run_dir=run_dir, model_id=selected_model_id)
-
-    return SubmissionContext(
-        artifact_kind="run",
-        artifact_id=str(_require_manifest_value(run_manifest, "run_id", "run manifest")),
-        competition_slug=str(_require_manifest_value(run_manifest, "competition_slug", "run manifest")),
-        task_type=str(_require_manifest_value(run_manifest, "task_type", "run manifest")),
-        primary_metric=str(_require_manifest_value(run_manifest, "primary_metric", "run manifest")),
-        model_id=selected_model_id,
-        model_name=str(selected_model["model_name"]),
-        metric_name=str(cv_summary["metric_name"]),
-        metric_mean=float(cv_summary["metric_mean"]),
-        id_column=str(_require_manifest_value(run_manifest, "id_column", "run manifest")),
-        label_column=str(_require_manifest_value(run_manifest, "label_column", "run manifest")),
-        observed_label_pair=_parse_observed_label_pair(run_manifest, "run manifest"),
-        config_fingerprint=run_manifest.get("config_fingerprint"),
-        prediction_path=prediction_path,
-    )
-
-
-def _resolve_candidate_prediction_path(candidate_dir: Path) -> Path:
+def _resolve_prediction_path(candidate_dir: Path) -> Path:
     prediction_path = candidate_dir / "test_predictions.csv"
     if prediction_path.exists():
         return prediction_path
@@ -192,50 +109,31 @@ def _resolve_candidate_prediction_path(candidate_dir: Path) -> Path:
     )
 
 
-def _load_candidate_submission_context(
-    candidate_dir: Path,
-    model_id: str | None = None,
+def _load_submission_context(
+    competition_slug: str,
+    candidate_id: str,
 ) -> SubmissionContext:
-    candidate_manifest = _load_json_manifest(
-        manifest_path=candidate_dir / "candidate.json",
-        description="candidate manifest",
-    )
-    selected_model_id = str(_require_manifest_value(candidate_manifest, "model_id", "candidate manifest"))
-    if model_id is not None and model_id != selected_model_id:
-        raise ValueError(
-            "Candidate artifacts contain exactly one model. "
-            f"Requested model_id '{model_id}', available model_id '{selected_model_id}'."
-        )
-
+    candidate_dir = _candidate_dir(competition_slug=competition_slug, candidate_id=candidate_id)
+    candidate_manifest = _load_candidate_manifest(candidate_dir=candidate_dir)
     cv_summary = candidate_manifest.get("cv_summary")
     if not isinstance(cv_summary, dict):
         raise ValueError("Candidate manifest cv_summary must be a mapping.")
-    prediction_path = _resolve_candidate_prediction_path(candidate_dir)
+
     return SubmissionContext(
-        artifact_kind="candidate",
-        artifact_id=str(_require_manifest_value(candidate_manifest, "candidate_id", "candidate manifest")),
-        competition_slug=str(_require_manifest_value(candidate_manifest, "competition_slug", "candidate manifest")),
-        task_type=str(_require_manifest_value(candidate_manifest, "task_type", "candidate manifest")),
-        primary_metric=str(_require_manifest_value(candidate_manifest, "primary_metric", "candidate manifest")),
-        model_id=selected_model_id,
-        model_name=str(_require_manifest_value(candidate_manifest, "model_name", "candidate manifest")),
+        candidate_id=str(_require_manifest_value(candidate_manifest, "candidate_id")),
+        competition_slug=str(_require_manifest_value(candidate_manifest, "competition_slug")),
+        task_type=str(_require_manifest_value(candidate_manifest, "task_type")),
+        primary_metric=str(_require_manifest_value(candidate_manifest, "primary_metric")),
+        model_id=str(_require_manifest_value(candidate_manifest, "model_id")),
+        model_name=str(_require_manifest_value(candidate_manifest, "model_name")),
         metric_name=str(cv_summary["metric_name"]),
         metric_mean=float(cv_summary["metric_mean"]),
-        id_column=str(_require_manifest_value(candidate_manifest, "id_column", "candidate manifest")),
-        label_column=str(_require_manifest_value(candidate_manifest, "label_column", "candidate manifest")),
-        observed_label_pair=_parse_observed_label_pair(candidate_manifest, "candidate manifest"),
+        id_column=str(_require_manifest_value(candidate_manifest, "id_column")),
+        label_column=str(_require_manifest_value(candidate_manifest, "label_column")),
+        observed_label_pair=_parse_observed_label_pair(candidate_manifest),
         config_fingerprint=candidate_manifest.get("config_fingerprint"),
-        prediction_path=prediction_path,
+        prediction_path=_resolve_prediction_path(candidate_dir),
     )
-
-
-def _load_submission_context(
-    artifact_dir: Path,
-    model_id: str | None = None,
-) -> SubmissionContext:
-    if (artifact_dir / "candidate.json").exists():
-        return _load_candidate_submission_context(candidate_dir=artifact_dir, model_id=model_id)
-    return _load_legacy_submission_context(run_dir=artifact_dir, model_id=model_id)
 
 
 def _validate_submission_ids(
@@ -310,7 +208,7 @@ def _validate_binary_label_predictions(
 ) -> None:
     if observed_label_pair is None:
         raise ValueError(
-            "Binary label submissions require observed_label_pair metadata in the artifact manifest."
+            "Binary label submissions require observed_label_pair metadata in the candidate manifest."
         )
     if not prediction_values.map(pd.notna).all():
         raise ValueError("Binary label submissions contain missing values.")
@@ -370,10 +268,13 @@ def _prepare_submission_file_from_context(submission_context: SubmissionContext)
 
 
 def prepare_submission_file(
-    artifact_dir: Path,
-    model_id: str | None = None,
+    competition_slug: str,
+    candidate_id: str,
 ) -> Path:
-    submission_context = _load_submission_context(artifact_dir=artifact_dir, model_id=model_id)
+    submission_context = _load_submission_context(
+        competition_slug=competition_slug,
+        candidate_id=candidate_id,
+    )
     return _prepare_submission_file_from_context(submission_context)
 
 
@@ -384,27 +285,33 @@ def _build_submission_message_from_context(
     message_parts = []
     if submit_message_prefix:
         message_parts.append(submit_message_prefix.strip())
-    message_parts.append(f"{submission_context.artifact_kind}={submission_context.artifact_id}")
+    message_parts.append(f"candidate={submission_context.candidate_id}")
     message_parts.append(f"model={submission_context.model_id}")
     message_parts.append(f"{submission_context.metric_name}={submission_context.metric_mean:.6f}")
     return " | ".join(message_parts)
 
 
 def build_submission_message(
-    artifact_dir: Path,
+    competition_slug: str,
+    candidate_id: str,
     submit_message_prefix: str | None = None,
-    model_id: str | None = None,
 ) -> str:
-    submission_context = _load_submission_context(artifact_dir=artifact_dir, model_id=model_id)
+    submission_context = _load_submission_context(
+        competition_slug=competition_slug,
+        candidate_id=candidate_id,
+    )
     return _build_submission_message_from_context(submission_context, submit_message_prefix=submit_message_prefix)
 
 
 def run_submission(
     config: AppConfig,
-    artifact_dir: Path,
-    model_id: str | None = None,
+    candidate_id: str | None = None,
 ) -> tuple[Path, str]:
-    submission_context = _load_submission_context(artifact_dir=artifact_dir, model_id=model_id)
+    resolved_candidate_id = candidate_id or config.candidate_id
+    submission_context = _load_submission_context(
+        competition_slug=config.competition_slug,
+        candidate_id=resolved_candidate_id,
+    )
     submission_path = _prepare_submission_file_from_context(submission_context)
     message = _build_submission_message_from_context(
         submission_context,
@@ -440,7 +347,7 @@ def run_submission(
     ledger_row = {
         "timestamp_utc": datetime.now(timezone.utc).isoformat(),
         "competition_slug": submission_context.competition_slug,
-        "run_id": submission_context.artifact_id,
+        "candidate_id": submission_context.candidate_id,
         "model_id": submission_context.model_id,
         "model_name": submission_context.model_name,
         "config_fingerprint": submission_context.config_fingerprint,
@@ -449,6 +356,6 @@ def run_submission(
         "status": status,
         "message": message,
     }
-    ledger_path = Path("artifacts") / submission_context.competition_slug / "train" / "submissions.csv"
+    ledger_path = _submission_ledger_path(submission_context.competition_slug)
     _append_submission_ledger(ledger_path=ledger_path, row=ledger_row)
     return submission_path, status
