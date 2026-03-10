@@ -18,11 +18,10 @@ The intended operating scope is Kaggle Playground Series tabular competitions. C
 8. Resolve the current `experiment.candidate.model_family + preprocessor` combination to one internal canonical model recipe, then train that one configured candidate:
    - regression: `ridge + onehot`, `elasticnet + onehot`, `random_forest + ordinal`, `extra_trees + ordinal`, `hist_gradient_boosting + ordinal`, `lightgbm + ordinal`, `catboost + native`, `xgboost + ordinal`
    - binary classification: `logistic_regression + onehot`, `random_forest + ordinal`, `extra_trees + ordinal`, `hist_gradient_boosting + ordinal`, `lightgbm + ordinal`, `catboost + native`, `xgboost + ordinal`
-9. Write run-level diagnostics, `model_summary.csv`, and a canonical `run_manifest.json` under `artifacts/<competition_slug>/train/<run_id>/`.
-10. Write per-model fold metrics, OOF predictions, and test predictions under `artifacts/<competition_slug>/train/<run_id>/<model_id>/`.
-11. Validate predictions against `sample_submission.csv`, including exact ID content and order, using `run_manifest.json` as the submission metadata contract, apply metric-aware binary prediction validation, write `submission.csv` in the selected model directory, and optionally submit to Kaggle.
+9. Write one candidate artifact directory under `artifacts/<competition_slug>/candidates/<candidate_id>/` with `candidate.json`, `fold_metrics.csv`, `oof_predictions.csv`, and `test_predictions.csv`.
+10. Validate predictions against `sample_submission.csv`, including exact ID content and order, using `candidate.json` for current candidate artifacts or `run_manifest.json` for legacy run artifacts, apply metric-aware binary prediction validation, write `submission.csv` in the selected artifact directory, and optionally submit to Kaggle.
 
-When the explicit `tune` stage is selected, the workflow additionally loads the frozen fold assignments from `folds.csv`, runs an Optuna study for the current experiment candidate when `experiment.candidate.optimization.enabled=true`, writes tuning artifacts under `artifacts/<competition_slug>/tune/<study_id>/`, and retrains the best trial into the standard train artifact layout with `tuning_provenance` recorded in `run_manifest.json`.
+When the explicit `tune` stage is selected, the workflow additionally loads the frozen fold assignments from `folds.csv`, runs an Optuna study for the current experiment candidate when `experiment.candidate.optimization.enabled=true`, writes tuning artifacts under `artifacts/<competition_slug>/tune/<study_id>/`, and retrains the best trial into the standard candidate artifact layout with `tuning_provenance` recorded in `candidate.json`.
 
 ## CLI Stages
 - `uv run python main.py`: default full pipeline (`fetch` -> `prepare` -> `train` -> `submit`)
@@ -30,14 +29,14 @@ When the explicit `tune` stage is selected, the workflow additionally loads the 
 - `uv run python main.py prepare`: fetch if needed, load the shared dataset context, write EDA reports, persist competition metadata, and freeze folds
 - `uv run python main.py eda`: fetch if needed, load the shared dataset context, and write EDA reports
 - `uv run python main.py preprocess`: fetch if needed, load the shared dataset context, validate model-specific preprocessing paths, and write preprocessing diagnostics
-- `uv run python main.py train`: fetch if needed, load the shared dataset context, auto-run `prepare` when needed, and write training artifacts on the frozen folds
-- `uv run python main.py tune`: fetch if needed, load the shared dataset context, auto-run `prepare` when needed, run an Optuna study for the current experiment candidate when `experiment.candidate.optimization.enabled=true`, write tuning artifacts, and retrain the best trial into normal training artifacts on the frozen folds
-- `uv run python main.py submit --run-dir artifacts/.../train/<run_id>`: prepare or submit from an explicit existing run artifact
+- `uv run python main.py train`: fetch if needed, load the shared dataset context, auto-run `prepare` when needed, and write one candidate artifact directory on the frozen folds
+- `uv run python main.py tune`: fetch if needed, load the shared dataset context, auto-run `prepare` when needed, run an Optuna study for the current experiment candidate when `experiment.candidate.optimization.enabled=true`, write tuning artifacts, and retrain the best trial into a normal candidate artifact directory on the frozen folds
+- `uv run python main.py submit --run-dir artifacts/.../candidates/<candidate_id>`: prepare or submit from an explicit current candidate artifact
 - `uv run python main.py submit --run-id <run_id>`: resolve the run under `artifacts/<competition_slug>/train/<run_id>` using the configured competition slug
 
 The `preprocess` stage is intentionally diagnostic. It is not part of the default runtime contract and it does not create a second training artifact layout.
 
-The default `submit` path supports current manifest-backed run artifacts only. Unsupported older local artifact layouts fail directly instead of using compatibility fallbacks.
+The default `submit` path supports current candidate artifacts plus legacy manifest-backed run artifacts. Unsupported older local artifact layouts fail directly.
 
 ## Module Responsibilities
 - `main.py`: orchestration entrypoint for config loading plus stage-specific CLI dispatch across fetch, prepare, EDA, preprocess diagnostics, training, tuning, and submission.
@@ -48,9 +47,9 @@ The default `submit` path supports current manifest-backed run artifacts only. U
 - `src/tabular_shenanigans/models.py`: model-recipe registry, candidate `model_family + preprocessor` resolution, tunable-model search spaces, optional booster loading, and estimator construction for supported presets.
 - `src/tabular_shenanigans/preprocess.py`: feature frame preparation, column typing, scheme-specific preprocessing pipelines, native-frame support for CatBoost, and preprocess-stage diagnostics.
 - `src/tabular_shenanigans/cv.py`: task-aware CV splitters and metric scoring helpers.
-- `src/tabular_shenanigans/train.py`: config-selected training from the shared dataset context, frozen-fold loading, artifact writing, and run ledger updates.
-- `src/tabular_shenanigans/tune.py`: Optuna study execution for the current experiment candidate on the frozen fold assignments, study artifact writing, and best-trial retraining into the standard train artifact layout.
-- `src/tabular_shenanigans/submit.py`: submission schema validation, model-artifact selection, submission message creation, Kaggle submission, and submission ledger updates.
+- `src/tabular_shenanigans/train.py`: config-selected training from the shared dataset context, frozen-fold loading, candidate artifact writing, and candidate manifest generation.
+- `src/tabular_shenanigans/tune.py`: Optuna study execution for the current experiment candidate on the frozen fold assignments, study artifact writing, and best-trial retraining into the standard candidate artifact layout.
+- `src/tabular_shenanigans/submit.py`: submission schema validation, candidate-or-legacy-artifact selection, submission message creation, Kaggle submission, and submission ledger updates.
 
 ## Configuration Contract
 Input:
@@ -124,12 +123,12 @@ Manual verification steps for each target:
 - confirm `artifacts/<competition_slug>/competition.json` and `artifacts/<competition_slug>/folds.csv` are generated
 - run the workflow from a clean repo state with explicit `competition` plus one current `experiment.candidate`
 - confirm inferred `id_column` and `label_column`
-- confirm `model_summary.csv` is generated in the run directory
-- confirm `test_predictions.csv` is generated in each model directory
-- confirm `submission.csv` validates against `sample_submission.csv`, including exact ID values and order, for the selected model directory
+- confirm `candidate.json` is generated in the candidate directory
+- confirm `test_predictions.csv` is generated in the candidate directory
+- confirm `submission.csv` validates against `sample_submission.csv`, including exact ID values and order, for the selected candidate directory
 - confirm binary outputs match the configured metric contract: probabilities for `roc_auc`/`log_loss`, labels for `accuracy`
 - when tuning is enabled, run `uv run python main.py tune` and confirm `study_manifest.json`, `study_summary.csv`, `trials.csv`, and `best_params.json` are generated under `artifacts/<competition_slug>/tune/<study_id>/`
-- when tuning is enabled, confirm the best-trial retrain writes a standard train artifact and records `tuning_provenance` in `run_manifest.json`
+- when tuning is enabled, confirm the best-trial retrain writes a standard candidate artifact and records `tuning_provenance` in `candidate.json`
 
 ## Artifact Contract
 - A validated in-memory config object from Pydantic
@@ -150,24 +149,19 @@ Manual verification steps for each target:
     - `preprocess_summary.csv`
     - `preprocess_features.csv`
     - `preprocess_models.csv`
-- Training artifacts under `artifacts/<competition_slug>/train/<run_id>/`:
-  - `run_diagnostics.csv`
-  - `model_summary.csv`
-  - `run_manifest.json`
-  - per-model subdirectories `artifacts/<competition_slug>/train/<run_id>/<model_id>/` containing:
-    - `fold_metrics.csv`
-    - `oof_predictions.csv`
-    - `test_predictions.csv`
-    - `submission.csv` when prepared or submitted
-- `run_manifest.json` is the canonical per-run metadata source
-- Each model entry in `model_summary.csv` and `run_manifest.json` records the resolved `preprocessing_scheme_id`
-- tuned retrain runs record `tuning_provenance` in `run_manifest.json`
+- Candidate artifacts under `artifacts/<competition_slug>/candidates/<candidate_id>/`:
+  - `candidate.json`
+  - `fold_metrics.csv`
+  - `oof_predictions.csv`
+  - `test_predictions.csv`
+  - `submission.csv` when prepared or submitted
+- `candidate.json` is the canonical current training metadata source
+- tuned retrain candidates record `tuning_provenance` in `candidate.json`
 - Tuning artifacts under `artifacts/<competition_slug>/tune/<study_id>/`:
   - `study_manifest.json`
   - `study_summary.csv`
   - `trials.csv`
   - `best_params.json`
-- Training ledger at `artifacts/<competition_slug>/train/runs.csv` with compact comparison fields and task-aware target summary fields
 - Append-only submission ledger at `artifacts/<competition_slug>/train/submissions.csv` with submission event metadata only
 
 ## Runtime Invariants And Failure Behavior
@@ -181,9 +175,11 @@ Manual verification steps for each target:
 - `train` and `tune` must consume the prepared fold assignments and fail if the prepared context no longer matches the current config or resolved dataset schema
 - the current runtime supports one `experiment.candidate` of type `model`
 - `experiment.candidate.model_family + experiment.candidate.preprocessor` must resolve to one supported canonical recipe for the configured task
-- the `tune` stage requires `experiment.candidate.optimization.enabled=true`, uses the current experiment candidate only, and retrains exactly one tuned candidate into the normal train artifact layout
+- training must write exactly one candidate artifact directory keyed by `candidate_id`
+- rerunning an existing `candidate_id` must fail instead of mutating an existing artifact directory
+- the `tune` stage requires `experiment.candidate.optimization.enabled=true`, uses the current experiment candidate only, and retrains exactly one tuned candidate into the normal candidate artifact layout
 - enabled optimization must have at least one stopping condition: `experiment.candidate.optimization.n_trials` or `experiment.candidate.optimization.timeout_seconds`
-- Submit-time `model_id` remains the trained-model selector for choosing one artifact from a run
+- Submit-time `model_id` remains relevant only for legacy multi-model run artifacts
 - `native_catboost` must preserve categorical feature positions through preprocessing so CatBoost can receive `cat_features`
 - Kaggle CLI and authentication are expected to be preconfigured
 - Competition zip contents are expected to include `train.csv`, `test.csv`, and `sample_submission.csv`
@@ -195,11 +191,11 @@ Manual verification steps for each target:
 - `id_column` inference must resolve to exactly one column present in `train.csv`, `test.csv`, and `sample_submission.csv`
 - The resolved `id_column` is identifier metadata and must be excluded from preprocessing and model fitting by default
 - `label_column` inference must resolve to exactly one column present in `train.csv` and `sample_submission.csv` but not `test.csv`
-- Submission must resolve `competition_slug`, `task_type`, `id_column`, and `label_column` from `run_manifest.json` rather than re-inferring them from raw train/test data
-- Multi-model submission must default to `best_model_id` unless a specific `model_id` is requested explicitly
+- Submission must resolve `competition_slug`, `task_type`, `id_column`, and `label_column` from `candidate.json` for current artifacts and `run_manifest.json` for legacy artifacts rather than re-inferring them from raw train/test data
+- Legacy multi-model submission must default to `best_model_id` unless a specific `model_id` is requested explicitly
 - `sample_submission.csv` must match the resolved schema exactly as `[id_column, label_column]`
 - The selected model artifact `test_predictions.csv[id_column]` must match `sample_submission.csv[id_column]` exactly in both values and row order
-- Submission requires the current per-model prediction layout at `artifacts/<competition_slug>/train/<run_id>/<model_id>/test_predictions.csv`
+- Submission requires the current candidate prediction layout at `artifacts/<competition_slug>/candidates/<candidate_id>/test_predictions.csv` or the legacy per-model run layout at `artifacts/<competition_slug>/train/<run_id>/<model_id>/test_predictions.csv`
 - Feature override columns must exist and cannot overlap between forced numeric and forced categorical sets
 - Configured metric must normalize to a supported metric compatible with the configured task type
 - CV splitter construction must support both `cv_shuffle=true` and `cv_shuffle=false`
@@ -234,8 +230,9 @@ Hard-error cases include:
 - Unsupported metric for chosen task -> hard error
 - Any CV/training fit or scoring failure -> hard error
 - Fold assignment gaps in OOF generation -> hard error
-- Requested submission `model_id` not present in the run manifest -> hard error
-- Missing or legacy-shaped submit artifacts outside the current manifest-backed per-model contract -> hard error
+- Candidate artifact directory already exists for the configured `candidate_id` -> hard error
+- Requested submission `model_id` not present in the legacy run manifest -> hard error
+- Missing or unsupported submit artifacts outside the current candidate contract or legacy run-manifest contract -> hard error
 - Submission schema or ID mismatch against `sample_submission.csv` -> hard error
 - Binary probability artifact outside `[0, 1]` for `roc_auc` or `log_loss` -> hard error
 - Binary label artifact containing values outside the observed label pair for `accuracy` -> hard error
