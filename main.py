@@ -8,10 +8,8 @@ from tabular_shenanigans.competition import prepare_competition
 from tabular_shenanigans.config import AppConfig, load_config
 from tabular_shenanigans.data import fetch_competition_data, load_competition_dataset_context
 from tabular_shenanigans.eda import run_eda
-from tabular_shenanigans.preprocess import run_preprocess
 from tabular_shenanigans.submit import run_submission
-from tabular_shenanigans.tune import run_tuning
-from tabular_shenanigans.train import run_training
+from tabular_shenanigans.train import run_training_workflow
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -23,9 +21,7 @@ def build_parser() -> argparse.ArgumentParser:
     subparsers.add_parser("fetch", help="Download competition data if it is missing.")
     subparsers.add_parser("prepare", help="Persist EDA reports, competition metadata, and frozen folds.")
     subparsers.add_parser("eda", help="Run EDA reports only.")
-    subparsers.add_parser("preprocess", help="Write preprocessing diagnostics only.")
-    subparsers.add_parser("train", help="Train the current candidate only.")
-    subparsers.add_parser("tune", help="Run Optuna tuning and retrain the best trial.")
+    subparsers.add_parser("train", help="Train the current candidate, with optional optimization.")
 
     submit_parser = subparsers.add_parser("submit", help="Prepare or submit from a candidate artifact.")
     submit_parser.add_argument(
@@ -71,7 +67,7 @@ def _prepare_competition_stage(config: AppConfig):
 
 def _run_full_pipeline(config: AppConfig) -> None:
     dataset_context, _ = _prepare_competition_stage(config)
-    candidate_dir = run_training(config=config, dataset_context=dataset_context)
+    candidate_dir = run_training_workflow(config=config, dataset_context=dataset_context)
     print(f"Candidate artifacts ready: {candidate_dir}")
     submission_path, submission_status = run_submission(config=config)
     print(f"Submission file ready: {submission_path} ({submission_status})")
@@ -84,26 +80,11 @@ def _run_eda_stage(config: AppConfig) -> None:
     print(f"EDA reports ready: {report_dir}")
 
 
-def _run_preprocess_stage(config: AppConfig) -> None:
-    _ensure_data_ready(config)
-    dataset_context = _load_shared_dataset_context(config)
-    report_dir = run_preprocess(config=config, dataset_context=dataset_context)
-    print(f"Preprocess reports ready: {report_dir}")
-
-
 def _run_train_stage(config: AppConfig) -> None:
     _ensure_data_ready(config)
     dataset_context = _load_shared_dataset_context(config)
-    candidate_dir = run_training(config=config, dataset_context=dataset_context)
+    candidate_dir = run_training_workflow(config=config, dataset_context=dataset_context)
     print(f"Candidate artifacts ready: {candidate_dir}")
-
-
-def _run_tune_stage(config: AppConfig) -> None:
-    _ensure_data_ready(config)
-    dataset_context = _load_shared_dataset_context(config)
-    tuning_result = run_tuning(config=config, dataset_context=dataset_context)
-    print(f"Tuning artifacts ready: {tuning_result.study_dir}")
-    print(f"Best-trial candidate artifacts ready: {tuning_result.candidate_dir}")
 
 
 def _run_submit_stage(config: AppConfig, args: argparse.Namespace) -> None:
@@ -138,16 +119,8 @@ def main(argv: list[str] | None = None) -> None:
         _run_eda_stage(config)
         return
 
-    if args.stage == "preprocess":
-        _run_preprocess_stage(config)
-        return
-
     if args.stage == "train":
         _run_train_stage(config)
-        return
-
-    if args.stage == "tune":
-        _run_tune_stage(config)
         return
 
     if args.stage == "submit":

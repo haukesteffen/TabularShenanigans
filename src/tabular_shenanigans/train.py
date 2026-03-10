@@ -69,6 +69,12 @@ class ModelEvaluationArtifacts:
     final_test_predictions: np.ndarray
 
 
+@dataclass(frozen=True)
+class OptimizationArtifacts:
+    summary: dict[str, object]
+    trials_df: pd.DataFrame
+
+
 def _json_ready(value: object) -> object:
     if isinstance(value, dict):
         return {str(key): _json_ready(nested_value) for key, nested_value in value.items()}
@@ -384,6 +390,24 @@ def _write_candidate_artifacts(
     test_predictions_df.to_csv(candidate_dir / "test_predictions.csv", index=False)
 
 
+def _write_optimization_artifacts(
+    candidate_dir: Path,
+    optimization_artifacts: OptimizationArtifacts,
+) -> None:
+    (candidate_dir / "optimization_summary.json").write_text(
+        json.dumps(_json_ready(optimization_artifacts.summary), indent=2, sort_keys=True),
+        encoding="utf-8",
+    )
+    optimization_artifacts.trials_df.to_csv(candidate_dir / "optimization_trials.csv", index=False)
+
+    best_params = optimization_artifacts.summary.get("best_params")
+    if isinstance(best_params, dict):
+        (candidate_dir / "optimization_best_params.json").write_text(
+            json.dumps(_json_ready(best_params), indent=2, sort_keys=True),
+            encoding="utf-8",
+        )
+
+
 def run_training(
     config: AppConfig,
     dataset_context: CompetitionDatasetContext,
@@ -507,5 +531,44 @@ def run_training(
         test_ids=test_df[id_column],
         id_column=id_column,
         label_column=label_column,
+    )
+    return candidate_dir
+
+
+def run_training_workflow(
+    config: AppConfig,
+    dataset_context: CompetitionDatasetContext,
+) -> Path:
+    candidate_dir = _candidate_dir(config.competition_slug, config.candidate_id)
+    if candidate_dir.exists():
+        raise ValueError(
+            "Candidate artifacts already exist for this candidate_id. "
+            f"Choose a new experiment.candidate.candidate_id or remove {candidate_dir}"
+        )
+
+    optimization = config.experiment.candidate.optimization
+    if not optimization.enabled:
+        return run_training(config=config, dataset_context=dataset_context)
+
+    from tabular_shenanigans.tune import run_optimization
+
+    optimization_result = run_optimization(config=config, dataset_context=dataset_context)
+    candidate_dir = run_training(
+        config=config,
+        dataset_context=dataset_context,
+        model_spec=optimization_result.best_model_spec,
+        tuning_provenance=optimization_result.tuning_provenance,
+    )
+    _write_optimization_artifacts(
+        candidate_dir=candidate_dir,
+        optimization_artifacts=OptimizationArtifacts(
+            summary=optimization_result.optimization_summary,
+            trials_df=optimization_result.trials_df,
+        ),
+    )
+    print(
+        f"Optimization complete: best_trial={optimization_result.best_trial_number}, "
+        f"best_{config.primary_metric}={optimization_result.best_value:.6f}, "
+        f"candidate={candidate_dir.name}"
     )
     return candidate_dir

@@ -18,37 +18,32 @@ The intended operating scope is Kaggle Playground Series tabular competitions. C
 8. Resolve the current `experiment.candidate.model_family + preprocessor` combination to one internal canonical model recipe, then train that one configured candidate:
    - regression: `ridge + onehot`, `elasticnet + onehot`, `random_forest + ordinal`, `extra_trees + ordinal`, `hist_gradient_boosting + ordinal`, `lightgbm + ordinal`, `catboost + native`, `xgboost + ordinal`
    - binary classification: `logistic_regression + onehot`, `random_forest + ordinal`, `extra_trees + ordinal`, `hist_gradient_boosting + ordinal`, `lightgbm + ordinal`, `catboost + native`, `xgboost + ordinal`
-9. Write one candidate artifact directory under `artifacts/<competition_slug>/candidates/<candidate_id>/` with `candidate.json`, `fold_metrics.csv`, `oof_predictions.csv`, and `test_predictions.csv`.
-10. Validate predictions against `sample_submission.csv`, including exact ID content and order, using `candidate.json` as the submission metadata contract, apply metric-aware binary prediction validation, write `submission.csv` in the selected candidate directory, and optionally submit to Kaggle.
-
-When the explicit `tune` stage is selected, the workflow additionally loads the frozen fold assignments from `folds.csv`, runs an Optuna study for the current experiment candidate when `experiment.candidate.optimization.enabled=true`, writes tuning artifacts under `artifacts/<competition_slug>/tune/<study_id>/`, and retrains the best trial into the standard candidate artifact layout with `tuning_provenance` recorded in `candidate.json`.
+9. When `experiment.candidate.optimization.enabled=true`, `train` runs an Optuna study on the frozen fold assignments, retrains the best trial into the standard candidate artifact layout, and writes optimization metadata inside the candidate directory.
+10. Write one candidate artifact directory under `artifacts/<competition_slug>/candidates/<candidate_id>/` with `candidate.json`, `fold_metrics.csv`, `oof_predictions.csv`, `test_predictions.csv`, and optional optimization metadata files.
+11. Validate predictions against `sample_submission.csv`, including exact ID content and order, using `candidate.json` as the submission metadata contract, apply metric-aware binary prediction validation, write `submission.csv` in the selected candidate directory, and optionally submit to Kaggle.
 
 ## CLI Stages
 - `uv run python main.py`: default full pipeline (`fetch` -> `prepare` -> `train` -> `submit`)
 - `uv run python main.py fetch`: ensure competition data is present
 - `uv run python main.py prepare`: fetch if needed, load the shared dataset context, write EDA reports, persist competition metadata, and freeze folds
 - `uv run python main.py eda`: fetch if needed, load the shared dataset context, and write EDA reports
-- `uv run python main.py preprocess`: fetch if needed, load the shared dataset context, validate model-specific preprocessing paths, and write preprocessing diagnostics
-- `uv run python main.py train`: fetch if needed, load the shared dataset context, auto-run `prepare` when needed, and write one candidate artifact directory on the frozen folds
-- `uv run python main.py tune`: fetch if needed, load the shared dataset context, auto-run `prepare` when needed, run an Optuna study for the current experiment candidate when `experiment.candidate.optimization.enabled=true`, write tuning artifacts, and retrain the best trial into a normal candidate artifact directory on the frozen folds
+- `uv run python main.py train`: fetch if needed, load the shared dataset context, auto-run `prepare` when needed, write one candidate artifact directory on the frozen folds, and when optimization is enabled run Optuna plus candidate-local optimization artifact writing before the final retrain
 - `uv run python main.py submit`: prepare or submit the configured `candidate_id`
 - `uv run python main.py submit --candidate-id <candidate_id>`: prepare or submit another existing candidate for the configured competition
-
-The `preprocess` stage is intentionally diagnostic. It is not part of the default runtime contract and it does not create a second training artifact layout.
 
 The default `submit` path supports current candidate artifacts only. Unsupported or missing candidate artifacts fail directly.
 
 ## Module Responsibilities
-- `main.py`: orchestration entrypoint for config loading plus stage-specific CLI dispatch across fetch, prepare, EDA, preprocess diagnostics, training, tuning, and submission.
+- `main.py`: orchestration entrypoint for config loading plus stage-specific CLI dispatch across fetch, prepare, EDA, training, and submission.
 - `src/tabular_shenanigans/competition.py`: competition-level preparation, `competition.json` persistence, `folds.csv` persistence, prepared-context validation, and split reconstruction from frozen folds.
 - `src/tabular_shenanigans/config.py`: Pydantic-backed nested config schema for `competition` plus `experiment`, metric normalization, candidate-to-model resolution, and runtime contract validation.
 - `src/tabular_shenanigans/data.py`: competition download, zip access, metric helpers, dataset schema resolution, and sample-submission template loading.
 - `src/tabular_shenanigans/eda.py`: competition-scan EDA summaries written to CSV from the shared dataset context, including missingness, categorical cardinality, target summary, and feature-type counts.
 - `src/tabular_shenanigans/models.py`: model-recipe registry, candidate `model_family + preprocessor` resolution, tunable-model search spaces, optional booster loading, and estimator construction for supported presets.
-- `src/tabular_shenanigans/preprocess.py`: feature frame preparation, column typing, scheme-specific preprocessing pipelines, native-frame support for CatBoost, and preprocess-stage diagnostics.
+- `src/tabular_shenanigans/preprocess.py`: feature frame preparation, column typing, scheme-specific preprocessing pipelines, and native-frame support for CatBoost.
 - `src/tabular_shenanigans/cv.py`: task-aware CV splitters and metric scoring helpers.
-- `src/tabular_shenanigans/train.py`: config-selected training from the shared dataset context, frozen-fold loading, candidate artifact writing, and candidate manifest generation.
-- `src/tabular_shenanigans/tune.py`: Optuna study execution for the current experiment candidate on the frozen fold assignments, study artifact writing, and best-trial retraining into the standard candidate artifact layout.
+- `src/tabular_shenanigans/train.py`: config-selected training from the shared dataset context, frozen-fold loading, candidate artifact writing, candidate manifest generation, and optimization-aware training orchestration.
+- `src/tabular_shenanigans/tune.py`: internal Optuna helper used by `train` when candidate optimization is enabled.
 - `src/tabular_shenanigans/submit.py`: submission schema validation, candidate selection by `candidate_id`, submission message creation, Kaggle submission, and submission ledger updates.
 
 ## Configuration Contract
@@ -108,7 +103,7 @@ Configured metrics are normalized to the internal metric names during config val
 The old flat config layout is unsupported and fails fast.
 The current runtime resolves `experiment.candidate.model_family + experiment.candidate.preprocessor` to one internal canonical `model_id`.
 optimization requires at least one stopping condition: `experiment.candidate.optimization.n_trials` or `experiment.candidate.optimization.timeout_seconds`.
-the `tune` stage uses the current experiment candidate only.
+enabled optimization is consumed by `train` and uses the current experiment candidate only.
 LightGBM, CatBoost, and XGBoost require the optional booster dependencies installed via `uv sync --extra boosters`.
 
 ## Preferred Verification Targets
@@ -128,8 +123,8 @@ Manual verification steps for each target:
 - run `uv run python main.py submit`
 - confirm `submission.csv` validates against `sample_submission.csv`, including exact ID values and order, for the selected candidate directory
 - confirm binary outputs match the configured metric contract: probabilities for `roc_auc`/`log_loss`, labels for `accuracy`
-- when tuning is enabled, run `uv run python main.py tune` and confirm `study_manifest.json`, `study_summary.csv`, `trials.csv`, and `best_params.json` are generated under `artifacts/<competition_slug>/tune/<study_id>/`
-- when tuning is enabled, confirm the best-trial retrain writes a standard candidate artifact and records `tuning_provenance` in `candidate.json`
+- when optimization is enabled, run `uv run python main.py train` and confirm `optimization_summary.json`, `optimization_trials.csv`, and `optimization_best_params.json` are generated in the candidate directory
+- when optimization is enabled, confirm the best-trial retrain writes a standard candidate artifact and records `tuning_provenance` in `candidate.json`
 
 ## Artifact Contract
 - A validated in-memory config object from Pydantic
@@ -146,10 +141,6 @@ Manual verification steps for each target:
   - `target_summary.csv`
   - `feature_type_counts.csv`
   - `run_summary.csv`
-  - when the `preprocess` stage is run:
-    - `preprocess_summary.csv`
-    - `preprocess_features.csv`
-    - `preprocess_models.csv`
 - Candidate artifacts under `artifacts/<competition_slug>/candidates/<candidate_id>/`:
   - `candidate.json`
   - `fold_metrics.csv`
@@ -157,12 +148,11 @@ Manual verification steps for each target:
   - `test_predictions.csv`
   - `submission.csv` when prepared or submitted
 - `candidate.json` is the canonical current training metadata source
-- tuned retrain candidates record `tuning_provenance` in `candidate.json`
-- Tuning artifacts under `artifacts/<competition_slug>/tune/<study_id>/`:
-  - `study_manifest.json`
-  - `study_summary.csv`
-  - `trials.csv`
-  - `best_params.json`
+- optimized candidates record `tuning_provenance` in `candidate.json`
+- optimized candidates also include:
+  - `optimization_summary.json`
+  - `optimization_trials.csv`
+  - `optimization_best_params.json`
 - Append-only submission ledger at `artifacts/<competition_slug>/submissions.csv` keyed by `candidate_id`
 
 ## Runtime Invariants And Failure Behavior
@@ -173,12 +163,12 @@ Manual verification steps for each target:
 - the old flat config layout is unsupported
 - `competition.task_type` and `competition.primary_metric` must be present in config for every run
 - `prepare` is the competition-level source of truth for `competition.json` and `folds.csv`
-- `train` and `tune` must consume the prepared fold assignments and fail if the prepared context no longer matches the current config or resolved dataset schema
+- `train` must consume the prepared fold assignments and fail if the prepared context no longer matches the current config or resolved dataset schema
 - the current runtime supports one `experiment.candidate` of type `model`
 - `experiment.candidate.model_family + experiment.candidate.preprocessor` must resolve to one supported canonical recipe for the configured task
 - training must write exactly one candidate artifact directory keyed by `candidate_id`
 - rerunning an existing `candidate_id` must fail instead of mutating an existing artifact directory
-- the `tune` stage requires `experiment.candidate.optimization.enabled=true`, uses the current experiment candidate only, and retrains exactly one tuned candidate into the normal candidate artifact layout
+- enabled optimization is part of `train`, uses the current experiment candidate only, and retrains exactly one tuned candidate into the normal candidate artifact layout
 - enabled optimization must have at least one stopping condition: `experiment.candidate.optimization.n_trials` or `experiment.candidate.optimization.timeout_seconds`
 - `submit` must resolve one candidate by `candidate_id`, defaulting to `config.candidate_id`
 - `native_catboost` must preserve categorical feature positions through preprocessing so CatBoost can receive `cat_features`
@@ -217,7 +207,7 @@ Hard-error cases include:
 - enabled optimization without `experiment.candidate.optimization.n_trials` or `experiment.candidate.optimization.timeout_seconds` -> hard error
 - enabled optimization for an unsupported candidate combination -> hard error
 - Missing/invalid competition zip contents -> hard error
-- Missing `competition.json` or `folds.csv` during `train`/`tune` -> auto-run `prepare`
+- Missing `competition.json` or `folds.csv` during `train` -> auto-run `prepare`
 - Prepared competition context that no longer matches the current config or resolved dataset schema -> hard error
 - `id_column` inference not exactly one column -> hard error
 - `label_column` inference not exactly one column -> hard error
@@ -254,4 +244,4 @@ Hard-error cases include:
 - New metrics should be normalized and validated during config loading, then scored in `cv.py`.
 - New model families should be introduced in `models.py` with explicit task compatibility, canonical recipe IDs, and matching artifact outputs.
 - New preprocessing modes should be added in `preprocess.py` without breaking the existing feature-frame contract or the preprocessing-first recipe naming convention.
-- New run or submission artifacts should be reflected in both the artifact contract above and the corresponding ledger rows.
+- New candidate or submission artifacts should be reflected in both the artifact contract above and the corresponding ledger rows.

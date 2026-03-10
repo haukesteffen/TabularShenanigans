@@ -1,7 +1,6 @@
 import json
 from dataclasses import dataclass
 from datetime import datetime, timezone
-from pathlib import Path
 
 import optuna
 import pandas as pd
@@ -17,21 +16,24 @@ from tabular_shenanigans.train import (
     _build_target_summary,
     _evaluate_model_spec,
     _json_ready,
-    run_training,
 )
 
 
 @dataclass(frozen=True)
-class TuningResult:
-    study_dir: Path
-    candidate_dir: Path
+class OptimizationResult:
+    best_model_spec: TrainingModelSpec
+    tuning_provenance: dict[str, object]
+    optimization_summary: dict[str, object]
+    trials_df: pd.DataFrame
+    best_trial_number: int
+    best_value: float
 
 
 def _make_study_id() -> str:
     return datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%S%fZ")
 
 
-def _build_study_config_snapshot(
+def _build_optimization_config_snapshot(
     config: AppConfig,
     tuning_model_spec: TrainingModelSpec,
     positive_label: object | None,
@@ -73,26 +75,28 @@ def _build_trials_df(study: optuna.Study, metric_name: str) -> pd.DataFrame:
     return pd.DataFrame(rows)
 
 
-def _build_study_manifest(
+def _build_optimization_summary(
     config: AppConfig,
     study: optuna.Study,
     study_id: str,
-    study_config_snapshot: dict[str, object],
+    optimization_config_snapshot: dict[str, object],
     tuning_model_spec: TrainingModelSpec,
     model_name: str,
     preprocessing_scheme_id: str,
     target_summary: dict[str, object],
-    candidate_dir: Path | None = None,
 ) -> dict[str, object]:
     best_trial = study.best_trial
     return {
+        "artifact_type": "candidate_optimization",
         "study_id": study_id,
         "generated_at_utc": datetime.now(timezone.utc).isoformat(),
         "competition_slug": config.competition_slug,
+        "candidate_id": config.candidate_id,
         "task_type": config.task_type,
         "primary_metric": config.primary_metric,
+        "optimization_method": config.experiment.candidate.optimization.method,
         "optimization_direction": study.direction.name.lower(),
-        "config_snapshot": study_config_snapshot,
+        "config_snapshot": optimization_config_snapshot,
         "model_id": tuning_model_spec.model_id,
         "model_name": model_name,
         "preprocessing_scheme_id": preprocessing_scheme_id,
@@ -103,60 +107,20 @@ def _build_study_manifest(
         "best_params": best_trial.params,
         "best_model_params": best_trial.user_attrs.get("model_params"),
         "target_summary": target_summary,
-        "train_candidate_id": candidate_dir.name if candidate_dir is not None else None,
-        "train_candidate_dir": str(candidate_dir) if candidate_dir is not None else None,
     }
 
 
-def _write_tuning_artifacts(
-    study_dir: Path,
-    study_manifest: dict[str, object],
-    trials_df: pd.DataFrame,
-) -> None:
-    best_params = study_manifest["best_params"]
-    study_summary = pd.DataFrame(
-        [
-            {
-                "study_id": study_manifest["study_id"],
-                "competition_slug": study_manifest["competition_slug"],
-                "task_type": study_manifest["task_type"],
-                "primary_metric": study_manifest["primary_metric"],
-                "optimization_direction": study_manifest["optimization_direction"],
-                "model_id": study_manifest["model_id"],
-                "model_name": study_manifest["model_name"],
-                "preprocessing_scheme_id": study_manifest["preprocessing_scheme_id"],
-                "trial_count": study_manifest["trial_count"],
-                "completed_trial_count": study_manifest["completed_trial_count"],
-                "best_trial_number": study_manifest["best_trial_number"],
-                "best_value": study_manifest["best_value"],
-                "train_candidate_id": study_manifest["train_candidate_id"],
-            }
-        ]
-    )
-    study_summary.to_csv(study_dir / "study_summary.csv", index=False)
-    trials_df.to_csv(study_dir / "trials.csv", index=False)
-    (study_dir / "best_params.json").write_text(
-        json.dumps(_json_ready(best_params), indent=2, sort_keys=True),
-        encoding="utf-8",
-    )
-    (study_dir / "study_manifest.json").write_text(
-        json.dumps(_json_ready(study_manifest), indent=2, sort_keys=True),
-        encoding="utf-8",
-    )
-
-
-def run_tuning(
+def run_optimization(
     config: AppConfig,
     dataset_context: CompetitionDatasetContext,
-) -> TuningResult:
-    if config.tuning is None or not config.tuning.enabled:
-        raise ValueError("The tune stage requires tuning.enabled=true in config.yaml.")
-    if config.tuning.model_id is None:
-        raise ValueError("The tune stage requires tuning.model_id.")
+) -> OptimizationResult:
+    optimization = config.experiment.candidate.optimization
+    if not optimization.enabled:
+        raise ValueError("Optimization requires experiment.candidate.optimization.enabled=true in config.yaml.")
 
     task_type = config.task_type
     primary_metric = config.primary_metric
-    tuning_model_spec = TrainingModelSpec(model_id=config.tuning.model_id)
+    tuning_model_spec = TrainingModelSpec(model_id=config.resolved_model_id)
     model_definition = get_model_definition(task_type, tuning_model_spec.model_id)
 
     train_df = dataset_context.train_df
@@ -198,9 +162,7 @@ def run_tuning(
     )
 
     study_id = _make_study_id()
-    study_dir = Path("artifacts") / config.competition_slug / "tune" / study_id
-    study_dir.mkdir(parents=True, exist_ok=True)
-    study_config_snapshot = _build_study_config_snapshot(
+    optimization_config_snapshot = _build_optimization_config_snapshot(
         config=config,
         tuning_model_spec=tuning_model_spec,
         positive_label=positive_label,
@@ -210,7 +172,7 @@ def run_tuning(
 
     direction = "maximize" if is_higher_better(primary_metric) else "minimize"
     optuna.logging.set_verbosity(optuna.logging.WARNING)
-    sampler = optuna.samplers.TPESampler(seed=config.tuning.random_state)
+    sampler = optuna.samplers.TPESampler(seed=optimization.random_state)
     study = optuna.create_study(direction=direction, sampler=sampler, study_name=study_id)
 
     def objective(trial: optuna.Trial) -> float:
@@ -245,56 +207,38 @@ def run_tuning(
 
     study.optimize(
         objective,
-        n_trials=config.tuning.n_trials,
-        timeout=config.tuning.timeout_seconds,
+        n_trials=optimization.n_trials,
+        timeout=optimization.timeout_seconds,
         gc_after_trial=True,
     )
-
-    trials_df = _build_trials_df(study=study, metric_name=primary_metric)
-    study_manifest = _build_study_manifest(
-        config=config,
-        study=study,
-        study_id=study_id,
-        study_config_snapshot=study_config_snapshot,
-        tuning_model_spec=tuning_model_spec,
-        model_name=model_definition.model_name,
-        preprocessing_scheme_id=model_definition.preprocessing_scheme_id,
-        target_summary=target_summary,
-    )
-    _write_tuning_artifacts(study_dir=study_dir, study_manifest=study_manifest, trials_df=trials_df)
 
     best_parameter_overrides = dict(study.best_trial.params)
     tuning_provenance = {
         "study_id": study_id,
-        "study_dir": str(study_dir),
+        "optimization_method": optimization.method,
         "trial_number": study.best_trial.number,
         "base_model_id": tuning_model_spec.model_id,
         "parameter_overrides": best_parameter_overrides,
+        "best_value": study.best_trial.value,
     }
-    candidate_dir = run_training(
-        config=config,
-        dataset_context=dataset_context,
-        model_spec=TrainingModelSpec(
-            model_id=tuning_model_spec.model_id,
-            parameter_overrides=best_parameter_overrides,
-        ),
-        tuning_provenance=tuning_provenance,
-    )
-
-    updated_study_manifest = _build_study_manifest(
+    optimization_summary = _build_optimization_summary(
         config=config,
         study=study,
         study_id=study_id,
-        study_config_snapshot=study_config_snapshot,
+        optimization_config_snapshot=optimization_config_snapshot,
         tuning_model_spec=tuning_model_spec,
         model_name=model_definition.model_name,
         preprocessing_scheme_id=model_definition.preprocessing_scheme_id,
         target_summary=target_summary,
-        candidate_dir=candidate_dir,
     )
-    _write_tuning_artifacts(study_dir=study_dir, study_manifest=updated_study_manifest, trials_df=trials_df)
-    print(
-        f"Tuning complete: best_trial={study.best_trial.number}, "
-        f"best_{primary_metric}={study.best_value:.6f}, candidate={candidate_dir.name}"
+    return OptimizationResult(
+        best_model_spec=TrainingModelSpec(
+            model_id=tuning_model_spec.model_id,
+            parameter_overrides=best_parameter_overrides,
+        ),
+        tuning_provenance=tuning_provenance,
+        optimization_summary=optimization_summary,
+        trials_df=_build_trials_df(study=study, metric_name=primary_metric),
+        best_trial_number=study.best_trial.number,
+        best_value=study.best_trial.value,
     )
-    return TuningResult(study_dir=study_dir, candidate_dir=candidate_dir)

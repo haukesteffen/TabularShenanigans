@@ -16,16 +16,6 @@ class ConfigError(ValueError):
     pass
 
 
-class TuningConfig(BaseModel):
-    model_config = ConfigDict(extra="forbid")
-
-    enabled: bool = False
-    model_id: str | None = None
-    n_trials: int | None = Field(default=None, ge=1)
-    timeout_seconds: int | None = Field(default=None, ge=1)
-    random_state: int = 42
-
-
 class CompetitionCvConfig(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
@@ -234,27 +224,10 @@ class AppConfig(BaseModel):
         )
 
     @property
-    def model_ids(self) -> list[str]:
-        return [self.resolved_model_id]
-
-    @property
     def model_parameter_overrides(self) -> dict[str, object] | None:
         if not self.experiment.candidate.model_params:
             return None
         return dict(self.experiment.candidate.model_params)
-
-    @property
-    def tuning(self) -> TuningConfig | None:
-        optimization = self.experiment.candidate.optimization
-        if not optimization.enabled:
-            return None
-        return TuningConfig(
-            enabled=True,
-            model_id=self.resolved_model_id,
-            n_trials=optimization.n_trials,
-            timeout_seconds=optimization.timeout_seconds,
-            random_state=optimization.random_state,
-        )
 
     @property
     def submit_enabled(self) -> bool:
