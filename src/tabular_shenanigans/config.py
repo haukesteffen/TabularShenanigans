@@ -1,5 +1,6 @@
+import math
 from pathlib import Path
-from typing import Literal
+from typing import Annotated, Literal
 
 import yaml
 from pydantic import BaseModel, ConfigDict, Field, model_validator
@@ -57,11 +58,16 @@ class CandidateOptimizationConfig(BaseModel):
     random_state: int = 42
 
 
-class ModelCandidateConfig(BaseModel):
+class BaseCandidateConfig(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    candidate_id: str = Field(min_length=1)
+
+
+class ModelCandidateConfig(BaseCandidateConfig):
     model_config = ConfigDict(extra="forbid")
 
     candidate_type: Literal["model"] = "model"
-    candidate_id: str = Field(min_length=1)
     feature_recipe_id: str = Field(default="identity", min_length=1)
     preprocessor: Literal["onehot", "ordinal", "native", "frequency"]
     model_family: Literal[
@@ -84,8 +90,55 @@ class ModelCandidateConfig(BaseModel):
             raise ValueError(
                 "The current runtime does not support combining experiment.candidate.model_params "
                 "with enabled experiment.candidate.optimization."
-            )
+        )
         return self
+
+
+class BlendCandidateConfig(BaseCandidateConfig):
+    model_config = ConfigDict(extra="forbid")
+
+    candidate_type: Literal["blend"] = "blend"
+    base_candidate_ids: list[str] = Field(min_length=2)
+    weights: list[float] | None = None
+
+    @model_validator(mode="after")
+    def validate_blend_candidate(self) -> "BlendCandidateConfig":
+        duplicate_candidate_ids = sorted(
+            candidate_id
+            for candidate_id in set(self.base_candidate_ids)
+            if self.base_candidate_ids.count(candidate_id) > 1
+        )
+        if duplicate_candidate_ids:
+            raise ValueError(
+                "Blend candidates require distinct base_candidate_ids. "
+                f"Duplicates: {duplicate_candidate_ids}"
+            )
+
+        if self.weights is None:
+            return self
+
+        if len(self.weights) != len(self.base_candidate_ids):
+            raise ValueError(
+                "Blend candidate weights must match the number of base_candidate_ids. "
+                f"Got {len(self.weights)} weights for {len(self.base_candidate_ids)} base candidates."
+            )
+
+        invalid_weights = [
+            weight for weight in self.weights if not math.isfinite(weight) or weight <= 0
+        ]
+        if invalid_weights:
+            raise ValueError(
+                "Blend candidate weights must all be positive. "
+                f"Invalid weights: {invalid_weights}"
+            )
+
+        return self
+
+
+ExperimentCandidateConfig = Annotated[
+    ModelCandidateConfig | BlendCandidateConfig,
+    Field(discriminator="candidate_type"),
+]
 
 
 class ExperimentSubmitConfig(BaseModel):
@@ -100,7 +153,7 @@ class ExperimentConfig(BaseModel):
 
     name: str = Field(min_length=1)
     notes: str | None = None
-    candidate: ModelCandidateConfig
+    candidate: ExperimentCandidateConfig
     submit: ExperimentSubmitConfig = Field(default_factory=ExperimentSubmitConfig)
 
 
@@ -128,28 +181,29 @@ class AppConfig(BaseModel):
         if self.competition.task_type != "binary" and self.competition.positive_label is not None:
             raise ValueError("competition.positive_label is only supported for binary task_type.")
 
-        self.experiment.candidate.feature_recipe_id = resolve_feature_recipe_id(
-            self.experiment.candidate.feature_recipe_id
-        )
+        if self.is_model_candidate:
+            self.experiment.candidate.feature_recipe_id = resolve_feature_recipe_id(
+                self.experiment.candidate.feature_recipe_id
+            )
 
-        resolved_model_id = self.resolved_model_id
-        optimization = self.experiment.candidate.optimization
-        if optimization.enabled:
-            if optimization.n_trials is None and optimization.timeout_seconds is None:
-                raise ValueError(
-                    "At least one experiment.candidate.optimization stopping condition is required. "
-                    "Set experiment.candidate.optimization.n_trials or "
-                    "experiment.candidate.optimization.timeout_seconds."
-                )
-            if not is_model_tunable(self.task_type, resolved_model_id):
-                supported_tunable_combinations = [
-                    f"{model_family}+{preprocessor}"
-                    for model_family, preprocessor, _ in get_tunable_candidate_model_specs(self.task_type)
-                ]
-                raise ValueError(
-                    "Configured experiment.candidate does not support optimization for task_type "
-                    f"'{self.task_type}'. Supported tunable combinations: {supported_tunable_combinations}"
-                )
+            resolved_model_id = self.resolved_model_id
+            optimization = self.experiment.candidate.optimization
+            if optimization.enabled:
+                if optimization.n_trials is None and optimization.timeout_seconds is None:
+                    raise ValueError(
+                        "At least one experiment.candidate.optimization stopping condition is required. "
+                        "Set experiment.candidate.optimization.n_trials or "
+                        "experiment.candidate.optimization.timeout_seconds."
+                    )
+                if not is_model_tunable(self.task_type, resolved_model_id):
+                    supported_tunable_combinations = [
+                        f"{model_family}+{preprocessor}"
+                        for model_family, preprocessor, _ in get_tunable_candidate_model_specs(self.task_type)
+                    ]
+                    raise ValueError(
+                        "Configured experiment.candidate does not support optimization for task_type "
+                        f"'{self.task_type}'. Supported tunable combinations: {supported_tunable_combinations}"
+                    )
 
         return self
 
@@ -214,19 +268,35 @@ class AppConfig(BaseModel):
         return self.experiment.candidate.candidate_type
 
     @property
+    def is_model_candidate(self) -> bool:
+        return isinstance(self.experiment.candidate, ModelCandidateConfig)
+
+    @property
+    def is_blend_candidate(self) -> bool:
+        return isinstance(self.experiment.candidate, BlendCandidateConfig)
+
+    @property
     def model_family(self) -> str:
+        if not self.is_model_candidate:
+            raise ValueError("model_family is only available for model candidates.")
         return self.experiment.candidate.model_family
 
     @property
     def feature_recipe_id(self) -> str:
+        if not self.is_model_candidate:
+            raise ValueError("feature_recipe_id is only available for model candidates.")
         return self.experiment.candidate.feature_recipe_id
 
     @property
     def preprocessor(self) -> str:
+        if not self.is_model_candidate:
+            raise ValueError("preprocessor is only available for model candidates.")
         return self.experiment.candidate.preprocessor
 
     @property
     def resolved_model_id(self) -> str:
+        if not self.is_model_candidate:
+            raise ValueError("resolved_model_id is only available for model candidates.")
         return resolve_candidate_model_id(
             task_type=self.task_type,
             model_family=self.model_family,
@@ -235,9 +305,25 @@ class AppConfig(BaseModel):
 
     @property
     def model_parameter_overrides(self) -> dict[str, object] | None:
+        if not self.is_model_candidate:
+            raise ValueError("model_parameter_overrides is only available for model candidates.")
         if not self.experiment.candidate.model_params:
             return None
         return dict(self.experiment.candidate.model_params)
+
+    @property
+    def base_candidate_ids(self) -> list[str]:
+        if not self.is_blend_candidate:
+            raise ValueError("base_candidate_ids is only available for blend candidates.")
+        return list(self.experiment.candidate.base_candidate_ids)
+
+    @property
+    def blend_weights(self) -> list[float] | None:
+        if not self.is_blend_candidate:
+            raise ValueError("blend_weights is only available for blend candidates.")
+        if self.experiment.candidate.weights is None:
+            return None
+        return list(self.experiment.candidate.weights)
 
     @property
     def submit_enabled(self) -> bool:

@@ -419,6 +419,9 @@ def run_training(
     model_spec: TrainingModelSpec | None = None,
     tuning_provenance: dict[str, object] | None = None,
 ) -> Path:
+    if not config.is_model_candidate:
+        raise ValueError("run_training only supports experiment.candidate.candidate_type=model.")
+
     resolved_model_spec = _resolve_training_model_spec(config=config, model_spec=model_spec)
     candidate_dir = _candidate_dir(config.competition_slug, config.candidate_id)
     if candidate_dir.exists():
@@ -559,6 +562,11 @@ def run_training_workflow(
             "Candidate artifacts already exist for this candidate_id. "
             f"Choose a new experiment.candidate.candidate_id or remove {candidate_dir}"
         )
+
+    if config.is_blend_candidate:
+        from tabular_shenanigans.blend import run_blend_training
+
+        return run_blend_training(config=config, dataset_context=dataset_context)
 
     optimization = config.experiment.candidate.optimization
     if not optimization.enabled:
