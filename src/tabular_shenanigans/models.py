@@ -359,10 +359,26 @@ def _build_hist_gradient_boosting_tuning_space(trial: object) -> dict[str, objec
 
 
 def _build_logreg_tuning_space(trial: object) -> dict[str, object]:
-    return {
-        "C": trial.suggest_float("C", 1e-3, 1e2, log=True),
+    solver = trial.suggest_categorical("solver", ["lbfgs", "liblinear", "saga"])
+    params: dict[str, object] = {
+        "C": trial.suggest_float("C", 1e-4, 1e3, log=True),
         "class_weight": trial.suggest_categorical("class_weight", [None, "balanced"]),
+        "max_iter": trial.suggest_categorical("max_iter", [1000, 2000, 4000]),
+        "solver": solver,
     }
+
+    if solver == "lbfgs":
+        params["penalty"] = "l2"
+        return params
+
+    if solver == "liblinear":
+        params["penalty"] = trial.suggest_categorical("liblinear_penalty", ["l1", "l2"])
+        return params
+
+    params["penalty"] = trial.suggest_categorical("saga_penalty", ["l1", "l2", "elasticnet"])
+    if params["penalty"] == "elasticnet":
+        params["l1_ratio"] = trial.suggest_float("l1_ratio", 0.0, 1.0)
+    return params
 
 
 def _build_lightgbm_tuning_space(trial: object) -> dict[str, object]:
