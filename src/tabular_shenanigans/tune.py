@@ -15,8 +15,8 @@ from tabular_shenanigans.preprocess import prepare_feature_frames
 from tabular_shenanigans.train import (
     TrainingModelSpec,
     _build_target_summary,
-    _evaluate_model_spec,
     _json_ready,
+    _score_model_spec,
 )
 
 
@@ -157,7 +157,7 @@ def run_optimization(
         expected_feature_columns=x_train_raw.columns.tolist(),
     )
     split_indices = prepared_context.split_indices
-    x_train_features, x_test_features = apply_feature_recipe(
+    x_train_features, _ = apply_feature_recipe(
         recipe_id=config.feature_recipe_id,
         x_train_raw=x_train_raw,
         x_test_raw=x_test_raw,
@@ -186,7 +186,7 @@ def run_optimization(
 
     def objective(trial: optuna.Trial) -> float:
         parameter_overrides = build_tuning_space(task_type, tuning_model_spec.model_id, trial)
-        evaluation_artifacts = _evaluate_model_spec(
+        cv_evaluation = _score_model_spec(
             task_type=task_type,
             primary_metric=primary_metric,
             model_spec=TrainingModelSpec(
@@ -194,7 +194,6 @@ def run_optimization(
                 parameter_overrides=parameter_overrides,
             ),
             x_train_raw=x_train_features,
-            x_test_raw=x_test_features,
             y_train=y_train,
             split_indices=split_indices,
             force_categorical=config.force_categorical,
@@ -204,10 +203,10 @@ def run_optimization(
             positive_label=positive_label,
             negative_label=negative_label,
         )
-        metric_mean = evaluation_artifacts.model_result.cv_summary.metric_mean
-        metric_std = evaluation_artifacts.model_result.cv_summary.metric_std
+        metric_mean = cv_evaluation.model_result.cv_summary.metric_mean
+        metric_std = cv_evaluation.model_result.cv_summary.metric_std
         trial.set_user_attr("metric_std", metric_std)
-        trial.set_user_attr("model_params", _json_ready(evaluation_artifacts.model_result.model_params))
+        trial.set_user_attr("model_params", _json_ready(cv_evaluation.model_result.model_params))
         print(
             f"Trial {trial.number}: {primary_metric}={metric_mean:.6f} "
             f"(std={metric_std:.6f}) params={parameter_overrides}"

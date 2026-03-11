@@ -71,6 +71,12 @@ class ModelEvaluationArtifacts:
 
 
 @dataclass(frozen=True)
+class ModelCvEvaluation:
+    model_result: ModelRunResult
+    fold_metrics_df: pd.DataFrame
+
+
+@dataclass(frozen=True)
 class OptimizationArtifacts:
     summary: dict[str, object]
     trials_df: pd.DataFrame
@@ -134,12 +140,12 @@ def _build_target_summary(
     raise ValueError(f"Unsupported task_type for target summary: {task_type}")
 
 
-def _evaluate_model_spec(
+def _run_cv_evaluation(
     task_type: str,
     primary_metric: str,
     model_spec: TrainingModelSpec,
     x_train_raw: pd.DataFrame,
-    x_test_raw: pd.DataFrame,
+    x_test_raw: pd.DataFrame | None,
     y_train: pd.Series,
     split_indices: list[tuple[int, np.ndarray, np.ndarray]],
     force_categorical: list[str] | None,
@@ -148,7 +154,8 @@ def _evaluate_model_spec(
     cv_random_state: int,
     positive_label: object | None,
     negative_label: object | None,
-) -> ModelEvaluationArtifacts:
+    collect_prediction_artifacts: bool,
+) -> tuple[ModelCvEvaluation, np.ndarray | None, np.ndarray | None]:
     model_definition, _, model_params = build_model(
         task_type,
         model_spec.model_id,
@@ -159,8 +166,8 @@ def _evaluate_model_spec(
     model_name = model_definition.model_name
     preprocessing_scheme_id = model_definition.preprocessing_scheme_id
 
-    oof_predictions = np.zeros(x_train_raw.shape[0], dtype=float)
-    test_predictions_per_fold: list[np.ndarray] = []
+    oof_predictions = np.zeros(x_train_raw.shape[0], dtype=float) if collect_prediction_artifacts else None
+    test_predictions_per_fold = [] if collect_prediction_artifacts else None
     fold_metrics: list[dict[str, object]] = []
     use_named_columns = model_name.startswith("LGBM")
     binary_prediction_kind = None
@@ -184,12 +191,17 @@ def _evaluate_model_spec(
             preprocessor.set_output(transform="pandas")
         x_fold_train_processed = preprocessor.fit_transform(x_fold_train)
         x_fold_valid_processed = preprocessor.transform(x_fold_valid)
-        x_test_processed = preprocessor.transform(x_test_raw)
+        x_test_processed = None
+        if collect_prediction_artifacts:
+            if x_test_raw is None:
+                raise ValueError("x_test_raw is required when collect_prediction_artifacts=True.")
+            x_test_processed = preprocessor.transform(x_test_raw)
 
         if preprocessing_scheme_id != "native" and not use_named_columns:
             x_fold_train_processed = np.asarray(x_fold_train_processed)
             x_fold_valid_processed = np.asarray(x_fold_valid_processed)
-            x_test_processed = np.asarray(x_test_processed)
+            if x_test_processed is not None:
+                x_test_processed = np.asarray(x_test_processed)
 
         _, model, _ = build_model(
             task_type,
@@ -210,10 +222,14 @@ def _evaluate_model_spec(
                 raise ValueError("Binary training requires resolved class metadata.")
             positive_class_index = list(model.classes_).index(positive_label)
             fold_valid_predictions = model.predict_proba(x_fold_valid_processed)[:, positive_class_index]
-            fold_test_predictions = model.predict_proba(x_test_processed)[:, positive_class_index]
+            fold_test_predictions = None
+            if x_test_processed is not None:
+                fold_test_predictions = model.predict_proba(x_test_processed)[:, positive_class_index]
         else:
             fold_valid_predictions = model.predict(x_fold_valid_processed)
-            fold_test_predictions = model.predict(x_test_processed)
+            fold_test_predictions = None
+            if x_test_processed is not None:
+                fold_test_predictions = model.predict(x_test_processed)
 
         fold_score = score_predictions(
             task_type=task_type,
@@ -223,8 +239,10 @@ def _evaluate_model_spec(
             positive_label=positive_label,
         )
 
-        oof_predictions[valid_idx] = fold_valid_predictions
-        test_predictions_per_fold.append(np.asarray(fold_test_predictions, dtype=float))
+        if oof_predictions is not None:
+            oof_predictions[valid_idx] = fold_valid_predictions
+        if test_predictions_per_fold is not None and fold_test_predictions is not None:
+            test_predictions_per_fold.append(np.asarray(fold_test_predictions, dtype=float))
         fold_metrics.append(
             {
                 "fold": fold_index,
@@ -235,18 +253,8 @@ def _evaluate_model_spec(
             }
         )
 
-    mean_test_predictions = np.mean(np.vstack(test_predictions_per_fold), axis=0)
-    if task_type == "regression" and primary_metric == "rmsle":
-        mean_test_predictions = np.clip(mean_test_predictions, a_min=0.0, a_max=None)
-    if task_type == "binary" and binary_prediction_kind == "label":
-        if positive_label is None or negative_label is None:
-            raise ValueError("Binary label exports require resolved class metadata.")
-        final_test_predictions = np.where(mean_test_predictions >= 0.5, positive_label, negative_label)
-    else:
-        final_test_predictions = mean_test_predictions
-
     fold_metrics_df = pd.DataFrame(fold_metrics)
-    return ModelEvaluationArtifacts(
+    cv_evaluation = ModelCvEvaluation(
         model_result=ModelRunResult(
             model_id=resolved_model_id,
             model_name=model_name,
@@ -260,8 +268,99 @@ def _evaluate_model_spec(
             ),
         ),
         fold_metrics_df=fold_metrics_df,
+    )
+
+    if not collect_prediction_artifacts:
+        return cv_evaluation, None, None
+
+    if oof_predictions is None or test_predictions_per_fold is None:
+        raise RuntimeError("Prediction artifacts were requested but not collected.")
+
+    mean_test_predictions = np.mean(np.vstack(test_predictions_per_fold), axis=0)
+    if task_type == "regression" and primary_metric == "rmsle":
+        mean_test_predictions = np.clip(mean_test_predictions, a_min=0.0, a_max=None)
+    if task_type == "binary" and binary_prediction_kind == "label":
+        if positive_label is None or negative_label is None:
+            raise ValueError("Binary label exports require resolved class metadata.")
+        final_test_predictions = np.where(mean_test_predictions >= 0.5, positive_label, negative_label)
+    else:
+        final_test_predictions = mean_test_predictions
+
+    return cv_evaluation, oof_predictions, np.asarray(final_test_predictions)
+
+
+def _score_model_spec(
+    task_type: str,
+    primary_metric: str,
+    model_spec: TrainingModelSpec,
+    x_train_raw: pd.DataFrame,
+    y_train: pd.Series,
+    split_indices: list[tuple[int, np.ndarray, np.ndarray]],
+    force_categorical: list[str] | None,
+    force_numeric: list[str] | None,
+    low_cardinality_int_threshold: int | None,
+    cv_random_state: int,
+    positive_label: object | None,
+    negative_label: object | None,
+) -> ModelCvEvaluation:
+    cv_evaluation, _, _ = _run_cv_evaluation(
+        task_type=task_type,
+        primary_metric=primary_metric,
+        model_spec=model_spec,
+        x_train_raw=x_train_raw,
+        x_test_raw=None,
+        y_train=y_train,
+        split_indices=split_indices,
+        force_categorical=force_categorical,
+        force_numeric=force_numeric,
+        low_cardinality_int_threshold=low_cardinality_int_threshold,
+        cv_random_state=cv_random_state,
+        positive_label=positive_label,
+        negative_label=negative_label,
+        collect_prediction_artifacts=False,
+    )
+    return cv_evaluation
+
+
+def _evaluate_model_spec(
+    task_type: str,
+    primary_metric: str,
+    model_spec: TrainingModelSpec,
+    x_train_raw: pd.DataFrame,
+    x_test_raw: pd.DataFrame,
+    y_train: pd.Series,
+    split_indices: list[tuple[int, np.ndarray, np.ndarray]],
+    force_categorical: list[str] | None,
+    force_numeric: list[str] | None,
+    low_cardinality_int_threshold: int | None,
+    cv_random_state: int,
+    positive_label: object | None,
+    negative_label: object | None,
+) -> ModelEvaluationArtifacts:
+    cv_evaluation, oof_predictions, final_test_predictions = _run_cv_evaluation(
+        task_type=task_type,
+        primary_metric=primary_metric,
+        model_spec=model_spec,
+        x_train_raw=x_train_raw,
+        x_test_raw=x_test_raw,
+        y_train=y_train,
+        split_indices=split_indices,
+        force_categorical=force_categorical,
+        force_numeric=force_numeric,
+        low_cardinality_int_threshold=low_cardinality_int_threshold,
+        cv_random_state=cv_random_state,
+        positive_label=positive_label,
+        negative_label=negative_label,
+        collect_prediction_artifacts=True,
+    )
+    if oof_predictions is None or final_test_predictions is None:
+        raise RuntimeError("Training evaluation must return OOF and test predictions.")
+
+    return ModelEvaluationArtifacts(
+        model_result=cv_evaluation.model_result,
+        fold_metrics_df=cv_evaluation.fold_metrics_df,
         oof_predictions=oof_predictions,
-        final_test_predictions=np.asarray(final_test_predictions),
+        final_test_predictions=final_test_predictions,
     )
 
 
