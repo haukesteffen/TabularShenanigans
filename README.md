@@ -34,11 +34,13 @@ The repository is developed and manually verified primarily against these Playgr
 - Write one candidate artifact directory under `artifacts/<competition_slug>/candidates/<candidate_id>/`, including `candidate.json`, `fold_metrics.csv`, `oof_predictions.csv`, and `test_predictions.csv`, plus optional candidate-type-specific metadata such as `blend_summary.csv` or optimization files.
 - When `experiment.candidate.optimization.enabled=true` for a model candidate, run Optuna inside `train`, retrain the best trial into the candidate artifact directory, and keep optimization metadata next to that candidate.
 - Validate predictions against `sample_submission.csv`, including exact ID content and order, with task-aware binary prediction checks, and optionally submit to Kaggle from the current candidate artifact selected by `candidate_id`.
+- Optionally publish `prepare`, `train`, and `submit` runs plus generated artifacts to a remote MLflow tracking server while preserving the current local file-based workflow.
 
 ## Tooling
 - Python for orchestration
 - Kaggle CLI for competition data and submissions
 - Optuna for local hyperparameter tuning
+- MLflow for optional remote run tracking and artifact publishing
 - `gh` CLI for repository management
 - `uv` for environment management
 
@@ -46,8 +48,9 @@ The repository is developed and manually verified primarily against these Playgr
 1. Ensure Kaggle CLI access is already configured for your user.
 2. Install dependencies with `uv sync`.
 3. If you want LightGBM, CatBoost, or XGBoost model recipes, install the optional booster dependencies with `uv sync --extra boosters`.
-4. Copy a tracked example config to a local repository-root `config.yaml`.
-5. Run `uv run python main.py`.
+4. If you want optional MLflow tracking, install the tracking dependencies with `uv sync --extra tracking`.
+5. Copy a tracked example config to a local repository-root `config.yaml`.
+6. Run `uv run python main.py`.
 
 ```bash
 cp config.binary.example.yaml config.yaml
@@ -118,6 +121,12 @@ Required top-level sections:
 - optional `notes`
 - required `candidate` block
 - optional `submit` block
+- optional `tracking` block
+
+Current `experiment.tracking` keys:
+- `enabled`: if `true`, publish `prepare`, `train`, and `submit` runs to MLflow (default `false`)
+- `tracking_uri`: remote MLflow tracking URI; required when tracking is enabled
+- `experiment_name`: remote MLflow experiment name; required when tracking is enabled
 
 Current `experiment.candidate` contract:
 - shared keys:
@@ -222,6 +231,10 @@ Manual verification for blend candidates:
   - blend candidates also include `blend_summary.csv` and record their component candidates plus normalized weights in `candidate.json`
   - optimized model candidates also include `optimization_summary.json`, `optimization_trials.csv`, and `optimization_best_params.json`
 - Submission ledger: `artifacts/<competition_slug>/submissions.csv` as an append-only submission event table keyed by `candidate_id`
+- Optional remote MLflow artifacts:
+  - `prepare` uploads `competition.json`, `folds.csv`, and reports
+  - `train` uploads the full candidate artifact directory
+  - `submit` uploads `submission.csv` plus submission metadata
 
 ## Current Assumptions
 - Kaggle CLI is installed, authenticated, and has access to the configured competition.
@@ -247,5 +260,6 @@ Manual verification for blend candidates:
 - Binary classification requires an explicit positive-class contract. If `positive_label` is omitted, the workflow only auto-resolves the positive class for labels `[0, 1]`, `[False, True]`, or `["No", "Yes"]`; other two-class label pairs fail fast.
 - `task_type` and `primary_metric` are explicitly configured for every run.
 - Runtime config comes from local repository-root `config.yaml` only; tracked example files are just starting points, and there are no CLI or environment overrides.
+- When `experiment.tracking.enabled=true`, MLflow publishing becomes part of stage success; local files are still written first, then uploaded after successful completion.
 - Tuning search spaces live in code next to model definitions; there is no YAML search-space DSL.
 - The current workflow is CPU-first and optimized for iteration speed over production hardening.

@@ -148,6 +148,30 @@ class ExperimentSubmitConfig(BaseModel):
     message_prefix: str | None = None
 
 
+class ExperimentTrackingConfig(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    enabled: bool = False
+    tracking_uri: str | None = None
+    experiment_name: str | None = None
+
+    @model_validator(mode="after")
+    def validate_tracking_config(self) -> "ExperimentTrackingConfig":
+        if not self.enabled:
+            return self
+
+        if not self.tracking_uri:
+            raise ValueError(
+                "experiment.tracking.tracking_uri is required when experiment.tracking.enabled=true."
+            )
+        if not self.experiment_name:
+            raise ValueError(
+                "experiment.tracking.experiment_name is required when experiment.tracking.enabled=true."
+            )
+
+        return self
+
+
 class ExperimentConfig(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
@@ -155,6 +179,7 @@ class ExperimentConfig(BaseModel):
     notes: str | None = None
     candidate: ExperimentCandidateConfig
     submit: ExperimentSubmitConfig = Field(default_factory=ExperimentSubmitConfig)
+    tracking: ExperimentTrackingConfig = Field(default_factory=ExperimentTrackingConfig)
 
 
 class AppConfig(BaseModel):
@@ -332,6 +357,24 @@ class AppConfig(BaseModel):
     @property
     def submit_message_prefix(self) -> str | None:
         return self.experiment.submit.message_prefix
+
+    @property
+    def tracking_enabled(self) -> bool:
+        return self.experiment.tracking.enabled
+
+    @property
+    def tracking_uri(self) -> str:
+        if not self.tracking_enabled or self.experiment.tracking.tracking_uri is None:
+            raise ValueError("tracking_uri is only available when experiment.tracking.enabled=true.")
+        return self.experiment.tracking.tracking_uri
+
+    @property
+    def tracking_experiment_name(self) -> str:
+        if not self.tracking_enabled or self.experiment.tracking.experiment_name is None:
+            raise ValueError(
+                "tracking_experiment_name is only available when experiment.tracking.enabled=true."
+            )
+        return self.experiment.tracking.experiment_name
 
 
 def load_config(path: str = "config.yaml") -> AppConfig:

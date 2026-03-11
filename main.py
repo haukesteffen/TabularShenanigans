@@ -1,5 +1,6 @@
 import argparse
 import sys
+from contextlib import nullcontext
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parent / "src"))
@@ -8,7 +9,16 @@ from tabular_shenanigans.competition import prepare_competition
 from tabular_shenanigans.config import AppConfig, load_config
 from tabular_shenanigans.data import fetch_competition_data, load_competition_dataset_context
 from tabular_shenanigans.eda import run_eda
-from tabular_shenanigans.submit import run_submission
+from tabular_shenanigans.submit import build_submission_message, run_submission
+from tabular_shenanigans.tracking import (
+    is_tracking_enabled,
+    log_prepare_outputs,
+    log_runtime_config,
+    log_submit_outputs,
+    log_train_outputs,
+    make_pipeline_invocation_id,
+    start_stage_run,
+)
 from tabular_shenanigans.train import run_training_workflow
 
 
@@ -79,12 +89,40 @@ def _prepare_competition_stage(config: AppConfig):
     return dataset_context, prepared_context
 
 
-def _run_full_pipeline(config: AppConfig) -> None:
-    dataset_context, _ = _prepare_competition_stage(config)
-    candidate_dir = run_training_workflow(config=config, dataset_context=dataset_context)
-    print(f"Candidate artifacts ready: {candidate_dir}")
-    submission_path, submission_status = run_submission(config=config)
-    print(f"Submission file ready: {submission_path} ({submission_status})")
+def _build_train_tracking_tags(config: AppConfig) -> dict[str, object]:
+    tags: dict[str, object] = {
+        "candidate_id": config.candidate_id,
+        "candidate_type": config.candidate_type,
+    }
+    if config.is_model_candidate:
+        tags["model_id"] = config.resolved_model_id
+        tags["feature_recipe_id"] = config.feature_recipe_id
+        tags["preprocessor"] = config.preprocessor
+        return tags
+
+    tags["base_candidate_count"] = len(config.base_candidate_ids)
+    return tags
+
+
+def _run_prepare_stage_with_tracking(
+    config: AppConfig,
+    pipeline_invocation_id: str,
+):
+    tracking_context = nullcontext()
+    if is_tracking_enabled(config):
+        tracking_context = start_stage_run(
+            config=config,
+            stage="prepare",
+            pipeline_invocation_id=pipeline_invocation_id,
+        )
+
+    with tracking_context:
+        if is_tracking_enabled(config):
+            log_runtime_config(config)
+        dataset_context, prepared_context = _prepare_competition_stage(config)
+        if is_tracking_enabled(config):
+            log_prepare_outputs(prepared_context)
+        return dataset_context, prepared_context
 
 
 def _run_eda_stage(config: AppConfig) -> None:
@@ -94,31 +132,124 @@ def _run_eda_stage(config: AppConfig) -> None:
     print(f"EDA reports ready: {report_dir}")
 
 
-def _run_train_stage(config: AppConfig) -> None:
-    _ensure_data_ready(config)
-    dataset_context = _load_shared_dataset_context(config)
+def _run_train_stage(
+    config: AppConfig,
+    dataset_context=None,
+):
+    if dataset_context is None:
+        _ensure_data_ready(config)
+        dataset_context = _load_shared_dataset_context(config)
     candidate_dir = run_training_workflow(config=config, dataset_context=dataset_context)
     print(f"Candidate artifacts ready: {candidate_dir}")
+    return candidate_dir
 
 
-def _run_submit_stage(config: AppConfig, args: argparse.Namespace) -> None:
-    resolved_candidate_id = args.candidate_id or config.candidate_id
+def _run_train_stage_with_tracking(
+    config: AppConfig,
+    pipeline_invocation_id: str,
+    dataset_context=None,
+):
+    tracking_context = nullcontext()
+    if is_tracking_enabled(config):
+        tracking_context = start_stage_run(
+            config=config,
+            stage="train",
+            pipeline_invocation_id=pipeline_invocation_id,
+            extra_tags=_build_train_tracking_tags(config),
+        )
+
+    with tracking_context:
+        if is_tracking_enabled(config):
+            log_runtime_config(config)
+        candidate_dir = _run_train_stage(config=config, dataset_context=dataset_context)
+        if is_tracking_enabled(config):
+            log_train_outputs(candidate_dir=candidate_dir)
+        return candidate_dir
+
+
+def _run_submit_stage(
+    config: AppConfig,
+    candidate_id: str | None = None,
+) -> tuple[Path, str]:
+    resolved_candidate_id = candidate_id or config.candidate_id
     print(f"Using candidate_id: {resolved_candidate_id}")
     submission_path, submission_status = run_submission(
         config=config,
         candidate_id=resolved_candidate_id,
     )
     print(f"Submission file ready: {submission_path} ({submission_status})")
+    return submission_path, submission_status
+
+
+def _run_submit_stage_with_tracking(
+    config: AppConfig,
+    pipeline_invocation_id: str,
+    candidate_id: str | None = None,
+) -> tuple[Path, str]:
+    resolved_candidate_id = candidate_id or config.candidate_id
+    tracking_context = nullcontext()
+    if is_tracking_enabled(config):
+        tracking_context = start_stage_run(
+            config=config,
+            stage="submit",
+            pipeline_invocation_id=pipeline_invocation_id,
+            extra_tags={"candidate_id": resolved_candidate_id},
+        )
+
+    with tracking_context:
+        if is_tracking_enabled(config):
+            log_runtime_config(config)
+            submission_message = build_submission_message(
+                competition_slug=config.competition_slug,
+                candidate_id=resolved_candidate_id,
+                submit_message_prefix=config.submit_message_prefix,
+            )
+        else:
+            submission_message = ""
+        submission_path, submission_status = _run_submit_stage(
+            config=config,
+            candidate_id=resolved_candidate_id,
+        )
+        if is_tracking_enabled(config):
+            log_submit_outputs(
+                competition_slug=config.competition_slug,
+                candidate_id=resolved_candidate_id,
+                submission_path=submission_path,
+                submission_status=submission_status,
+                message=submission_message,
+                submit_enabled=config.submit_enabled,
+            )
+        return submission_path, submission_status
+
+
+def _run_full_pipeline(
+    config: AppConfig,
+    pipeline_invocation_id: str,
+) -> None:
+    dataset_context, _ = _run_prepare_stage_with_tracking(
+        config=config,
+        pipeline_invocation_id=pipeline_invocation_id,
+    )
+    _run_train_stage_with_tracking(
+        config=config,
+        pipeline_invocation_id=pipeline_invocation_id,
+        dataset_context=dataset_context,
+    )
+    _run_submit_stage_with_tracking(
+        config=config,
+        pipeline_invocation_id=pipeline_invocation_id,
+    )
 
 
 def main(argv: list[str] | None = None) -> None:
     parser = build_parser()
     args = parser.parse_args(argv)
     config = load_config()
+    pipeline_invocation_id = make_pipeline_invocation_id()
     _print_resolved_setup(config)
 
     if args.stage is None:
-        _run_full_pipeline(config)
+        _run_full_pipeline(config=config, pipeline_invocation_id=pipeline_invocation_id)
         return
 
     if args.stage == "fetch":
@@ -126,7 +257,10 @@ def main(argv: list[str] | None = None) -> None:
         return
 
     if args.stage == "prepare":
-        _prepare_competition_stage(config)
+        _run_prepare_stage_with_tracking(
+            config=config,
+            pipeline_invocation_id=pipeline_invocation_id,
+        )
         return
 
     if args.stage == "eda":
@@ -134,11 +268,18 @@ def main(argv: list[str] | None = None) -> None:
         return
 
     if args.stage == "train":
-        _run_train_stage(config)
+        _run_train_stage_with_tracking(
+            config=config,
+            pipeline_invocation_id=pipeline_invocation_id,
+        )
         return
 
     if args.stage == "submit":
-        _run_submit_stage(config, args)
+        _run_submit_stage_with_tracking(
+            config=config,
+            pipeline_invocation_id=pipeline_invocation_id,
+            candidate_id=args.candidate_id,
+        )
         return
 
     raise ValueError(f"Unsupported stage: {args.stage}")

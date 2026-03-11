@@ -15,6 +15,9 @@ dependencies = [
 
 [project.optional-dependencies]
 dev = []
+tracking = [
+    "mlflow-skinny>=3.0.0",
+]
 boosters = [
     "catboost>=1.2.10",
     "lightgbm>=4.6.0",

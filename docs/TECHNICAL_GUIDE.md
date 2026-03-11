@@ -24,6 +24,7 @@ The intended operating scope is Kaggle Playground Series tabular competitions. C
 11. When `experiment.candidate.optimization.enabled=true` for a model candidate, `train` runs an Optuna study on the frozen fold assignments, retrains the best trial into the standard candidate artifact layout, and writes optimization metadata inside the candidate directory.
 12. Write one candidate artifact directory under `artifacts/<competition_slug>/candidates/<candidate_id>/` with `candidate.json`, `fold_metrics.csv`, `oof_predictions.csv`, `test_predictions.csv`, and optional candidate-type-specific files such as `blend_summary.csv` or optimization metadata.
 13. Validate predictions against `sample_submission.csv`, including exact ID content and order, using `candidate.json` as the submission metadata contract, apply metric-aware binary prediction validation, write `submission.csv` in the selected candidate directory, and optionally submit to Kaggle.
+14. When `experiment.tracking.enabled=true`, publish stage-local artifacts and metadata for `prepare`, `train`, and `submit` to the configured MLflow server after the stage succeeds.
 
 ## CLI Stages
 - `uv run python main.py`: default full pipeline (`fetch` -> `prepare` -> `train` -> `submit`)
@@ -50,6 +51,7 @@ The default `submit` path supports current candidate artifacts only. Unsupported
 - `src/tabular_shenanigans/train.py`: config-selected training from the shared dataset context, frozen-fold loading, candidate artifact writing, candidate manifest generation, and optimization-aware training orchestration.
 - `src/tabular_shenanigans/tune.py`: internal Optuna helper used by `train` when candidate optimization is enabled.
 - `src/tabular_shenanigans/submit.py`: submission schema validation, candidate selection by `candidate_id`, submission message creation, Kaggle submission, and submission ledger updates.
+- `src/tabular_shenanigans/tracking.py`: optional MLflow run creation, tag/metric logging, config snapshot logging, and post-stage artifact publishing.
 
 ## Configuration Contract
 Input:
@@ -81,6 +83,7 @@ Input:
   - optional `notes`
   - required `candidate`
   - optional `submit`
+  - optional `tracking`
 - Current `experiment.candidate` keys:
   - shared:
     - `candidate_type` (`model` or `blend`)
@@ -104,6 +107,10 @@ Input:
 - Current `experiment.submit` keys:
   - `enabled` (boolean, default false)
   - `message_prefix` (string, optional)
+- Current `experiment.tracking` keys:
+  - `enabled` (boolean, default false)
+  - `tracking_uri` (string, required when enabled)
+  - `experiment_name` (string, required when enabled)
 
 Binary prediction artifact contract:
 - `roc_auc` and `log_loss` write positive-class probabilities to `test_predictions.csv` and `submission.csv`
@@ -119,6 +126,7 @@ optimization requires at least one stopping condition: `experiment.candidate.opt
 enabled optimization is consumed by `train` and applies to model candidates only.
 Frequency encoding is fold-local and maps unseen categorical values to `0.0`.
 LightGBM, CatBoost, and XGBoost require the optional booster dependencies installed via `uv sync --extra boosters`.
+MLflow tracking requires the optional tracking dependencies installed via `uv sync --extra tracking`.
 
 ## Preferred Verification Targets
 - `playground-series-s5e12`: binary development smoke test with `task_type: binary` and `primary_metric: roc_auc`
@@ -169,6 +177,10 @@ Manual verification steps for each target:
   - `optimization_trials.csv`
   - `optimization_best_params.json`
 - Append-only submission ledger at `artifacts/<competition_slug>/submissions.csv` keyed by `candidate_id`
+- Optional MLflow-published stage artifacts:
+  - `prepare`: config snapshot, `competition.json`, `folds.csv`, and reports
+  - `train`: config snapshot and the full candidate artifact directory
+  - `submit`: config snapshot, `submission.csv`, and submission metadata JSON
 
 ## Runtime Invariants And Failure Behavior
 - One runtime config source only: local repository-root `config.yaml`
@@ -176,6 +188,7 @@ Manual verification steps for each target:
 - Tracked example config files are documentation and starting points only; they are never read automatically at runtime
 - top-level `competition` and `experiment` sections must be present in config for every run
 - the old flat config layout is unsupported
+- when tracking is enabled, MLflow publishing is part of stage success and happens after local files are written
 - `competition.task_type` and `competition.primary_metric` must be present in config for every run
 - `prepare` is the competition-level source of truth for `competition.json` and `folds.csv`
 - `train` must consume the prepared fold assignments and fail if the prepared context no longer matches the current config or resolved dataset schema
