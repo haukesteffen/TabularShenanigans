@@ -85,6 +85,7 @@ def _build_optimization_summary(
     model_name: str,
     preprocessing_scheme_id: str,
     target_summary: dict[str, object],
+    best_parameter_overrides: dict[str, object],
 ) -> dict[str, object]:
     best_trial = study.best_trial
     return {
@@ -105,7 +106,7 @@ def _build_optimization_summary(
         "completed_trial_count": len([trial for trial in study.trials if trial.state == optuna.trial.TrialState.COMPLETE]),
         "best_trial_number": best_trial.number,
         "best_value": best_trial.value,
-        "best_params": best_trial.params,
+        "best_params": best_parameter_overrides,
         "best_model_params": best_trial.user_attrs.get("model_params"),
         "target_summary": target_summary,
     }
@@ -206,6 +207,7 @@ def run_optimization(
         metric_mean = cv_evaluation.model_result.cv_summary.metric_mean
         metric_std = cv_evaluation.model_result.cv_summary.metric_std
         trial.set_user_attr("metric_std", metric_std)
+        trial.set_user_attr("parameter_overrides", _json_ready(parameter_overrides))
         trial.set_user_attr("model_params", _json_ready(cv_evaluation.model_result.model_params))
         print(
             f"Trial {trial.number}: {primary_metric}={metric_mean:.6f} "
@@ -220,7 +222,10 @@ def run_optimization(
         gc_after_trial=True,
     )
 
-    best_parameter_overrides = dict(study.best_trial.params)
+    best_parameter_overrides = study.best_trial.user_attrs.get("parameter_overrides")
+    if not isinstance(best_parameter_overrides, dict):
+        raise ValueError("Optimization best trial is missing normalized parameter_overrides.")
+
     tuning_provenance = {
         "study_id": study_id,
         "optimization_method": optimization.method,
@@ -238,6 +243,7 @@ def run_optimization(
         model_name=model_definition.model_name,
         preprocessing_scheme_id=model_definition.preprocessing_scheme_id,
         target_summary=target_summary,
+        best_parameter_overrides=best_parameter_overrides,
     )
     return OptimizationResult(
         best_model_spec=TrainingModelSpec(
