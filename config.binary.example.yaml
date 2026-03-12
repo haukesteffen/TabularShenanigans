@@ -32,11 +32,8 @@ experiment:
   name: baseline-logreg
   notes: onehot logistic-regression baseline for the default binary smoke test
 
-  # Optional remote MLflow tracking for prepare/train/submit runs.
-  # tracking:
-  #   enabled: true
-  #   tracking_uri: https://mlflow.example.com
-  #   experiment_name: tabular-shenanigans/playground-series-s5e12
+  tracking:
+    tracking_uri: http://localhost:5000
 
   candidate:
     candidate_type: model

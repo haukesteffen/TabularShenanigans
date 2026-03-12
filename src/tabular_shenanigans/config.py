@@ -200,25 +200,7 @@ class ExperimentSubmitConfig(BaseModel):
 class ExperimentTrackingConfig(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
-    enabled: bool = False
-    tracking_uri: str | None = None
-    experiment_name: str | None = None
-
-    @model_validator(mode="after")
-    def validate_tracking_config(self) -> "ExperimentTrackingConfig":
-        if not self.enabled:
-            return self
-
-        if not self.tracking_uri:
-            raise ValueError(
-                "experiment.tracking.tracking_uri is required when experiment.tracking.enabled=true."
-            )
-        if not self.experiment_name:
-            raise ValueError(
-                "experiment.tracking.experiment_name is required when experiment.tracking.enabled=true."
-            )
-
-        return self
+    tracking_uri: str = Field(min_length=1)
 
 
 class ExperimentConfig(BaseModel):

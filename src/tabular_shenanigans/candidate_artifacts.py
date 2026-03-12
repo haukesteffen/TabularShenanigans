@@ -7,6 +7,11 @@ import pandas as pd
 
 from tabular_shenanigans.config import AppConfig
 
+CANDIDATE_ARTIFACT_DIRNAME = "candidate"
+CONTEXT_ARTIFACT_DIRNAME = "context"
+CANDIDATE_MANIFEST_FILENAME = "candidate.json"
+COMPETITION_MANIFEST_FILENAME = "competition.json"
+FOLDS_FILENAME = "folds.csv"
 BINARY_ACCURACY_TEST_PROBABILITIES_FILENAME = "test_prediction_probabilities.csv"
 BINARY_ACCURACY_BLEND_RULE = "average_positive_class_probability_then_threshold_0.5"
 
@@ -25,15 +30,11 @@ def json_ready(value: object) -> object:
     return value
 
 
-def candidate_dir(competition_slug: str, candidate_id: str) -> Path:
-    return Path("artifacts") / competition_slug / "candidates" / candidate_id
-
-
 def load_candidate_manifest(
-    candidate_dir_path: Path,
+    candidate_artifact_dir: Path,
     missing_message: str | None = None,
 ) -> dict[str, object]:
-    manifest_path = candidate_dir_path / "candidate.json"
+    manifest_path = candidate_artifact_dir / CANDIDATE_MANIFEST_FILENAME
     if not manifest_path.exists():
         if missing_message is not None:
             raise ValueError(missing_message)
@@ -115,8 +116,28 @@ def build_binary_accuracy_artifact_metadata(
     }
 
 
+def write_context_artifacts(
+    bundle_root: Path,
+    competition_manifest: dict[str, object],
+    fold_assignments: np.ndarray,
+) -> None:
+    context_dir = bundle_root / CONTEXT_ARTIFACT_DIRNAME
+    context_dir.mkdir(parents=True, exist_ok=True)
+    (context_dir / COMPETITION_MANIFEST_FILENAME).write_text(
+        json.dumps(json_ready(competition_manifest), indent=2, sort_keys=True),
+        encoding="utf-8",
+    )
+    folds_df = pd.DataFrame(
+        {
+            "row_idx": np.arange(fold_assignments.shape[0], dtype=int),
+            "fold": fold_assignments.astype(int),
+        }
+    )
+    folds_df.to_csv(context_dir / FOLDS_FILENAME, index=False)
+
+
 def write_candidate_artifacts(
-    candidate_dir_path: Path,
+    candidate_artifact_dir: Path,
     manifest: dict[str, object],
     fold_metrics_df: pd.DataFrame,
     y_train: pd.Series,
@@ -128,11 +149,12 @@ def write_candidate_artifacts(
     label_column: str,
     test_prediction_probabilities: np.ndarray | None = None,
 ) -> None:
-    (candidate_dir_path / "candidate.json").write_text(
+    candidate_artifact_dir.mkdir(parents=True, exist_ok=True)
+    (candidate_artifact_dir / CANDIDATE_MANIFEST_FILENAME).write_text(
         json.dumps(json_ready(manifest), indent=2, sort_keys=True),
         encoding="utf-8",
     )
-    fold_metrics_df.to_csv(candidate_dir_path / "fold_metrics.csv", index=False)
+    fold_metrics_df.to_csv(candidate_artifact_dir / "fold_metrics.csv", index=False)
 
     oof_df = pd.DataFrame(
         {
@@ -142,7 +164,7 @@ def write_candidate_artifacts(
             "fold": fold_assignments,
         }
     )
-    oof_df.to_csv(candidate_dir_path / "oof_predictions.csv", index=False)
+    oof_df.to_csv(candidate_artifact_dir / "oof_predictions.csv", index=False)
 
     test_predictions_df = pd.DataFrame(
         {
@@ -150,7 +172,7 @@ def write_candidate_artifacts(
             label_column: test_predictions,
         }
     )
-    test_predictions_df.to_csv(candidate_dir_path / "test_predictions.csv", index=False)
+    test_predictions_df.to_csv(candidate_artifact_dir / "test_predictions.csv", index=False)
 
     if test_prediction_probabilities is not None:
         test_probability_df = pd.DataFrame(
@@ -160,6 +182,6 @@ def write_candidate_artifacts(
             }
         )
         test_probability_df.to_csv(
-            candidate_dir_path / BINARY_ACCURACY_TEST_PROBABILITIES_FILENAME,
+            candidate_artifact_dir / BINARY_ACCURACY_TEST_PROBABILITIES_FILENAME,
             index=False,
         )

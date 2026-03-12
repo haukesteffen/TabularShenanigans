@@ -75,6 +75,7 @@ class ModelCvEvaluation:
 class PreparedTrainingContext:
     id_column: str
     label_column: str
+    competition_manifest: dict[str, object]
     y_train: pd.Series
     x_train_features: pd.DataFrame
     x_test_features: pd.DataFrame
@@ -150,6 +151,7 @@ def build_prepared_training_context(
     return PreparedTrainingContext(
         id_column=id_column,
         label_column=label_column,
+        competition_manifest=prepared_context.manifest,
         y_train=y_train,
         x_train_features=x_train_features,
         x_test_features=x_test_features,
