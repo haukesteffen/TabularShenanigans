@@ -1,6 +1,5 @@
 import subprocess
 from dataclasses import dataclass
-from datetime import datetime, timezone
 from pathlib import Path
 
 import numpy as np
@@ -12,31 +11,30 @@ from tabular_shenanigans.candidate_artifacts import (
 )
 from tabular_shenanigans.config import AppConfig
 from tabular_shenanigans.data import get_binary_prediction_kind, load_sample_submission_template, validate_sample_submission_schema
-
-SUBMISSION_LEDGER_COLUMNS = [
-    "timestamp_utc",
-    "competition_slug",
-    "candidate_id",
-    "model_registry_key",
-    "estimator_name",
-    "config_fingerprint",
-    "submission_path",
-    "submit_enabled",
-    "status",
-    "message",
-]
+from tabular_shenanigans.submission_history import (
+    SubmissionEvent,
+    SubmissionRefreshResult,
+    append_submission_event,
+    make_submission_event_id,
+    refresh_submission_scores,
+    utc_now_iso,
+)
 
 
 @dataclass(frozen=True)
 class SubmissionContext:
     candidate_id: str
+    candidate_type: str
     competition_slug: str
     task_type: str
     primary_metric: str
+    feature_recipe_id: str | None
+    preprocessing_scheme_id: str | None
     model_registry_key: str
     estimator_name: str
-    metric_name: str
-    metric_mean: float
+    cv_metric_name: str
+    cv_metric_mean: float
+    cv_metric_std: float
     id_column: str
     label_column: str
     observed_label_pair: tuple[object, object] | None
@@ -44,30 +42,16 @@ class SubmissionContext:
     prediction_path: Path
 
 
-def _submission_ledger_path(competition_slug: str) -> Path:
-    return Path("artifacts") / competition_slug / "submissions.csv"
+@dataclass(frozen=True)
+class SubmissionRunResult:
+    submission_path: Path
+    submission_status: str
+    submission_message: str
+    submission_event: SubmissionEvent | None
+    submission_event_ledger_path: Path | None
+    submission_refresh_result: SubmissionRefreshResult | None
+    immediate_refresh_error: str | None = None
 
-
-def _read_submission_ledger(ledger_path: Path) -> pd.DataFrame:
-    ledger_df = pd.read_csv(ledger_path)
-    ledger_columns = ledger_df.columns.tolist()
-    if ledger_columns != SUBMISSION_LEDGER_COLUMNS:
-        raise ValueError(
-            "Submission ledger does not match the supported schema. "
-            f"Expected columns {SUBMISSION_LEDGER_COLUMNS}, got {ledger_columns}"
-        )
-    return ledger_df
-
-
-def _append_submission_ledger(ledger_path: Path, row: dict[str, object]) -> None:
-    ledger_df = pd.DataFrame([row]).reindex(columns=SUBMISSION_LEDGER_COLUMNS)
-    if ledger_path.exists():
-        existing_df = _read_submission_ledger(ledger_path)
-        merged_df = pd.concat([existing_df, ledger_df], ignore_index=True, sort=False)
-        merged_df = merged_df.reindex(columns=SUBMISSION_LEDGER_COLUMNS)
-        merged_df.to_csv(ledger_path, index=False)
-        return
-    ledger_df.to_csv(ledger_path, index=False)
 
 def _require_manifest_value(manifest: dict[str, object], field_name: str) -> object:
     field_value = manifest.get(field_name)
@@ -113,13 +97,25 @@ def _load_submission_context(
 
     return SubmissionContext(
         candidate_id=str(_require_manifest_value(candidate_manifest, "candidate_id")),
+        candidate_type=str(_require_manifest_value(candidate_manifest, "candidate_type")),
         competition_slug=str(_require_manifest_value(candidate_manifest, "competition_slug")),
         task_type=str(_require_manifest_value(candidate_manifest, "task_type")),
         primary_metric=str(_require_manifest_value(candidate_manifest, "primary_metric")),
+        feature_recipe_id=(
+            str(candidate_manifest["feature_recipe_id"])
+            if candidate_manifest.get("feature_recipe_id") is not None
+            else None
+        ),
+        preprocessing_scheme_id=(
+            str(candidate_manifest["preprocessing_scheme_id"])
+            if candidate_manifest.get("preprocessing_scheme_id") is not None
+            else None
+        ),
         model_registry_key=str(_require_manifest_value(candidate_manifest, "model_registry_key")),
         estimator_name=str(_require_manifest_value(candidate_manifest, "estimator_name")),
-        metric_name=str(cv_summary["metric_name"]),
-        metric_mean=float(cv_summary["metric_mean"]),
+        cv_metric_name=str(cv_summary["metric_name"]),
+        cv_metric_mean=float(cv_summary["metric_mean"]),
+        cv_metric_std=float(cv_summary["metric_std"]),
         id_column=str(_require_manifest_value(candidate_manifest, "id_column")),
         label_column=str(_require_manifest_value(candidate_manifest, "label_column")),
         observed_label_pair=_parse_observed_label_pair(candidate_manifest),
@@ -272,32 +268,31 @@ def prepare_submission_file(
 
 def _build_submission_message_from_context(
     submission_context: SubmissionContext,
+    submission_event_id: str,
     submit_message_prefix: str | None = None,
 ) -> str:
     message_parts = []
     if submit_message_prefix:
         message_parts.append(submit_message_prefix.strip())
     message_parts.append(f"candidate={submission_context.candidate_id}")
-    message_parts.append(f"{submission_context.metric_name}={submission_context.metric_mean:.6f}")
+    message_parts.append(f"submit={submission_event_id}")
+    message_parts.append(f"{submission_context.cv_metric_name}={submission_context.cv_metric_mean:.6f}")
     return " | ".join(message_parts)
 
 
-def build_submission_message(
-    competition_slug: str,
-    candidate_id: str,
-    submit_message_prefix: str | None = None,
-) -> str:
-    submission_context = _load_submission_context(
-        competition_slug=competition_slug,
-        candidate_id=candidate_id,
-    )
-    return _build_submission_message_from_context(submission_context, submit_message_prefix=submit_message_prefix)
+def _collect_submit_response_message(completed: subprocess.CompletedProcess[str]) -> str:
+    response_parts = []
+    if completed.stdout.strip():
+        response_parts.append(completed.stdout.strip())
+    if completed.stderr.strip():
+        response_parts.append(completed.stderr.strip())
+    return "\n".join(response_parts)
 
 
 def run_submission(
     config: AppConfig,
     candidate_id: str | None = None,
-) -> tuple[Path, str]:
+) -> SubmissionRunResult:
     competition = config.competition
     candidate = config.experiment.candidate
     submit_config = config.experiment.submit
@@ -307,12 +302,14 @@ def run_submission(
         candidate_id=resolved_candidate_id,
     )
     submission_path = _prepare_submission_file_from_context(submission_context)
-    message = _build_submission_message_from_context(
-        submission_context,
-        submit_message_prefix=submit_config.message_prefix,
-    )
 
     if submit_config.enabled:
+        submission_event_id = make_submission_event_id()
+        submission_message = _build_submission_message_from_context(
+            submission_context,
+            submission_event_id=submission_event_id,
+            submit_message_prefix=submit_config.message_prefix,
+        )
         completed = subprocess.run(
             [
                 "kaggle",
@@ -323,7 +320,7 @@ def run_submission(
                 "-f",
                 str(submission_path),
                 "-m",
-                message,
+                submission_message,
             ],
             check=True,
             capture_output=True,
@@ -333,23 +330,66 @@ def run_submission(
             print(completed.stdout.strip())
         if completed.stderr.strip():
             print(completed.stderr.strip())
-        status = "submitted"
-    else:
-        print("Submission dry-run mode: validation complete, Kaggle submit skipped.")
-        status = "prepared"
+        submit_response_message = _collect_submit_response_message(completed)
+        submission_event = SubmissionEvent(
+            submission_event_id=submission_event_id,
+            submitted_at_utc=utc_now_iso(),
+            competition_slug=submission_context.competition_slug,
+            candidate_id=submission_context.candidate_id,
+            candidate_type=submission_context.candidate_type,
+            config_fingerprint=submission_context.config_fingerprint,
+            feature_recipe_id=submission_context.feature_recipe_id,
+            preprocessing_scheme_id=submission_context.preprocessing_scheme_id,
+            model_registry_key=submission_context.model_registry_key,
+            estimator_name=submission_context.estimator_name,
+            cv_metric_name=submission_context.cv_metric_name,
+            cv_metric_mean=submission_context.cv_metric_mean,
+            cv_metric_std=submission_context.cv_metric_std,
+            submission_path=str(submission_path),
+            submit_message=submission_message,
+            submit_response_message=submit_response_message,
+        )
+        submission_event_ledger_path = append_submission_event(submission_event)
+        immediate_refresh_error = None
+        try:
+            # The Kaggle submit already succeeded; avoid turning a refresh problem into a
+            # misleading stage failure that encourages a duplicate external submission.
+            submission_refresh_result = refresh_submission_scores(
+                competition_slug=submission_context.competition_slug,
+                target_submission_event_ids={submission_event_id},
+                observation_source="submit_immediate_refresh",
+            )
+        except Exception as exc:
+            immediate_refresh_error = str(exc)
+            submission_refresh_result = None
+            print(
+                "Immediate submission score refresh failed after a successful Kaggle submission. "
+                "Run `uv run python main.py refresh-submissions` later. "
+                f"Original error: {exc}"
+            )
+        return SubmissionRunResult(
+            submission_path=submission_path,
+            submission_status="submitted",
+            submission_message=submission_message,
+            submission_event=submission_event,
+            submission_event_ledger_path=submission_event_ledger_path,
+            submission_refresh_result=submission_refresh_result,
+            immediate_refresh_error=immediate_refresh_error,
+        )
 
-    ledger_row = {
-        "timestamp_utc": datetime.now(timezone.utc).isoformat(),
-        "competition_slug": submission_context.competition_slug,
-        "candidate_id": submission_context.candidate_id,
-        "model_registry_key": submission_context.model_registry_key,
-        "estimator_name": submission_context.estimator_name,
-        "config_fingerprint": submission_context.config_fingerprint,
-        "submission_path": str(submission_path),
-        "submit_enabled": submit_config.enabled,
-        "status": status,
-        "message": message,
-    }
-    ledger_path = _submission_ledger_path(submission_context.competition_slug)
-    _append_submission_ledger(ledger_path=ledger_path, row=ledger_row)
-    return submission_path, status
+    print("Submission dry-run mode: validation complete, Kaggle submit skipped.")
+    return SubmissionRunResult(
+        submission_path=submission_path,
+        submission_status="prepared",
+        submission_message="",
+        submission_event=None,
+        submission_event_ledger_path=None,
+        submission_refresh_result=None,
+    )
+
+
+def run_submission_refresh(config: AppConfig) -> SubmissionRefreshResult:
+    return refresh_submission_scores(
+        competition_slug=config.competition.slug,
+        observation_source="manual_refresh",
+    )

@@ -1,11 +1,13 @@
 import json
 from collections.abc import Iterator, Mapping
 from contextlib import contextmanager
+from dataclasses import asdict
 from datetime import datetime, timezone
 from pathlib import Path
 
-from tabular_shenanigans.candidate_artifacts import load_candidate_manifest
+from tabular_shenanigans.candidate_artifacts import json_ready, load_candidate_manifest
 from tabular_shenanigans.config import AppConfig
+from tabular_shenanigans.submission_history import SubmissionRefreshResult
 
 
 def is_tracking_enabled(config: AppConfig) -> bool:
@@ -157,15 +159,9 @@ def log_train_outputs(candidate_dir: Path) -> None:
     mlflow.log_artifacts(str(candidate_dir), "candidate")
 
 
-def log_submit_outputs(
-    competition_slug: str,
-    candidate_id: str,
-    submission_path: Path,
-    submission_status: str,
-    message: str,
-    submit_enabled: bool,
-) -> None:
+def log_submit_outputs(submission_result) -> None:
     mlflow = _load_mlflow()
+    submission_path = submission_result.submission_path
     candidate_dir = submission_path.parent
     manifest = load_candidate_manifest(candidate_dir_path=candidate_dir)
     cv_summary = manifest.get("cv_summary")
@@ -173,31 +169,75 @@ def log_submit_outputs(
         raise ValueError(f"Candidate manifest cv_summary must be a mapping: {candidate_dir / 'candidate.json'}")
 
     submit_tags = {
-        "competition_slug": competition_slug,
-        "candidate_id": candidate_id,
+        "competition_slug": manifest.get("competition_slug"),
+        "candidate_id": manifest.get("candidate_id"),
         "candidate_type": manifest.get("candidate_type"),
         "config_fingerprint": manifest.get("config_fingerprint"),
         "model_registry_key": manifest.get("model_registry_key"),
         "estimator_name": manifest.get("estimator_name"),
-        "submission_status": submission_status,
+        "submission_status": submission_result.submission_status,
         "cv_metric_name": cv_summary.get("metric_name"),
     }
+    if submission_result.submission_event is not None:
+        submit_tags["submission_event_id"] = submission_result.submission_event.submission_event_id
     mlflow.set_tags(_coerce_tags(submit_tags))
     if cv_summary.get("metric_mean") is not None:
         mlflow.log_metric("candidate_cv_metric_mean", float(cv_summary["metric_mean"]))
     if cv_summary.get("metric_std") is not None:
         mlflow.log_metric("candidate_cv_metric_std", float(cv_summary["metric_std"]))
+    if submission_result.submission_refresh_result is not None:
+        mlflow.log_metric(
+            "submit_refresh_appended_observation_count",
+            float(submission_result.submission_refresh_result.appended_observation_count),
+        )
+        mlflow.log_metric(
+            "submit_refresh_matched_submission_event_count",
+            float(submission_result.submission_refresh_result.matched_submission_event_count),
+        )
 
-    submission_event = {
-        "competition_slug": competition_slug,
-        "candidate_id": candidate_id,
-        "model_registry_key": manifest.get("model_registry_key"),
-        "estimator_name": manifest.get("estimator_name"),
-        "config_fingerprint": manifest.get("config_fingerprint"),
+    submit_summary = {
+        "competition_slug": manifest.get("competition_slug"),
+        "candidate_id": manifest.get("candidate_id"),
         "submission_filename": submission_path.name,
-        "submit_enabled": submit_enabled,
-        "status": submission_status,
-        "message": message,
+        "submission_status": submission_result.submission_status,
+        "submission_message": submission_result.submission_message,
+        "immediate_refresh_error": submission_result.immediate_refresh_error,
     }
     mlflow.log_artifact(str(submission_path), "submission")
-    mlflow.log_dict(submission_event, "submission/submission_event.json")
+    if (
+        submission_result.submission_event_ledger_path is not None
+        and submission_result.submission_event_ledger_path.exists()
+    ):
+        mlflow.log_artifact(str(submission_result.submission_event_ledger_path), "submission")
+    if (
+        submission_result.submission_refresh_result is not None
+        and submission_result.submission_refresh_result.submission_score_ledger_path.exists()
+    ):
+        mlflow.log_artifact(str(submission_result.submission_refresh_result.submission_score_ledger_path), "submission")
+    if submission_result.submission_event is not None:
+        mlflow.log_dict(json_ready(asdict(submission_result.submission_event)), "submission/submission_event.json")
+    if submission_result.submission_refresh_result is not None:
+        mlflow.log_dict(json_ready(asdict(submission_result.submission_refresh_result)), "submission/submission_refresh.json")
+    mlflow.log_dict(submit_summary, "submission/submission_summary.json")
+
+
+def log_submission_refresh_outputs(refresh_result: SubmissionRefreshResult) -> None:
+    mlflow = _load_mlflow()
+    mlflow.set_tags(
+        _coerce_tags(
+            {
+                "competition_slug": refresh_result.competition_slug,
+                "submission_refresh_observation_source": refresh_result.observation_source,
+            }
+        )
+    )
+    mlflow.log_metric("tracked_submission_event_count", float(refresh_result.tracked_submission_event_count))
+    mlflow.log_metric("matched_submission_event_count", float(refresh_result.matched_submission_event_count))
+    mlflow.log_metric("appended_submission_score_count", float(refresh_result.appended_observation_count))
+    mlflow.log_metric("scanned_remote_submission_count", float(refresh_result.scanned_remote_submission_count))
+    if refresh_result.submission_score_ledger_path.exists():
+        mlflow.log_artifact(str(refresh_result.submission_score_ledger_path), "submission_refresh")
+    mlflow.log_dict(
+        json_ready(asdict(refresh_result)),
+        "submission_refresh/submission_refresh.json",
+    )

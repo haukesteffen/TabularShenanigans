@@ -27,14 +27,15 @@ The repository is developed and manually verified primarily against these Playgr
 - Exclude the resolved `id_column` from modeled features by default; identifier columns are treated as metadata, not training signal.
 - Generate terminal and CSV EDA summaries under `reports/<competition_slug>/`, including missingness, categorical cardinality, target summary, and feature-type counts.
 - Freeze CV assignments once per prepared competition context and reuse them across `train`.
-- Run stage-specific CLI entrypoints for `fetch`, `prepare`, `eda`, `train`, and submit-only flows.
+- Run stage-specific CLI entrypoints for `fetch`, `prepare`, `eda`, `train`, `submit`, and `refresh-submissions`.
 - Materialize one explicit experiment candidate at a time:
   - train one cross-validated model candidate using an optional config-selected feature recipe plus split numeric and categorical preprocessing choices on top of one config-selected model family
   - or build one blend candidate from existing compatible candidate artifacts under the same prepared competition context
 - Write one candidate artifact directory under `artifacts/<competition_slug>/candidates/<candidate_id>/`, including `candidate.json`, `fold_metrics.csv`, `oof_predictions.csv`, and `test_predictions.csv`, plus optional candidate-type-specific metadata such as `blend_summary.csv`, binary-accuracy blend probabilities, or optimization files.
 - When `experiment.candidate.optimization.enabled=true` for a model candidate, run Optuna inside `train`, retrain the best trial into the candidate artifact directory, and keep optimization metadata next to that candidate.
 - Validate predictions against `sample_submission.csv`, including exact ID content and order, with task-aware binary prediction checks, and optionally submit to Kaggle from the current candidate artifact selected by `candidate_id`.
-- Optionally publish `prepare`, `train`, and `submit` runs plus generated artifacts to a remote MLflow tracking server while preserving the current local file-based workflow.
+- Record real Kaggle submission events in `artifacts/<competition_slug>/submissions.csv`, record remote submission outcomes in `artifacts/<competition_slug>/submission_scores.csv`, and support later backfill through `refresh-submissions`.
+- Optionally publish `prepare`, `train`, `submit`, and `refresh-submissions` runs plus generated artifacts to a remote MLflow tracking server while preserving the current local file-based workflow.
 
 ## Tooling
 - Python for orchestration
@@ -72,13 +73,15 @@ Available stage-specific commands:
 - `uv run python main.py train`
 - `uv run python main.py submit`
 - `uv run python main.py submit --candidate-id <candidate_id>`
+- `uv run python main.py refresh-submissions`
 
 Stage behavior:
 - `fetch`: ensures competition data is present locally
 - `prepare`: fetches if needed, writes EDA report CSVs, persists `competition.json`, and freezes `folds.csv`
 - `eda`: fetches if needed, then writes EDA report CSVs
 - `train`: fetches if needed, prepares competition context when it is missing, then writes one candidate artifact directory on the frozen folds; model candidates train on raw data plus preprocessing, while blend candidates combine existing compatible candidate artifacts without retraining base models; when optimization is enabled for a model candidate, `train` first runs Optuna and stores optimization metadata inside that candidate directory
-- `submit`: resolves one candidate artifact by `candidate_id` and never retrains implicitly
+- `submit`: resolves one candidate artifact by `candidate_id`, writes `submission.csv`, and when `experiment.submit.enabled=true` submits to Kaggle, appends one submission event row, and attempts an immediate submission-outcome refresh for that event
+- `refresh-submissions`: scans Kaggle submission history for locally tracked submission events and appends any new remote status/score observations
 
 `submit` defaults to `config.experiment.candidate.candidate_id`. Use `--candidate-id` only when you want to submit another existing candidate for the same competition.
 
@@ -124,7 +127,7 @@ Required top-level sections:
 - optional `tracking` block
 
 Current `experiment.tracking` keys:
-- `enabled`: if `true`, publish `prepare`, `train`, and `submit` runs to MLflow (default `false`)
+- `enabled`: if `true`, publish `prepare`, `train`, `submit`, and `refresh-submissions` runs to MLflow (default `false`)
 - `tracking_uri`: remote MLflow tracking URI; required when tracking is enabled
 - `experiment_name`: remote MLflow experiment name; required when tracking is enabled
 
@@ -178,6 +181,8 @@ Current `experiment.submit` keys:
 - `enabled`: if `true`, submit to Kaggle after training (default `false`)
 - `message_prefix`: optional prefix used in auto-generated submission messages
 
+When `experiment.submit.enabled=true`, the runtime submits with a message shaped like `candidate=<candidate_id> | submit=<submission_event_id> | <metric>=<value>`, optionally prefixed by `message_prefix`. Only successful Kaggle submissions create `submission_event_id` values and append `submissions.csv` rows.
+
 Binary prediction artifact contract:
 - `roc_auc` and `log_loss`: `test_predictions.csv` and `submission.csv` contain positive-class probabilities in `[0, 1]`
 - `accuracy`: `test_predictions.csv` and `submission.csv` contain predicted class labels from the observed binary label set
@@ -211,6 +216,10 @@ Manual verification for each target:
 - for binary `accuracy` candidates, confirm `candidate.json` records the probability-average blend rule and sidecar path, and `artifacts/<competition_slug>/candidates/<candidate_id>/test_prediction_probabilities.csv` is also written
 - run `uv run python main.py submit`
 - confirm `artifacts/<competition_slug>/candidates/<candidate_id>/submission.csv` is written and validated against `sample_submission.csv`, including exact ID values and order
+- with `experiment.submit.enabled: false`, confirm neither `artifacts/<competition_slug>/submissions.csv` nor `artifacts/<competition_slug>/submission_scores.csv` is written
+- with `experiment.submit.enabled: true`, confirm `artifacts/<competition_slug>/submissions.csv` appends one row with `submission_event_id`
+- run `uv run python main.py refresh-submissions`
+- confirm `artifacts/<competition_slug>/submission_scores.csv` appends remote status and public-score observations without duplicating unchanged rows
 - confirm binary outputs match the configured metric contract: probabilities for `roc_auc`/`log_loss`, labels for `accuracy`
 
 Manual verification for optimization:
@@ -247,11 +256,13 @@ Manual verification for blend candidates:
   - model candidates record the selected `feature_recipe_id`, `model_registry_key`, `estimator_name`, engineered `feature_columns`, and optional `tuning_provenance`
   - blend candidates also include `blend_summary.csv` and record their component candidates plus normalized weights in `candidate.json`
   - optimized model candidates also include `optimization_summary.json`, `optimization_trials.csv`, and `optimization_best_params.json`
-- Submission ledger: `artifacts/<competition_slug>/submissions.csv` as an append-only submission event table keyed by `candidate_id`
+- Submission event ledger: `artifacts/<competition_slug>/submissions.csv`
+- Submission outcome ledger: `artifacts/<competition_slug>/submission_scores.csv`
 - Optional remote MLflow artifacts:
   - `prepare` uploads `competition.json`, `folds.csv`, and reports
   - `train` uploads the full candidate artifact directory
-  - `submit` uploads `submission.csv` plus submission metadata
+  - `submit` uploads `submission.csv` plus submission metadata and submission ledgers when present
+  - `refresh-submissions` uploads the submission outcome ledger plus refresh metadata
 
 ## Current Assumptions
 - Kaggle CLI is installed, authenticated, and has access to the configured competition.
@@ -270,9 +281,10 @@ Manual verification for blend candidates:
 - Feature recipes are deterministic and leakage-safe; fold-learned transforms still belong in preprocessing, not in the recipe layer.
 - Submission uses `candidate.json` as the schema/task source of truth.
 - Submission defaults to `config.experiment.candidate.candidate_id`; `submit --candidate-id <candidate_id>` overrides that selection explicitly.
-- Submission messages lead with `candidate_id`; internal `model_registry_key` remains provenance only.
+- Submission messages lead with `candidate_id` and include `submit=<submission_event_id>` for real Kaggle submissions; internal `model_registry_key` remains provenance only.
 - Submission validation requires the selected candidate artifact `test_predictions.csv[id_column]` to match `sample_submission.csv[id_column]` exactly in both values and row order.
 - Submission requires the current candidate artifact layout under `artifacts/<competition_slug>/candidates/<candidate_id>/`.
+- Dry-run submission preparation does not mutate `submissions.csv` or `submission_scores.csv`.
 - Binary classification supports any two-class labels accepted by scikit-learn.
 - For binary `roc_auc` and `log_loss`, prediction artifacts use probabilities aligned to the resolved positive class.
 - For binary `accuracy`, prediction artifacts use class labels from the observed binary label set.

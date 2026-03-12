@@ -18,6 +18,8 @@ def json_ready(value: object) -> object:
         return [json_ready(item) for item in value]
     if isinstance(value, tuple):
         return [json_ready(item) for item in value]
+    if isinstance(value, Path):
+        return str(value)
     if isinstance(value, np.generic):
         return value.item()
     return value
