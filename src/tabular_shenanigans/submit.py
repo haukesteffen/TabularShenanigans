@@ -299,18 +299,21 @@ def run_submission(
     config: AppConfig,
     candidate_id: str | None = None,
 ) -> tuple[Path, str]:
-    resolved_candidate_id = candidate_id or config.candidate_id
+    competition = config.competition
+    candidate = config.experiment.candidate
+    submit_config = config.experiment.submit
+    resolved_candidate_id = candidate_id or candidate.candidate_id
     submission_context = _load_submission_context(
-        competition_slug=config.competition_slug,
+        competition_slug=competition.slug,
         candidate_id=resolved_candidate_id,
     )
     submission_path = _prepare_submission_file_from_context(submission_context)
     message = _build_submission_message_from_context(
         submission_context,
-        submit_message_prefix=config.submit_message_prefix,
+        submit_message_prefix=submit_config.message_prefix,
     )
 
-    if config.submit_enabled:
+    if submit_config.enabled:
         completed = subprocess.run(
             [
                 "kaggle",
@@ -344,7 +347,7 @@ def run_submission(
         "model_name": submission_context.model_name,
         "config_fingerprint": submission_context.config_fingerprint,
         "submission_path": str(submission_path),
-        "submit_enabled": config.submit_enabled,
+        "submit_enabled": submit_config.enabled,
         "status": status,
         "message": message,
     }

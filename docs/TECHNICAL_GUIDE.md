@@ -43,7 +43,7 @@ The default `submit` path supports current candidate artifacts only. Unsupported
 ## Module Responsibilities
 - `main.py`: orchestration entrypoint for config loading plus stage-specific CLI dispatch across fetch, prepare, EDA, training, and submission.
 - `src/tabular_shenanigans/competition.py`: competition-level preparation, `competition.json` persistence, `folds.csv` persistence, prepared-context validation, and split reconstruction from frozen folds.
-- `src/tabular_shenanigans/config.py`: Pydantic-backed nested config schema for `competition` plus `experiment`, metric normalization, candidate-to-model resolution, and runtime contract validation.
+- `src/tabular_shenanigans/config.py`: Pydantic-backed nested config schema for `competition` plus `experiment`, metric normalization, candidate-to-model resolution, runtime contract validation, and a small set of derived helpers on `AppConfig`.
 - `src/tabular_shenanigans/candidate_artifacts.py`: shared candidate artifact path resolution, manifest loading, config fingerprint helpers, target-summary generation, and common candidate file writing.
 - `src/tabular_shenanigans/data.py`: competition download, zip access, metric helpers, dataset schema resolution, and sample-submission template loading.
 - `src/tabular_shenanigans/eda.py`: competition-scan EDA summaries written to CSV from the shared dataset context, including missingness, categorical cardinality, target summary, and feature-type counts.
@@ -127,6 +127,7 @@ Binary prediction artifact contract:
 The config is validated by Pydantic with `extra="forbid"`. Unknown keys, schema mismatches, and missing required fields are hard errors.
 Configured metrics are normalized to the internal metric names during config validation.
 The old flat config layout is unsupported and fails fast.
+Runtime modules consume `config.competition` and `config.experiment` directly; `AppConfig` keeps only minimal derived helpers such as candidate-type checks and resolved model ID lookup.
 The current runtime resolves `experiment.candidate.feature_recipe_id` to one tracked feature recipe for model candidates; built-in recipe IDs are `identity` and `s6e3_v1`.
 Model candidates configure preprocessing with split selectors:
 - `numeric_preprocessor`: `median`, `standardize`, or `kbins`

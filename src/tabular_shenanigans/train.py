@@ -36,9 +36,10 @@ def _resolve_training_model_spec(
 ) -> TrainingModelSpec:
     if model_spec is not None:
         return model_spec
+    candidate = config.experiment.candidate
     return TrainingModelSpec(
         model_id=config.resolved_model_id,
-        parameter_overrides=config.model_parameter_overrides,
+        parameter_overrides=candidate.model_params or None,
     )
 
 
@@ -50,6 +51,7 @@ def _build_config_snapshot(
     label_column: str,
     tuning_provenance: dict[str, object] | None = None,
 ) -> dict[str, object]:
+    candidate = config.experiment.candidate
     config_snapshot = build_base_config_snapshot(
         config=config,
         positive_label=positive_label,
@@ -57,9 +59,9 @@ def _build_config_snapshot(
         label_column=label_column,
     )
     config_snapshot["resolved_model_id"] = model_spec.model_id
-    config_snapshot["resolved_numeric_preprocessor"] = config.numeric_preprocessor
-    config_snapshot["resolved_categorical_preprocessor"] = config.categorical_preprocessor
-    config_snapshot["resolved_preprocessing_scheme_id"] = config.preprocessing_scheme_id
+    config_snapshot["resolved_numeric_preprocessor"] = candidate.numeric_preprocessor
+    config_snapshot["resolved_categorical_preprocessor"] = candidate.categorical_preprocessor
+    config_snapshot["resolved_preprocessing_scheme_id"] = candidate.preprocessing_scheme_id
     if model_spec.parameter_overrides:
         config_snapshot["resolved_model_parameter_overrides"] = model_spec.parameter_overrides
     if tuning_provenance is not None:
@@ -88,21 +90,23 @@ def _build_candidate_manifest(
     training_context: PreparedTrainingContext,
     tuning_provenance: dict[str, object] | None,
 ) -> dict[str, object]:
+    competition = config.competition
+    candidate = config.experiment.candidate
     manifest = {
         "artifact_type": "candidate",
-        "candidate_id": config.candidate_id,
-        "candidate_type": config.candidate_type,
+        "candidate_id": candidate.candidate_id,
+        "candidate_type": candidate.candidate_type,
         "generated_at_utc": generated_at_utc,
-        "competition_slug": config.competition_slug,
-        "task_type": config.task_type,
-        "primary_metric": config.primary_metric,
+        "competition_slug": competition.slug,
+        "task_type": competition.task_type,
+        "primary_metric": competition.primary_metric,
         "config_fingerprint": config_fingerprint,
         "config_snapshot": config_snapshot,
-        "model_family": config.model_family,
-        "feature_recipe_id": config.feature_recipe_id,
+        "model_family": candidate.model_family,
+        "feature_recipe_id": candidate.feature_recipe_id,
         "feature_columns": training_context.x_train_features.columns.tolist(),
-        "numeric_preprocessor": config.numeric_preprocessor,
-        "categorical_preprocessor": config.categorical_preprocessor,
+        "numeric_preprocessor": candidate.numeric_preprocessor,
+        "categorical_preprocessor": candidate.categorical_preprocessor,
         "model_id": model_result.model_id,
         "model_name": model_result.model_name,
         "preprocessing_scheme_id": model_result.preprocessing_scheme_id,
@@ -126,8 +130,8 @@ def _build_candidate_manifest(
     }
     manifest.update(
         build_binary_accuracy_artifact_metadata(
-            task_type=config.task_type,
-            primary_metric=config.primary_metric,
+            task_type=competition.task_type,
+            primary_metric=competition.primary_metric,
         )
     )
     return manifest
@@ -161,8 +165,10 @@ def run_training(
     if not config.is_model_candidate:
         raise ValueError("run_training only supports experiment.candidate.candidate_type=model.")
 
+    competition = config.competition
+    candidate = config.experiment.candidate
     resolved_model_spec = _resolve_training_model_spec(config=config, model_spec=model_spec)
-    candidate_dir = resolve_candidate_dir(config.competition_slug, config.candidate_id)
+    candidate_dir = resolve_candidate_dir(competition.slug, candidate.candidate_id)
     if candidate_dir.exists():
         raise ValueError(
             "Candidate artifacts already exist for this candidate_id. "
@@ -177,20 +183,20 @@ def run_training(
         )
 
     evaluation_artifacts = evaluate_model_spec(
-        task_type=config.task_type,
-        primary_metric=config.primary_metric,
+        task_type=competition.task_type,
+        primary_metric=competition.primary_metric,
         model_spec=resolved_model_spec,
         training_context=training_context,
-        cv_random_state=config.cv_random_state,
+        cv_random_state=competition.cv.random_state,
     )
     model_result = evaluation_artifacts.model_result
     print(
-        f"Training candidate: {config.candidate_id} | "
-        f"feature_recipe={config.feature_recipe_id} | "
+        f"Training candidate: {candidate.candidate_id} | "
+        f"feature_recipe={candidate.feature_recipe_id} | "
         f"model={model_result.model_id} ({model_result.model_name}) | "
         f"preprocessing={model_result.preprocessing_scheme_id} | "
         f"features={training_context.x_train_features.shape[1]} | "
-        f"CV {config.primary_metric}: mean={model_result.cv_summary.metric_mean:.6f}, "
+        f"CV {competition.primary_metric}: mean={model_result.cv_summary.metric_mean:.6f}, "
         f"std={model_result.cv_summary.metric_std:.6f}"
     )
 
@@ -239,7 +245,9 @@ def run_training_workflow(
     config: AppConfig,
     dataset_context: CompetitionDatasetContext,
 ) -> Path:
-    candidate_dir = resolve_candidate_dir(config.competition_slug, config.candidate_id)
+    competition = config.competition
+    candidate = config.experiment.candidate
+    candidate_dir = resolve_candidate_dir(competition.slug, candidate.candidate_id)
     if candidate_dir.exists():
         raise ValueError(
             "Candidate artifacts already exist for this candidate_id. "
@@ -282,7 +290,7 @@ def run_training_workflow(
     )
     print(
         f"Optimization complete: best_trial={optimization_result.best_trial_number}, "
-        f"best_{config.primary_metric}={optimization_result.best_value:.6f}, "
+        f"best_{competition.primary_metric}={optimization_result.best_value:.6f}, "
         f"candidate={candidate_dir.name}"
     )
     return candidate_dir
