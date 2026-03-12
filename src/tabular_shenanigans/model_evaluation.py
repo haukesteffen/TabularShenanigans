@@ -12,7 +12,6 @@ from tabular_shenanigans.feature_recipes import apply_feature_recipe
 from tabular_shenanigans.models import build_model, build_model_fit_kwargs
 from tabular_shenanigans.preprocess import (
     ResolvedFeatureSchema,
-    build_preprocessing_scheme_id,
     build_preprocessor_from_schema,
     prepare_feature_frames,
     resolve_feature_schema,
@@ -98,6 +97,9 @@ def build_prepared_training_context(
     if not config.is_model_candidate:
         raise ValueError("Prepared training context is only supported for model candidates.")
 
+    competition = config.competition
+    features = competition.features
+    candidate = config.experiment.candidate
     train_df = dataset_context.train_df
     test_df = dataset_context.test_df
     id_column = dataset_context.id_column
@@ -108,15 +110,15 @@ def build_prepared_training_context(
         test_df=test_df,
         id_column=id_column,
         label_column=label_column,
-        force_categorical=config.force_categorical,
-        force_numeric=config.force_numeric,
-        drop_columns=config.drop_columns,
+        force_categorical=features.force_categorical,
+        force_numeric=features.force_numeric,
+        drop_columns=features.drop_columns,
     )
 
-    positive_label = config.positive_label
+    positive_label = competition.positive_label
     observed_label_pair = None
     negative_label = None
-    if config.task_type == "binary":
+    if competition.task_type == "binary":
         negative_label, positive_label, observed_label_pair = resolve_positive_label(
             y_values=y_train,
             configured_positive_label=positive_label,
@@ -128,12 +130,12 @@ def build_prepared_training_context(
         expected_feature_columns=x_train_raw.columns.tolist(),
     )
     x_train_features, x_test_features = apply_feature_recipe(
-        recipe_id=config.feature_recipe_id,
+        recipe_id=candidate.feature_recipe_id,
         x_train_raw=x_train_raw,
         x_test_raw=x_test_raw,
     )
     target_summary = build_target_summary(
-        task_type=config.task_type,
+        task_type=competition.task_type,
         y_train=y_train,
         positive_label=positive_label,
         negative_label=negative_label,
@@ -141,9 +143,9 @@ def build_prepared_training_context(
     )
     feature_schema = resolve_feature_schema(
         x_train_raw=x_train_features,
-        force_categorical=config.force_categorical,
-        force_numeric=config.force_numeric,
-        low_cardinality_int_threshold=config.low_cardinality_int_threshold,
+        force_categorical=features.force_categorical,
+        force_numeric=features.force_numeric,
+        low_cardinality_int_threshold=features.low_cardinality_int_threshold,
     )
     return PreparedTrainingContext(
         id_column=id_column,
@@ -158,12 +160,9 @@ def build_prepared_training_context(
         observed_label_pair=observed_label_pair,
         target_summary=target_summary,
         feature_schema=feature_schema,
-        numeric_preprocessor=config.numeric_preprocessor,
-        categorical_preprocessor=config.categorical_preprocessor,
-        preprocessing_scheme_id=build_preprocessing_scheme_id(
-            numeric_preprocessor_id=config.numeric_preprocessor,
-            categorical_preprocessor_id=config.categorical_preprocessor,
-        ),
+        numeric_preprocessor=candidate.numeric_preprocessor,
+        categorical_preprocessor=candidate.categorical_preprocessor,
+        preprocessing_scheme_id=candidate.preprocessing_scheme_id,
     )
 
 

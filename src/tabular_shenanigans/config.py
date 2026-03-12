@@ -129,6 +129,18 @@ class ModelCandidateConfig(BaseCandidateConfig):
             )
         return self
 
+    @property
+    def preprocessing_scheme_id(self) -> str:
+        if self.numeric_preprocessor is None or self.categorical_preprocessor is None:
+            raise ValueError(
+                "preprocessing_scheme_id requires experiment.candidate.numeric_preprocessor and "
+                "experiment.candidate.categorical_preprocessor."
+            )
+        return build_preprocessing_scheme_id(
+            numeric_preprocessor_id=self.numeric_preprocessor,
+            categorical_preprocessor_id=self.categorical_preprocessor,
+        )
+
 
 class BlendCandidateConfig(BaseCandidateConfig):
     model_config = ConfigDict(extra="forbid")
@@ -226,34 +238,33 @@ class AppConfig(BaseModel):
 
     @model_validator(mode="after")
     def validate_config(self) -> "AppConfig":
-        normalized_primary_metric = normalize_primary_metric(self.competition.primary_metric)
+        competition = self.competition
+        normalized_primary_metric = normalize_primary_metric(competition.primary_metric)
         if normalized_primary_metric is None:
             raise ValueError(
                 "Configured competition.primary_metric is not supported. "
                 f"Supported values: {sorted(set(SUPPORTED_PRIMARY_METRICS.values()))}"
             )
-        if not is_metric_valid_for_task(self.competition.task_type, normalized_primary_metric):
+        if not is_metric_valid_for_task(competition.task_type, normalized_primary_metric):
             raise ValueError(
                 "Configured competition.primary_metric "
-                f"'{normalized_primary_metric}' is not valid for task_type '{self.competition.task_type}'."
+                f"'{normalized_primary_metric}' is not valid for task_type '{competition.task_type}'."
             )
-        self.competition.primary_metric = normalized_primary_metric
+        competition.primary_metric = normalized_primary_metric
 
-        if self.competition.task_type != "binary" and self.competition.positive_label is not None:
+        if competition.task_type != "binary" and competition.positive_label is not None:
             raise ValueError("competition.positive_label is only supported for binary task_type.")
 
         if self.is_model_candidate:
-            self.experiment.candidate.feature_recipe_id = resolve_feature_recipe_id(
-                self.experiment.candidate.feature_recipe_id
-            )
-
+            candidate = self.experiment.candidate
+            candidate.feature_recipe_id = resolve_feature_recipe_id(candidate.feature_recipe_id)
             resolved_model_id = self.resolved_model_id
             validate_model_preprocessing_compatibility(
-                task_type=self.task_type,
+                task_type=competition.task_type,
                 model_id=resolved_model_id,
-                categorical_preprocessor_id=self.categorical_preprocessor,
+                categorical_preprocessor_id=candidate.categorical_preprocessor,
             )
-            optimization = self.experiment.candidate.optimization
+            optimization = candidate.optimization
             if optimization.enabled:
                 if optimization.n_trials is None and optimization.timeout_seconds is None:
                     raise ValueError(
@@ -261,74 +272,15 @@ class AppConfig(BaseModel):
                         "Set experiment.candidate.optimization.n_trials or "
                         "experiment.candidate.optimization.timeout_seconds."
                     )
-                if not is_model_tunable(self.task_type, resolved_model_id):
-                    supported_tunable_model_families = get_tunable_model_ids(self.task_type)
+                if not is_model_tunable(competition.task_type, resolved_model_id):
+                    supported_tunable_model_families = get_tunable_model_ids(competition.task_type)
                     raise ValueError(
-                        f"Configured model_family '{self.model_family}' does not support optimization for task_type "
-                        f"'{self.task_type}'. Supported tunable model families: {supported_tunable_model_families}"
+                        f"Configured model_family '{candidate.model_family}' does not support optimization for "
+                        f"task_type '{competition.task_type}'. Supported tunable model families: "
+                        f"{supported_tunable_model_families}"
                     )
 
         return self
-
-    @property
-    def competition_slug(self) -> str:
-        return self.competition.slug
-
-    @property
-    def task_type(self) -> Literal["regression", "binary"]:
-        return self.competition.task_type
-
-    @property
-    def primary_metric(self) -> str:
-        return self.competition.primary_metric
-
-    @property
-    def positive_label(self) -> str | int | bool | None:
-        return self.competition.positive_label
-
-    @property
-    def id_column(self) -> str | None:
-        return self.competition.id_column
-
-    @property
-    def label_column(self) -> str | None:
-        return self.competition.label_column
-
-    @property
-    def force_categorical(self) -> list[str]:
-        return self.competition.features.force_categorical
-
-    @property
-    def force_numeric(self) -> list[str]:
-        return self.competition.features.force_numeric
-
-    @property
-    def drop_columns(self) -> list[str]:
-        return self.competition.features.drop_columns
-
-    @property
-    def low_cardinality_int_threshold(self) -> int | None:
-        return self.competition.features.low_cardinality_int_threshold
-
-    @property
-    def cv_n_splits(self) -> int:
-        return self.competition.cv.n_splits
-
-    @property
-    def cv_shuffle(self) -> bool:
-        return self.competition.cv.shuffle
-
-    @property
-    def cv_random_state(self) -> int:
-        return self.competition.cv.random_state
-
-    @property
-    def candidate_id(self) -> str:
-        return self.experiment.candidate.candidate_id
-
-    @property
-    def candidate_type(self) -> str:
-        return self.experiment.candidate.candidate_type
 
     @property
     def is_model_candidate(self) -> bool:
@@ -339,94 +291,14 @@ class AppConfig(BaseModel):
         return isinstance(self.experiment.candidate, BlendCandidateConfig)
 
     @property
-    def model_family(self) -> str:
-        if not self.is_model_candidate:
-            raise ValueError("model_family is only available for model candidates.")
-        return self.experiment.candidate.model_family
-
-    @property
-    def feature_recipe_id(self) -> str:
-        if not self.is_model_candidate:
-            raise ValueError("feature_recipe_id is only available for model candidates.")
-        return self.experiment.candidate.feature_recipe_id
-
-    @property
-    def numeric_preprocessor(self) -> str:
-        if not self.is_model_candidate or self.experiment.candidate.numeric_preprocessor is None:
-            raise ValueError("numeric_preprocessor is only available for model candidates.")
-        return self.experiment.candidate.numeric_preprocessor
-
-    @property
-    def categorical_preprocessor(self) -> str:
-        if not self.is_model_candidate or self.experiment.candidate.categorical_preprocessor is None:
-            raise ValueError("categorical_preprocessor is only available for model candidates.")
-        return self.experiment.candidate.categorical_preprocessor
-
-    @property
-    def preprocessing_scheme_id(self) -> str:
-        if not self.is_model_candidate:
-            raise ValueError("preprocessing_scheme_id is only available for model candidates.")
-        return build_preprocessing_scheme_id(
-            numeric_preprocessor_id=self.numeric_preprocessor,
-            categorical_preprocessor_id=self.categorical_preprocessor,
-        )
-
-    @property
     def resolved_model_id(self) -> str:
         if not self.is_model_candidate:
             raise ValueError("resolved_model_id is only available for model candidates.")
+        candidate = self.experiment.candidate
         return resolve_candidate_model_id(
-            task_type=self.task_type,
-            model_family=self.model_family,
+            task_type=self.competition.task_type,
+            model_family=candidate.model_family,
         )
-
-    @property
-    def model_parameter_overrides(self) -> dict[str, object] | None:
-        if not self.is_model_candidate:
-            raise ValueError("model_parameter_overrides is only available for model candidates.")
-        if not self.experiment.candidate.model_params:
-            return None
-        return dict(self.experiment.candidate.model_params)
-
-    @property
-    def base_candidate_ids(self) -> list[str]:
-        if not self.is_blend_candidate:
-            raise ValueError("base_candidate_ids is only available for blend candidates.")
-        return list(self.experiment.candidate.base_candidate_ids)
-
-    @property
-    def blend_weights(self) -> list[float] | None:
-        if not self.is_blend_candidate:
-            raise ValueError("blend_weights is only available for blend candidates.")
-        if self.experiment.candidate.weights is None:
-            return None
-        return list(self.experiment.candidate.weights)
-
-    @property
-    def submit_enabled(self) -> bool:
-        return self.experiment.submit.enabled
-
-    @property
-    def submit_message_prefix(self) -> str | None:
-        return self.experiment.submit.message_prefix
-
-    @property
-    def tracking_enabled(self) -> bool:
-        return self.experiment.tracking.enabled
-
-    @property
-    def tracking_uri(self) -> str:
-        if not self.tracking_enabled or self.experiment.tracking.tracking_uri is None:
-            raise ValueError("tracking_uri is only available when experiment.tracking.enabled=true.")
-        return self.experiment.tracking.tracking_uri
-
-    @property
-    def tracking_experiment_name(self) -> str:
-        if not self.tracking_enabled or self.experiment.tracking.experiment_name is None:
-            raise ValueError(
-                "tracking_experiment_name is only available when experiment.tracking.enabled=true."
-            )
-        return self.experiment.tracking.experiment_name
 
 
 def load_config(path: str = "config.yaml") -> AppConfig:

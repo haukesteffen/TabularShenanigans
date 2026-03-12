@@ -485,6 +485,7 @@ def _build_config_snapshot(
     label_column: str,
     normalized_weights: list[float],
 ) -> dict[str, object]:
+    candidate = config.experiment.candidate
     config_snapshot = build_base_config_snapshot(
         config=config,
         positive_label=positive_label,
@@ -496,7 +497,7 @@ def _build_config_snapshot(
             "candidate_id": candidate_id,
             "weight": weight,
         }
-        for candidate_id, weight in zip(config.base_candidate_ids, normalized_weights, strict=True)
+        for candidate_id, weight in zip(candidate.base_candidate_ids, normalized_weights, strict=True)
     ]
     return config_snapshot
 
@@ -540,24 +541,26 @@ def _build_candidate_manifest(
     components: list[BlendComponent],
     normalized_weights: list[float],
 ) -> dict[str, object]:
+    competition = config.competition
+    candidate = config.experiment.candidate
     manifest = {
         "artifact_type": "candidate",
-        "candidate_id": config.candidate_id,
-        "candidate_type": config.candidate_type,
+        "candidate_id": candidate.candidate_id,
+        "candidate_type": candidate.candidate_type,
         "generated_at_utc": generated_at_utc,
-        "competition_slug": config.competition_slug,
-        "task_type": config.task_type,
-        "primary_metric": config.primary_metric,
+        "competition_slug": competition.slug,
+        "task_type": competition.task_type,
+        "primary_metric": competition.primary_metric,
         "config_fingerprint": config_fingerprint,
         "config_snapshot": config_snapshot,
         "model_id": BLEND_MODEL_ID,
         "model_name": BLEND_MODEL_NAME,
         "preprocessing_scheme_id": BLEND_PREPROCESSING_SCHEME_ID,
         "cv_summary": {
-            "metric_name": config.primary_metric,
+            "metric_name": competition.primary_metric,
             "metric_mean": metric_mean,
             "metric_std": metric_std,
-            "higher_is_better": is_higher_better(config.primary_metric),
+            "higher_is_better": is_higher_better(competition.primary_metric),
         },
         "component_candidates": [
             {
@@ -569,10 +572,10 @@ def _build_candidate_manifest(
                 "feature_recipe_id": component.feature_recipe_id,
                 "weight": weight,
                 "cv_summary": {
-                    "metric_name": config.primary_metric,
+                    "metric_name": competition.primary_metric,
                     "metric_mean": component.cv_metric_mean,
                     "metric_std": component.cv_metric_std,
-                    "higher_is_better": is_higher_better(config.primary_metric),
+                    "higher_is_better": is_higher_better(competition.primary_metric),
                 },
             }
             for component, weight in zip(components, normalized_weights, strict=True)
@@ -590,8 +593,8 @@ def _build_candidate_manifest(
     }
     manifest.update(
         build_binary_accuracy_artifact_metadata(
-            task_type=config.task_type,
-            primary_metric=config.primary_metric,
+            task_type=competition.task_type,
+            primary_metric=competition.primary_metric,
         )
     )
     return manifest
@@ -634,7 +637,10 @@ def run_blend_training(
     if not config.is_blend_candidate:
         raise ValueError("Blend training requires experiment.candidate.candidate_type=blend.")
 
-    candidate_dir = resolve_candidate_dir(config.competition_slug, config.candidate_id)
+    competition = config.competition
+    features = competition.features
+    candidate = config.experiment.candidate
+    candidate_dir = resolve_candidate_dir(competition.slug, candidate.candidate_id)
     if candidate_dir.exists():
         raise ValueError(
             "Candidate artifacts already exist for this candidate_id. "
@@ -652,9 +658,9 @@ def run_blend_training(
         test_df=test_df,
         id_column=id_column,
         label_column=label_column,
-        force_categorical=config.force_categorical,
-        force_numeric=config.force_numeric,
-        drop_columns=config.drop_columns,
+        force_categorical=features.force_categorical,
+        force_numeric=features.force_numeric,
+        drop_columns=features.drop_columns,
     )
     prepared_context = ensure_prepared_competition_context(
         config=config,
@@ -663,25 +669,25 @@ def run_blend_training(
     )
     fold_assignments = prepared_context.fold_assignments
 
-    positive_label = config.positive_label
+    positive_label = competition.positive_label
     negative_label = None
     observed_label_pair = None
-    if config.task_type == "binary":
+    if competition.task_type == "binary":
         negative_label, positive_label, observed_label_pair = resolve_positive_label(
             y_values=y_train,
             configured_positive_label=positive_label,
         )
 
     normalized_weights = _resolve_blend_weights(
-        base_candidate_ids=config.base_candidate_ids,
-        configured_weights=config.blend_weights,
+        base_candidate_ids=candidate.base_candidate_ids,
+        configured_weights=candidate.weights,
     )
     components = [
         _load_blend_component(
-            competition_slug=config.competition_slug,
+            competition_slug=competition.slug,
             candidate_id=base_candidate_id,
-            task_type=config.task_type,
-            primary_metric=config.primary_metric,
+            task_type=competition.task_type,
+            primary_metric=competition.primary_metric,
             id_column=id_column,
             label_column=label_column,
             expected_y_train=y_train,
@@ -691,7 +697,7 @@ def run_blend_training(
             negative_label=negative_label,
             observed_label_pair=observed_label_pair,
         )
-        for base_candidate_id in config.base_candidate_ids
+        for base_candidate_id in candidate.base_candidate_ids
     ]
 
     component_oof_predictions = np.vstack([component.oof_predictions for component in components])
@@ -701,11 +707,11 @@ def run_blend_training(
     blended_test_predictions = np.average(component_test_predictions, axis=0, weights=weight_array)
     test_prediction_probabilities = None
 
-    if config.task_type == "regression":
+    if competition.task_type == "regression":
         final_test_predictions: np.ndarray | list[object] = blended_test_predictions
-        if config.primary_metric == "rmsle":
+        if competition.primary_metric == "rmsle":
             final_test_predictions = np.clip(blended_test_predictions, a_min=0.0, a_max=None)
-    elif get_binary_prediction_kind(config.primary_metric) == "label":
+    elif get_binary_prediction_kind(competition.primary_metric) == "label":
         if positive_label is None or negative_label is None:
             raise ValueError("Binary label blends require resolved class metadata.")
         test_prediction_probabilities = np.asarray(blended_test_predictions, dtype=float)
@@ -718,8 +724,8 @@ def run_blend_training(
         final_test_predictions = blended_test_predictions
 
     fold_metrics_df = _build_fold_metrics(
-        task_type=config.task_type,
-        primary_metric=config.primary_metric,
+        task_type=competition.task_type,
+        primary_metric=competition.primary_metric,
         y_train=y_train,
         oof_predictions=blended_oof_predictions,
         fold_assignments=fold_assignments,
@@ -728,8 +734,8 @@ def run_blend_training(
     metric_mean = float(fold_metrics_df["metric_value"].mean())
     metric_std = float(fold_metrics_df["metric_value"].std(ddof=0))
     blend_summary_df = _build_blend_summary(
-        candidate_id=config.candidate_id,
-        metric_name=config.primary_metric,
+        candidate_id=candidate.candidate_id,
+        metric_name=competition.primary_metric,
         metric_mean=metric_mean,
         metric_std=metric_std,
         components=components,
@@ -737,7 +743,7 @@ def run_blend_training(
     )
 
     target_summary = build_target_summary(
-        task_type=config.task_type,
+        task_type=competition.task_type,
         y_train=y_train,
         positive_label=positive_label,
         negative_label=negative_label,
@@ -792,9 +798,9 @@ def run_blend_training(
         blend_summary_df=blend_summary_df,
     )
     print(
-        f"Blend candidate: {config.candidate_id} | "
-        f"components={config.base_candidate_ids} | "
+        f"Blend candidate: {candidate.candidate_id} | "
+        f"components={candidate.base_candidate_ids} | "
         f"weights={normalized_weights} | "
-        f"CV {config.primary_metric}: mean={metric_mean:.6f}, std={metric_std:.6f}"
+        f"CV {competition.primary_metric}: mean={metric_mean:.6f}, std={metric_std:.6f}"
     )
     return candidate_dir

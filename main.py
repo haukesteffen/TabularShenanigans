@@ -36,48 +36,54 @@ def build_parser() -> argparse.ArgumentParser:
     submit_parser = subparsers.add_parser("submit", help="Prepare or submit from a candidate artifact.")
     submit_parser.add_argument(
         "--candidate-id",
-        help="Optional candidate_id resolved under artifacts/<competition_slug>/candidates/<candidate_id>. Defaults to config.candidate_id.",
+        help=(
+            "Optional candidate_id resolved under artifacts/<competition_slug>/candidates/<candidate_id>. "
+            "Defaults to config.experiment.candidate.candidate_id."
+        ),
     )
 
     return parser
 
 
 def _print_resolved_setup(config: AppConfig) -> None:
+    competition = config.competition
+    candidate = config.experiment.candidate
     if config.is_blend_candidate:
-        blend_weights = config.blend_weights
+        blend_weights = candidate.weights
         weight_summary = "equal-weight"
         if blend_weights is not None:
             weight_summary = ",".join(str(weight) for weight in blend_weights)
         print(
             "Resolved competition setup: "
-            f"task_type={config.task_type}, primary_metric={config.primary_metric}, "
-            f"candidate_id={config.candidate_id}, candidate_type=blend, "
-            f"base_candidates={config.base_candidate_ids}, weights={weight_summary}"
+            f"task_type={competition.task_type}, primary_metric={competition.primary_metric}, "
+            f"candidate_id={candidate.candidate_id}, candidate_type=blend, "
+            f"base_candidates={candidate.base_candidate_ids}, weights={weight_summary}"
         )
         return
 
     print(
         "Resolved competition setup: "
-        f"task_type={config.task_type}, primary_metric={config.primary_metric}, "
-        f"candidate_id={config.candidate_id}, candidate_type=model, "
-        f"feature_recipe={config.feature_recipe_id}, model_family={config.model_family}, "
-        f"numeric_preprocessor={config.numeric_preprocessor}, "
-        f"categorical_preprocessor={config.categorical_preprocessor}, "
+        f"task_type={competition.task_type}, primary_metric={competition.primary_metric}, "
+        f"candidate_id={candidate.candidate_id}, candidate_type=model, "
+        f"feature_recipe={candidate.feature_recipe_id}, model_family={candidate.model_family}, "
+        f"numeric_preprocessor={candidate.numeric_preprocessor}, "
+        f"categorical_preprocessor={candidate.categorical_preprocessor}, "
         f"model_id={config.resolved_model_id}"
     )
 
 
 def _ensure_data_ready(config: AppConfig) -> Path:
-    data_dir = fetch_competition_data(config.competition_slug)
+    data_dir = fetch_competition_data(config.competition.slug)
     print(f"Data ready: {data_dir}")
     return data_dir
 
 
 def _load_shared_dataset_context(config: AppConfig):
+    competition = config.competition
     return load_competition_dataset_context(
-        competition_slug=config.competition_slug,
-        configured_id_column=config.id_column,
-        configured_label_column=config.label_column,
+        competition_slug=competition.slug,
+        configured_id_column=competition.id_column,
+        configured_label_column=competition.label_column,
     )
 
 
@@ -92,19 +98,20 @@ def _prepare_competition_stage(config: AppConfig):
 
 
 def _build_train_tracking_tags(config: AppConfig) -> dict[str, object]:
+    candidate = config.experiment.candidate
     tags: dict[str, object] = {
-        "candidate_id": config.candidate_id,
-        "candidate_type": config.candidate_type,
+        "candidate_id": candidate.candidate_id,
+        "candidate_type": candidate.candidate_type,
     }
     if config.is_model_candidate:
         tags["model_id"] = config.resolved_model_id
-        tags["feature_recipe_id"] = config.feature_recipe_id
-        tags["numeric_preprocessor"] = config.numeric_preprocessor
-        tags["categorical_preprocessor"] = config.categorical_preprocessor
-        tags["preprocessing_scheme_id"] = config.preprocessing_scheme_id
+        tags["feature_recipe_id"] = candidate.feature_recipe_id
+        tags["numeric_preprocessor"] = candidate.numeric_preprocessor
+        tags["categorical_preprocessor"] = candidate.categorical_preprocessor
+        tags["preprocessing_scheme_id"] = candidate.preprocessing_scheme_id
         return tags
 
-    tags["base_candidate_count"] = len(config.base_candidate_ids)
+    tags["base_candidate_count"] = len(candidate.base_candidate_ids)
     return tags
 
 
@@ -175,7 +182,7 @@ def _run_submit_stage(
     config: AppConfig,
     candidate_id: str | None = None,
 ) -> tuple[Path, str]:
-    resolved_candidate_id = candidate_id or config.candidate_id
+    resolved_candidate_id = candidate_id or config.experiment.candidate.candidate_id
     print(f"Using candidate_id: {resolved_candidate_id}")
     submission_path, submission_status = run_submission(
         config=config,
@@ -190,7 +197,7 @@ def _run_submit_stage_with_tracking(
     pipeline_invocation_id: str,
     candidate_id: str | None = None,
 ) -> tuple[Path, str]:
-    resolved_candidate_id = candidate_id or config.candidate_id
+    resolved_candidate_id = candidate_id or config.experiment.candidate.candidate_id
     tracking_context = nullcontext()
     if is_tracking_enabled(config):
         tracking_context = start_stage_run(
@@ -204,9 +211,9 @@ def _run_submit_stage_with_tracking(
         if is_tracking_enabled(config):
             log_runtime_config(config)
             submission_message = build_submission_message(
-                competition_slug=config.competition_slug,
+                competition_slug=config.competition.slug,
                 candidate_id=resolved_candidate_id,
-                submit_message_prefix=config.submit_message_prefix,
+                submit_message_prefix=config.experiment.submit.message_prefix,
             )
         else:
             submission_message = ""
@@ -216,12 +223,12 @@ def _run_submit_stage_with_tracking(
         )
         if is_tracking_enabled(config):
             log_submit_outputs(
-                competition_slug=config.competition_slug,
+                competition_slug=config.competition.slug,
                 candidate_id=resolved_candidate_id,
                 submission_path=submission_path,
                 submission_status=submission_status,
                 message=submission_message,
-                submit_enabled=config.submit_enabled,
+                submit_enabled=config.experiment.submit.enabled,
             )
         return submission_path, submission_status
 

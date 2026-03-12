@@ -126,11 +126,12 @@ def _build_competition_manifest(
     positive_label: object | None,
     observed_label_pair: tuple[object, object] | None,
 ) -> dict[str, object]:
+    competition = config.competition
     return {
         "generated_at_utc": datetime.now(timezone.utc).isoformat(),
-        "competition_slug": config.competition_slug,
-        "task_type": config.task_type,
-        "primary_metric": config.primary_metric,
+        "competition_slug": competition.slug,
+        "task_type": competition.task_type,
+        "primary_metric": competition.primary_metric,
         "id_column": dataset_context.id_column,
         "label_column": dataset_context.label_column,
         "positive_label": positive_label,
@@ -164,6 +165,9 @@ def prepare_competition(
     config: AppConfig,
     dataset_context: CompetitionDatasetContext,
 ) -> PreparedCompetitionContext:
+    competition = config.competition
+    features = competition.features
+    cv = competition.cv
     train_df = dataset_context.train_df
     test_df = dataset_context.test_df
     id_column = dataset_context.id_column
@@ -174,34 +178,34 @@ def prepare_competition(
         test_df=test_df,
         id_column=id_column,
         label_column=label_column,
-        force_categorical=config.force_categorical,
-        force_numeric=config.force_numeric,
-        drop_columns=config.drop_columns,
+        force_categorical=features.force_categorical,
+        force_numeric=features.force_numeric,
+        drop_columns=features.drop_columns,
     )
 
-    positive_label = config.positive_label
+    positive_label = competition.positive_label
     observed_label_pair = None
-    if config.task_type == "binary":
+    if competition.task_type == "binary":
         _, positive_label, observed_label_pair = resolve_positive_label(
             y_values=y_train,
             configured_positive_label=positive_label,
         )
 
     split_indices = materialize_split_indices(
-        task_type=config.task_type,
+        task_type=competition.task_type,
         x_train_raw=x_train_raw,
         y_train=y_train,
-        n_splits=config.cv_n_splits,
-        shuffle=config.cv_shuffle,
-        random_state=config.cv_random_state,
+        n_splits=cv.n_splits,
+        shuffle=cv.shuffle,
+        random_state=cv.random_state,
     )
     fold_assignments = build_fold_assignments(row_count=x_train_raw.shape[0], split_indices=split_indices)
     report_dir = run_eda(config=config, dataset_context=dataset_context)
 
-    competition_dir = _competition_dir(config.competition_slug)
+    competition_dir = _competition_dir(competition.slug)
     competition_dir.mkdir(parents=True, exist_ok=True)
-    manifest_path = _competition_manifest_path(config.competition_slug)
-    folds_path = _competition_folds_path(config.competition_slug)
+    manifest_path = _competition_manifest_path(competition.slug)
+    folds_path = _competition_folds_path(competition.slug)
     manifest = _build_competition_manifest(
         config=config,
         dataset_context=dataset_context,
@@ -259,16 +263,17 @@ def _validate_prepared_context(
     fold_assignments: np.ndarray,
     expected_feature_columns: list[str] | None,
 ) -> None:
-    expected_cv = config.competition.cv.model_dump(mode="python")
-    expected_features = config.competition.features.model_dump(mode="python")
+    competition = config.competition
+    expected_cv = competition.cv.model_dump(mode="python")
+    expected_features = competition.features.model_dump(mode="python")
     train_rows = int(dataset_context.train_df.shape[0])
     test_rows = int(dataset_context.test_df.shape[0])
 
-    if manifest.get("competition_slug") != config.competition_slug:
+    if manifest.get("competition_slug") != competition.slug:
         raise ValueError("Prepared competition context does not match the configured competition slug.")
-    if manifest.get("task_type") != config.task_type:
+    if manifest.get("task_type") != competition.task_type:
         raise ValueError("Prepared competition context does not match the configured task_type. Re-run prepare.")
-    if manifest.get("primary_metric") != config.primary_metric:
+    if manifest.get("primary_metric") != competition.primary_metric:
         raise ValueError("Prepared competition context does not match the configured primary_metric. Re-run prepare.")
     if manifest.get("id_column") != dataset_context.id_column:
         raise ValueError("Prepared competition context does not match the resolved id_column. Re-run prepare.")
@@ -288,7 +293,7 @@ def _validate_prepared_context(
         raise ValueError("Prepared competition context does not match the resolved feature columns. Re-run prepare.")
 
     split_indices = build_split_indices_from_fold_assignments(fold_assignments)
-    if len(split_indices) != config.cv_n_splits:
+    if len(split_indices) != competition.cv.n_splits:
         raise ValueError("Prepared fold assignments do not match competition.cv.n_splits. Re-run prepare.")
 
 
@@ -297,8 +302,9 @@ def load_prepared_competition_context(
     dataset_context: CompetitionDatasetContext,
     expected_feature_columns: list[str] | None = None,
 ) -> PreparedCompetitionContext:
-    manifest_path = _competition_manifest_path(config.competition_slug)
-    folds_path = _competition_folds_path(config.competition_slug)
+    competition_slug = config.competition.slug
+    manifest_path = _competition_manifest_path(competition_slug)
+    folds_path = _competition_folds_path(competition_slug)
     manifest = _load_competition_manifest(manifest_path=manifest_path)
     fold_assignments = _load_fold_assignments(folds_path=folds_path)
     _validate_prepared_context(
@@ -309,8 +315,8 @@ def load_prepared_competition_context(
         expected_feature_columns=expected_feature_columns,
     )
     return PreparedCompetitionContext(
-        competition_dir=_competition_dir(config.competition_slug),
-        report_dir=Path("reports") / config.competition_slug,
+        competition_dir=_competition_dir(competition_slug),
+        report_dir=Path("reports") / competition_slug,
         manifest_path=manifest_path,
         folds_path=folds_path,
         manifest=manifest,
@@ -324,7 +330,8 @@ def ensure_prepared_competition_context(
     dataset_context: CompetitionDatasetContext,
     expected_feature_columns: list[str] | None = None,
 ) -> PreparedCompetitionContext:
-    if has_prepared_competition_context(config.competition_slug):
+    competition_slug = config.competition.slug
+    if has_prepared_competition_context(competition_slug):
         return load_prepared_competition_context(
             config=config,
             dataset_context=dataset_context,

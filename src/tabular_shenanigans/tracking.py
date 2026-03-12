@@ -9,7 +9,7 @@ from tabular_shenanigans.config import AppConfig
 
 
 def is_tracking_enabled(config: AppConfig) -> bool:
-    return config.tracking_enabled
+    return config.experiment.tracking.enabled
 
 
 def make_pipeline_invocation_id() -> str:
@@ -41,10 +41,11 @@ def _build_stage_run_name(
     stage: str,
     extra_tags: Mapping[str, object] | None = None,
 ) -> str:
-    run_name_parts = [stage, config.competition_slug]
+    run_name_parts = [stage, config.competition.slug]
     if extra_tags is not None and extra_tags.get("candidate_id") is not None:
         run_name_parts.append(str(extra_tags["candidate_id"]))
     return " | ".join(run_name_parts)
+
 
 @contextmanager
 def start_stage_run(
@@ -54,18 +55,22 @@ def start_stage_run(
     extra_tags: Mapping[str, object] | None = None,
 ) -> Iterator[None]:
     mlflow = _load_mlflow()
-    mlflow.set_tracking_uri(config.tracking_uri)
-    mlflow.set_experiment(config.tracking_experiment_name)
+    tracking = config.experiment.tracking
+    if tracking.tracking_uri is None or tracking.experiment_name is None:
+        raise ValueError("Tracking run setup requires experiment.tracking.enabled=true with both tracking fields set.")
+    mlflow.set_tracking_uri(tracking.tracking_uri)
+    mlflow.set_experiment(tracking.experiment_name)
     mlflow.start_run(run_name=_build_stage_run_name(config=config, stage=stage, extra_tags=extra_tags))
 
+    competition = config.competition
     base_tags = {
         "app": "tabular_shenanigans",
         "tracking_schema_version": "1",
         "pipeline_invocation_id": pipeline_invocation_id,
         "stage": stage,
-        "competition_slug": config.competition_slug,
-        "task_type": config.task_type,
-        "primary_metric": config.primary_metric,
+        "competition_slug": competition.slug,
+        "task_type": competition.task_type,
+        "primary_metric": competition.primary_metric,
         "local_experiment_name": config.experiment.name,
     }
     mlflow.set_tags(_coerce_tags(base_tags))

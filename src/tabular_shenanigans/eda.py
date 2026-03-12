@@ -83,6 +83,8 @@ def run_eda(
     config: AppConfig,
     dataset_context: CompetitionDatasetContext,
 ) -> Path:
+    competition = config.competition
+    features = competition.features
     train_df = dataset_context.train_df
     test_df = dataset_context.test_df
     id_column = dataset_context.id_column
@@ -93,12 +95,12 @@ def run_eda(
         test_df=test_df,
         id_column=id_column,
         label_column=label_column,
-        force_categorical=config.force_categorical,
-        force_numeric=config.force_numeric,
-        drop_columns=config.drop_columns,
+        force_categorical=features.force_categorical,
+        force_numeric=features.force_numeric,
+        drop_columns=features.drop_columns,
     )
 
-    report_dir = Path("reports") / config.competition_slug
+    report_dir = Path("reports") / competition.slug
     report_dir.mkdir(parents=True, exist_ok=True)
 
     _column_summary(train_df).to_csv(report_dir / "columns_train.csv", index=False)
@@ -111,9 +113,9 @@ def run_eda(
     _target_summary(train_df, label_column).to_csv(report_dir / "target_summary.csv", index=False)
     feature_type_counts = summarize_feature_types(
         x_train_raw=x_train_raw,
-        force_categorical=config.force_categorical,
-        force_numeric=config.force_numeric,
-        low_cardinality_int_threshold=config.low_cardinality_int_threshold,
+        force_categorical=features.force_categorical,
+        force_numeric=features.force_numeric,
+        low_cardinality_int_threshold=features.low_cardinality_int_threshold,
     )
     feature_type_counts.to_csv(report_dir / "feature_type_counts.csv", index=False)
 

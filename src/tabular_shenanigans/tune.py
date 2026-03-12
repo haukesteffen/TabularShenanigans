@@ -83,16 +83,18 @@ def _build_optimization_summary(
     target_summary: dict[str, object],
     best_parameter_overrides: dict[str, object],
 ) -> dict[str, object]:
+    competition = config.competition
+    candidate = config.experiment.candidate
     best_trial = study.best_trial
     return {
         "artifact_type": "candidate_optimization",
         "study_id": study_id,
         "generated_at_utc": datetime.now(timezone.utc).isoformat(),
-        "competition_slug": config.competition_slug,
-        "candidate_id": config.candidate_id,
-        "task_type": config.task_type,
-        "primary_metric": config.primary_metric,
-        "optimization_method": config.experiment.candidate.optimization.method,
+        "competition_slug": competition.slug,
+        "candidate_id": candidate.candidate_id,
+        "task_type": competition.task_type,
+        "primary_metric": competition.primary_metric,
+        "optimization_method": candidate.optimization.method,
         "optimization_direction": study.direction.name.lower(),
         "config_snapshot": optimization_config_snapshot,
         "model_id": tuning_model_spec.model_id,
@@ -118,12 +120,14 @@ def run_optimization(
     if not config.is_model_candidate:
         raise ValueError("Optimization only supports experiment.candidate.candidate_type=model.")
 
-    optimization = config.experiment.candidate.optimization
+    competition = config.competition
+    candidate = config.experiment.candidate
+    optimization = candidate.optimization
     if not optimization.enabled:
         raise ValueError("Optimization requires experiment.candidate.optimization.enabled=true in config.yaml.")
 
-    task_type = config.task_type
-    primary_metric = config.primary_metric
+    task_type = competition.task_type
+    primary_metric = competition.primary_metric
     tuning_model_spec = TrainingModelSpec(model_id=config.resolved_model_id)
     model_definition = get_model_definition(task_type, tuning_model_spec.model_id)
 
@@ -156,7 +160,7 @@ def run_optimization(
                 parameter_overrides=parameter_overrides,
             ),
             training_context=training_context,
-            cv_random_state=config.cv_random_state,
+            cv_random_state=competition.cv.random_state,
         )
         metric_mean = cv_evaluation.model_result.cv_summary.metric_mean
         metric_std = cv_evaluation.model_result.cv_summary.metric_std

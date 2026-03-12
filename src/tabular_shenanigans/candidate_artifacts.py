@@ -83,10 +83,11 @@ def build_base_config_snapshot(
     id_column: str,
     label_column: str,
 ) -> dict[str, object]:
+    competition = config.competition
     return {
         "competition": {
-            **config.competition.model_dump(mode="python"),
-            "primary_metric": config.primary_metric,
+            **competition.model_dump(mode="python"),
+            "primary_metric": competition.primary_metric,
             "positive_label": positive_label,
             "id_column": id_column,
             "label_column": label_column,
