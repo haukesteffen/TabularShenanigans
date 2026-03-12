@@ -304,6 +304,17 @@ def log_candidate_run(
     )
 
 
+def upload_run_log(
+    config: AppConfig,
+    run_id: str,
+    log_path: Path,
+    artifact_dir: str = "logs",
+) -> None:
+    if not log_path.exists():
+        raise ValueError(f"Runtime log artifact does not exist: {log_path}")
+    _client(config).log_artifact(run_id, str(log_path), artifact_dir)
+
+
 def download_candidate_bundle(
     config: AppConfig,
     candidate_id: str,

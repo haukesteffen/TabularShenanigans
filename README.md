@@ -152,6 +152,7 @@ candidate=<candidate_id> | submit=<submission_event_id> | <metric>=<value>
 
 ## Candidate Artifact Contract
 Each candidate MLflow run stores:
+- `logs/runtime.log`
 - `config/runtime_config.json`
 - `context/competition.json`
 - `context/folds.csv`
@@ -206,7 +207,8 @@ Preferred targets:
 
 Suggested checks:
 - run `uv run python main.py train` and confirm one MLflow candidate run appears under the competition experiment
-- inspect the candidate run and confirm `candidate/`, `config/`, and `context/` artifacts exist
+- inspect the candidate run and confirm `logs/`, `candidate/`, `config/`, and `context/` artifacts exist
+- trigger one intentionally failing candidate run and confirm the MLflow run is marked failed but still has `logs/runtime.log`
 - rerun the exact same candidate config and confirm `uv run python main.py train` fails because it derives the same `candidate_id`
 - train one blend candidate and confirm it downloads base candidates from MLflow instead of reading local artifact directories
 - run `uv run python main.py submit` with `experiment.submit.enabled: false` and confirm dry-run validation succeeds without creating local candidate artifacts or submission ledgers

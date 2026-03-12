@@ -1,6 +1,7 @@
 import json
 import tempfile
 import time
+import traceback
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
@@ -23,6 +24,7 @@ from tabular_shenanigans.mlflow_store import (
     create_candidate_run,
     log_candidate_run,
     terminate_run,
+    upload_run_log,
 )
 from tabular_shenanigans.model_evaluation import (
     ModelRunResult,
@@ -30,6 +32,12 @@ from tabular_shenanigans.model_evaluation import (
     TrainingModelSpec,
     build_prepared_training_context,
     evaluate_model_spec,
+)
+from tabular_shenanigans.runtime_logging import (
+    append_runtime_log_message,
+    build_runtime_log_path,
+    capture_runtime_log,
+    emit_runtime_log_header,
 )
 
 
@@ -214,6 +222,8 @@ def _stage_candidate_bundle(
 def run_training(
     config: AppConfig,
     dataset_context: CompetitionDatasetContext,
+    candidate_run: CandidateRunRef,
+    bundle_root: Path,
     model_spec: TrainingModelSpec | None = None,
     tuning_provenance: dict[str, object] | None = None,
     optimization_artifacts: OptimizationArtifacts | None = None,
@@ -266,11 +276,6 @@ def run_training(
         config_snapshot=config_snapshot,
         model_result=model_result,
     )
-    candidate_run = create_candidate_run(
-        config=config,
-        candidate_id=candidate_id,
-        candidate_type=candidate.candidate_type,
-    )
     candidate_manifest = _build_candidate_manifest(
         config=config,
         generated_at_utc=datetime.now(timezone.utc).isoformat(),
@@ -281,33 +286,25 @@ def run_training(
         tuning_provenance=tuning_provenance,
         mlflow_run_id=candidate_run.run_id,
     )
-
-    try:
-        with tempfile.TemporaryDirectory(prefix="tabular-shenanigans-candidate-") as temp_dir:
-            bundle_root = Path(temp_dir)
-            _stage_candidate_bundle(
-                bundle_root=bundle_root,
-                config=config,
-                candidate_manifest=candidate_manifest,
-                training_context=training_context,
-                dataset_context=dataset_context,
-                evaluation_artifacts=evaluation_artifacts,
-                optimization_artifacts=optimization_artifacts,
-            )
-            optimization_summary = optimization_artifacts.summary if optimization_artifacts is not None else None
-            log_candidate_run(
-                config=config,
-                candidate_run=candidate_run,
-                bundle_root=bundle_root,
-                manifest=candidate_manifest,
-                fit_wall_seconds=fit_wall_seconds,
-                optimization_summary=optimization_summary,
-            )
-        terminate_run(config=config, run_id=candidate_run.run_id, status="FINISHED")
-        return candidate_run
-    except Exception:
-        terminate_run(config=config, run_id=candidate_run.run_id, status="FAILED")
-        raise
+    _stage_candidate_bundle(
+        bundle_root=bundle_root,
+        config=config,
+        candidate_manifest=candidate_manifest,
+        training_context=training_context,
+        dataset_context=dataset_context,
+        evaluation_artifacts=evaluation_artifacts,
+        optimization_artifacts=optimization_artifacts,
+    )
+    optimization_summary = optimization_artifacts.summary if optimization_artifacts is not None else None
+    log_candidate_run(
+        config=config,
+        candidate_run=candidate_run,
+        bundle_root=bundle_root,
+        manifest=candidate_manifest,
+        fit_wall_seconds=fit_wall_seconds,
+        optimization_summary=optimization_summary,
+    )
+    return candidate_run
 
 
 def run_training_workflow(
@@ -321,34 +318,82 @@ def run_training_workflow(
         return run_blend_training(config=config, dataset_context=dataset_context)
 
     optimization = config.experiment.candidate.optimization
-    if not optimization.enabled:
-        return run_training(config=config, dataset_context=dataset_context)
+    candidate = config.experiment.candidate
+    candidate_run = create_candidate_run(
+        config=config,
+        candidate_id=config.resolved_candidate_id,
+        candidate_type=candidate.candidate_type,
+    )
+    run_status = "FAILED"
 
-    from tabular_shenanigans.tune import run_optimization
+    with tempfile.TemporaryDirectory(prefix="tabular-shenanigans-candidate-") as temp_dir:
+        bundle_root = Path(temp_dir)
+        log_path = build_runtime_log_path(bundle_root)
+        log_uploaded = False
+        try:
+            with capture_runtime_log(log_path):
+                emit_runtime_log_header(
+                    stage_name="train",
+                    competition_slug=competition.slug,
+                    candidate_id=candidate_run.candidate_id,
+                    mlflow_run_id=candidate_run.run_id,
+                )
+                try:
+                    if not optimization.enabled:
+                        run_training(
+                            config=config,
+                            dataset_context=dataset_context,
+                            candidate_run=candidate_run,
+                            bundle_root=bundle_root,
+                        )
+                    else:
+                        from tabular_shenanigans.tune import run_optimization
 
-    prepared_training_context = build_prepared_training_context(
-        config=config,
-        dataset_context=dataset_context,
-    )
-    optimization_result = run_optimization(
-        config=config,
-        dataset_context=dataset_context,
-        prepared_training_context=prepared_training_context,
-    )
-    candidate_run = run_training(
-        config=config,
-        dataset_context=dataset_context,
-        model_spec=optimization_result.best_model_spec,
-        tuning_provenance=optimization_result.tuning_provenance,
-        optimization_artifacts=OptimizationArtifacts(
-            summary=optimization_result.optimization_summary,
-            trials_df=optimization_result.trials_df,
-        ),
-        prepared_training_context=prepared_training_context,
-    )
-    print(
-        f"Optimization complete: best_trial={optimization_result.best_trial_number}, "
-        f"best_{competition.primary_metric}={optimization_result.best_value:.6f}, "
-        f"candidate={candidate_run.candidate_id}"
-    )
-    return candidate_run
+                        prepared_training_context = build_prepared_training_context(
+                            config=config,
+                            dataset_context=dataset_context,
+                        )
+                        optimization_result = run_optimization(
+                            config=config,
+                            dataset_context=dataset_context,
+                            prepared_training_context=prepared_training_context,
+                        )
+                        run_training(
+                            config=config,
+                            dataset_context=dataset_context,
+                            candidate_run=candidate_run,
+                            bundle_root=bundle_root,
+                            model_spec=optimization_result.best_model_spec,
+                            tuning_provenance=optimization_result.tuning_provenance,
+                            optimization_artifacts=OptimizationArtifacts(
+                                summary=optimization_result.optimization_summary,
+                                trials_df=optimization_result.trials_df,
+                            ),
+                            prepared_training_context=prepared_training_context,
+                        )
+                        print(
+                            f"Optimization complete: best_trial={optimization_result.best_trial_number}, "
+                            f"best_{competition.primary_metric}={optimization_result.best_value:.6f}, "
+                            f"candidate={candidate_run.candidate_id}"
+                        )
+                except Exception:
+                    append_runtime_log_message(log_path, "stderr", traceback.format_exc())
+                    raise
+            upload_run_log(
+                config=config,
+                run_id=candidate_run.run_id,
+                log_path=log_path,
+            )
+            log_uploaded = True
+            run_status = "FINISHED"
+            return candidate_run
+        except Exception:
+            if log_path.exists() and not log_uploaded:
+                upload_run_log(
+                    config=config,
+                    run_id=candidate_run.run_id,
+                    log_path=log_path,
+                )
+            raise
+        finally:
+            terminate_run(config=config, run_id=candidate_run.run_id, status=run_status)
