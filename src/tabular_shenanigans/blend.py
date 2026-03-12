@@ -187,6 +187,49 @@ def _encode_binary_test_labels(
     ).to_numpy(dtype=float)
 
 
+def _validate_binary_probability_label_contract(
+    manifest: dict[str, object],
+    candidate_id: str,
+    positive_label: object | None,
+    negative_label: object | None,
+    expected_observed_label_pair: tuple[object, object] | None,
+) -> None:
+    if positive_label is None or negative_label is None or expected_observed_label_pair is None:
+        raise ValueError("Binary probability blending requires resolved class metadata.")
+
+    manifest_positive_label = manifest.get("positive_label")
+    manifest_negative_label = manifest.get("negative_label")
+    observed_label_pair = manifest.get("observed_label_pair")
+    if (
+        manifest_positive_label is None
+        or manifest_negative_label is None
+        or not isinstance(observed_label_pair, list)
+        or len(observed_label_pair) != 2
+    ):
+        raise ValueError(
+            "Binary probability blend candidates must include positive_label, negative_label, "
+            f"and observed_label_pair metadata. Candidate {candidate_id} is missing that contract."
+        )
+
+    expected_contract = {
+        "positive_label": _normalize_binary_label(positive_label),
+        "negative_label": _normalize_binary_label(negative_label),
+        "observed_label_pair": [
+            _normalize_binary_label(label) for label in expected_observed_label_pair
+        ],
+    }
+    observed_contract = {
+        "positive_label": _normalize_binary_label(manifest_positive_label),
+        "negative_label": _normalize_binary_label(manifest_negative_label),
+        "observed_label_pair": [_normalize_binary_label(label) for label in observed_label_pair],
+    }
+    if observed_contract != expected_contract:
+        raise ValueError(
+            "Binary probability blend candidate label contract does not match the configured blend context. "
+            f"Candidate {candidate_id}: expected {expected_contract}, observed {observed_contract}"
+        )
+
+
 def _load_blend_component(
     competition_slug: str,
     candidate_id: str,
@@ -199,6 +242,7 @@ def _load_blend_component(
     expected_test_ids: pd.Series,
     positive_label: object | None,
     negative_label: object | None,
+    observed_label_pair: tuple[object, object] | None,
 ) -> BlendComponent:
     candidate_dir = _candidate_dir(competition_slug=competition_slug, candidate_id=candidate_id)
     manifest = _load_candidate_manifest(candidate_dir=candidate_dir)
@@ -258,6 +302,15 @@ def _load_blend_component(
         raise ValueError(
             "Blend base candidate test IDs do not match the configured competition test set. "
             f"Candidate {candidate_id} is not compatible."
+        )
+
+    if task_type == "binary" and get_binary_prediction_kind(primary_metric) == "probability":
+        _validate_binary_probability_label_contract(
+            manifest=manifest,
+            candidate_id=candidate_id,
+            positive_label=positive_label,
+            negative_label=negative_label,
+            expected_observed_label_pair=observed_label_pair,
         )
 
     if task_type == "binary" and get_binary_prediction_kind(primary_metric) == "label":
@@ -604,6 +657,7 @@ def run_blend_training(
             expected_test_ids=test_df[id_column],
             positive_label=positive_label,
             negative_label=negative_label,
+            observed_label_pair=observed_label_pair,
         )
         for base_candidate_id in config.base_candidate_ids
     ]
