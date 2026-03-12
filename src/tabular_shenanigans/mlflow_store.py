@@ -155,7 +155,7 @@ def ensure_candidate_run_absent(config: AppConfig, candidate_id: str) -> None:
     if runs:
         raise ValueError(
             "Candidate already exists in MLflow for this competition. "
-            f"Choose a new experiment.candidate.candidate_id or delete candidate '{candidate_id}'."
+            f"Change the candidate config so it derives a new candidate_id or delete candidate '{candidate_id}'."
         )
 
 
@@ -170,8 +170,6 @@ def _base_candidate_tags(config: AppConfig, candidate_id: str, candidate_type: s
         "primary_metric": config.competition.primary_metric,
         **_git_metadata(),
     }
-    if config.experiment.notes:
-        tags["mlflow.note.content"] = config.experiment.notes
     return tags
 
 
@@ -207,7 +205,6 @@ def _candidate_run_params(config: AppConfig, manifest: dict[str, object]) -> dic
     competition = config.competition
     candidate = config.experiment.candidate
     params: dict[str, object] = {
-        "experiment_name": config.experiment.name,
         "cv__n_splits": competition.cv.n_splits,
         "cv__shuffle": competition.cv.shuffle,
         "cv__random_state": competition.cv.random_state,

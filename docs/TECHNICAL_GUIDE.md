@@ -52,7 +52,6 @@ Current candidate-run tags:
 
 ### Params
 Current candidate-run params:
-- `experiment_name`
 - `cv__n_splits`
 - `cv__shuffle`
 - `cv__random_state`
@@ -127,7 +126,7 @@ Stage notes:
 ## Module Responsibilities
 - [main.py](/Users/hs/dev/TabularShenanigans/main.py): CLI entrypoint and linear stage dispatch.
 - [competition.py](/Users/hs/dev/TabularShenanigans/src/tabular_shenanigans/competition.py): in-memory competition preparation, fold assignment materialization, and prepared-context construction.
-- [config.py](/Users/hs/dev/TabularShenanigans/src/tabular_shenanigans/config.py): nested config validation, metric normalization, candidate naming checks, and resolved model lookup.
+- [config.py](/Users/hs/dev/TabularShenanigans/src/tabular_shenanigans/config.py): nested config validation, metric normalization, candidate-id derivation, and resolved model lookup.
 - [candidate_artifacts.py](/Users/hs/dev/TabularShenanigans/src/tabular_shenanigans/candidate_artifacts.py): shared manifest/config helpers and temp-bundle file writers for candidate/context artifacts.
 - [data.py](/Users/hs/dev/TabularShenanigans/src/tabular_shenanigans/data.py): Kaggle downloads, zip access, schema inference, and sample-submission loading.
 - [eda.py](/Users/hs/dev/TabularShenanigans/src/tabular_shenanigans/eda.py): local EDA report generation.
@@ -165,8 +164,6 @@ Required top-level keys:
 - optional `features`
 
 `experiment` keys:
-- `name`
-- optional `notes`
 - required `tracking`
 - required `candidate`
 - optional `submit`
@@ -176,24 +173,22 @@ Required top-level keys:
 
 Model candidate contract:
 - `candidate_type: model`
-- `candidate_id`
 - `feature_recipe_id`
 - `model_family`
 - `numeric_preprocessor`
 - `categorical_preprocessor`
-- optional `model_params`
+- optional `model_params` (manual estimator overrides; when omitted, the runtime uses repo defaults plus estimator library defaults)
 - optional `optimization`
 
 Blend candidate contract:
 - `candidate_type: blend`
-- `candidate_id`
 - `base_candidate_ids`
 - optional `weights`
 
 Naming contract:
-- model candidates: `<feature_recipe_id>--<preprocessing_scheme_id>--<variant_token>--vN`
-- blend candidates: `blend__vN`
-- `candidate_id` must not repeat `competition.slug`
+- model candidates derive `<feature_recipe_id>--<preprocessing_scheme_id>--<model_registry_key>--<hash8>`
+- blend candidates derive `blend__<hash8>`
+- identical candidate specs derive the same `candidate_id`
 
 Hard-invalid preprocessing combination:
 - `categorical_preprocessor: native` with any model family other than `catboost`
@@ -250,7 +245,7 @@ Refresh behavior:
 ## Runtime Invariants
 - MLflow is required. The runtime does not support a no-tracking mode.
 - Candidate state is canonical in MLflow, not on local disk.
-- Reusing an existing `candidate_id` within a competition experiment is a hard error.
+- Reusing an existing derived `candidate_id` within a competition experiment is a hard error.
 - `prepare` is not a persisted source of truth anymore.
 - `train` and `blend` must produce exactly one candidate run keyed by `candidate_id`.
 - `submit` resolves candidates from MLflow, not from local artifact directories.

@@ -13,7 +13,11 @@ from tabular_shenanigans.models import (
     resolve_candidate_model_id,
     validate_model_preprocessing_compatibility,
 )
-from tabular_shenanigans.naming import validate_blend_candidate_id, validate_model_candidate_id
+from tabular_shenanigans.naming import (
+    build_blend_candidate_id,
+    build_model_candidate_id,
+    normalize_blend_weights,
+)
 from tabular_shenanigans.preprocess import (
     CATEGORICAL_PREPROCESSOR_IDS,
     NUMERIC_PREPROCESSOR_IDS,
@@ -67,8 +71,6 @@ class CandidateOptimizationConfig(BaseModel):
 
 class BaseCandidateConfig(BaseModel):
     model_config = ConfigDict(extra="forbid")
-
-    candidate_id: str = Field(min_length=1)
 
 
 class ModelCandidateConfig(BaseCandidateConfig):
@@ -206,8 +208,6 @@ class ExperimentTrackingConfig(BaseModel):
 class ExperimentConfig(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
-    name: str = Field(min_length=1)
-    notes: str | None = None
     candidate: ExperimentCandidateConfig
     submit: ExperimentSubmitConfig = Field(default_factory=ExperimentSubmitConfig)
     tracking: ExperimentTrackingConfig = Field(default_factory=ExperimentTrackingConfig)
@@ -241,12 +241,6 @@ class AppConfig(BaseModel):
         if self.is_model_candidate:
             candidate = self.experiment.candidate
             candidate.feature_recipe_id = resolve_feature_recipe_id(candidate.feature_recipe_id)
-            validate_model_candidate_id(
-                candidate_id=candidate.candidate_id,
-                competition_slug=competition.slug,
-                feature_recipe_id=candidate.feature_recipe_id,
-                preprocessing_scheme_id=candidate.preprocessing_scheme_id,
-            )
             resolved_model_registry_key = self.resolved_model_registry_key
             validate_model_preprocessing_compatibility(
                 task_type=competition.task_type,
@@ -268,13 +262,6 @@ class AppConfig(BaseModel):
                         f"task_type '{competition.task_type}'. Supported tunable model families: "
                         f"{supported_tunable_model_families}"
                     )
-        else:
-            candidate = self.experiment.candidate
-            validate_blend_candidate_id(
-                candidate_id=candidate.candidate_id,
-                competition_slug=competition.slug,
-            )
-
         return self
 
     @property
@@ -293,6 +280,75 @@ class AppConfig(BaseModel):
         return resolve_candidate_model_id(
             task_type=self.competition.task_type,
             model_family=candidate.model_family,
+        )
+
+    @property
+    def resolved_blend_weights(self) -> list[float]:
+        if not self.is_blend_candidate:
+            raise ValueError("resolved_blend_weights is only available for blend candidates.")
+        candidate = self.experiment.candidate
+        return normalize_blend_weights(
+            base_candidate_ids=candidate.base_candidate_ids,
+            configured_weights=candidate.weights,
+        )
+
+    @property
+    def resolved_candidate_id(self) -> str:
+        competition = self.competition
+        candidate = self.experiment.candidate
+        if self.is_model_candidate:
+            optimization_payload: dict[str, object] = {"enabled": False}
+            if candidate.optimization.enabled:
+                optimization_payload = candidate.optimization.model_dump(mode="python")
+            fingerprint_payload = {
+                "competition": {
+                    "task_type": competition.task_type,
+                    "primary_metric": competition.primary_metric,
+                    "cv": competition.cv.model_dump(mode="python"),
+                    "features": competition.features.model_dump(mode="python"),
+                    "positive_label": competition.positive_label,
+                },
+                "candidate": {
+                    "feature_recipe_id": candidate.feature_recipe_id,
+                    "numeric_preprocessor": candidate.numeric_preprocessor,
+                    "categorical_preprocessor": candidate.categorical_preprocessor,
+                    "preprocessing_scheme_id": candidate.preprocessing_scheme_id,
+                    "model_family": candidate.model_family,
+                    "model_registry_key": self.resolved_model_registry_key,
+                    "model_params": candidate.model_params,
+                    "optimization": optimization_payload,
+                },
+            }
+            return build_model_candidate_id(
+                feature_recipe_id=candidate.feature_recipe_id,
+                preprocessing_scheme_id=candidate.preprocessing_scheme_id,
+                model_registry_key=self.resolved_model_registry_key,
+                fingerprint_payload=fingerprint_payload,
+            )
+
+        normalized_weights = self.resolved_blend_weights
+        fingerprint_payload = {
+            "competition": {
+                "task_type": competition.task_type,
+                "primary_metric": competition.primary_metric,
+                "cv": competition.cv.model_dump(mode="python"),
+                "features": competition.features.model_dump(mode="python"),
+            },
+            "components": [
+                {
+                    "candidate_id": component_candidate_id,
+                    "weight": weight,
+                }
+                for component_candidate_id, weight in sorted(
+                    zip(candidate.base_candidate_ids, normalized_weights, strict=True),
+                    key=lambda item: item[0],
+                )
+            ],
+        }
+        return build_blend_candidate_id(
+            base_candidate_ids=candidate.base_candidate_ids,
+            normalized_weights=normalized_weights,
+            fingerprint_payload=fingerprint_payload,
         )
 
 

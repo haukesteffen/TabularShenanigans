@@ -342,7 +342,7 @@ def run_submission(
     candidate_id: str | None = None,
 ) -> SubmissionRunResult:
     submit_config = config.experiment.submit
-    resolved_candidate_id = candidate_id or config.experiment.candidate.candidate_id
+    resolved_candidate_id = candidate_id or config.resolved_candidate_id
 
     with tempfile.TemporaryDirectory(prefix="tabular-shenanigans-submit-") as temp_dir:
         temp_root = Path(temp_dir)
