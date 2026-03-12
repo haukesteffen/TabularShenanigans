@@ -29,7 +29,7 @@ The repository is developed and manually verified primarily against these Playgr
 - Freeze CV assignments once per prepared competition context and reuse them across `train`.
 - Run stage-specific CLI entrypoints for `fetch`, `prepare`, `eda`, `train`, and submit-only flows.
 - Materialize one explicit experiment candidate at a time:
-  - train one cross-validated model candidate using an optional config-selected feature recipe plus config-selected preprocessing and model-family choices that resolve internally to the current canonical recipe IDs
+  - train one cross-validated model candidate using an optional config-selected feature recipe plus split numeric and categorical preprocessing choices on top of one config-selected model family
   - or build one blend candidate from existing compatible candidate artifacts under the same prepared competition context
 - Write one candidate artifact directory under `artifacts/<competition_slug>/candidates/<candidate_id>/`, including `candidate.json`, `fold_metrics.csv`, `oof_predictions.csv`, and `test_predictions.csv`, plus optional candidate-type-specific metadata such as `blend_summary.csv`, binary-accuracy blend probabilities, or optimization files.
 - When `experiment.candidate.optimization.enabled=true` for a model candidate, run Optuna inside `train`, retrain the best trial into the candidate artifact directory, and keep optimization metadata next to that candidate.
@@ -134,10 +134,12 @@ Current `experiment.candidate` contract:
   - `candidate_id`
 - model candidate keys:
   - optional `feature_recipe_id`: tracked deterministic feature recipe applied after raw feature extraction and before preprocessing/model fitting; defaults to `identity`
-  - `preprocessor`: `onehot`, `ordinal`, `native`, or `frequency`
   - `model_family`
     - regression: `ridge`, `elasticnet`, `random_forest`, `extra_trees`, `hist_gradient_boosting`, `lightgbm`, `catboost`, `xgboost`
     - binary classification: `logistic_regression`, `random_forest`, `extra_trees`, `hist_gradient_boosting`, `lightgbm`, `catboost`, `xgboost`
+  - `numeric_preprocessor`: `median`, `standardize`, or `kbins`
+  - `categorical_preprocessor`: `onehot`, `ordinal`, `frequency`, or `native`
+  - temporary legacy shim: `preprocessor` maps to one baseline-equivalent split pair when the split fields are omitted
   - optional `model_params`
   - optional `optimization`:
     - `enabled`
@@ -151,9 +153,22 @@ Current `experiment.candidate` contract:
 
 Blend candidates validate that all base candidates share the same competition slug, task type, primary metric, resolved schema, frozen fold assignments, OOF row order, and test ID order. For binary `roc_auc` and `log_loss` blends, base candidates must also share the same saved `positive_label`, `negative_label`, and `observed_label_pair` contract.
 
-Supported `model_family + preprocessor` combinations for model candidates:
-- regression: `ridge + onehot`, `elasticnet + onehot`, `random_forest + ordinal`, `extra_trees + ordinal`, `hist_gradient_boosting + ordinal`, `hist_gradient_boosting + frequency`, `lightgbm + ordinal`, `lightgbm + frequency`, `catboost + native`, `xgboost + ordinal`, `xgboost + frequency`
-- binary classification: `logistic_regression + onehot`, `random_forest + ordinal`, `extra_trees + ordinal`, `hist_gradient_boosting + ordinal`, `hist_gradient_boosting + frequency`, `lightgbm + ordinal`, `lightgbm + frequency`, `catboost + native`, `xgboost + ordinal`, `xgboost + frequency`
+Model candidates now configure preprocessing with split selectors:
+- `numeric_preprocessor`: `median`, `standardize`, or `kbins`
+- `categorical_preprocessor`: `onehot`, `ordinal`, `frequency`, or `native`
+
+Current model-family support by task:
+- regression: `ridge`, `elasticnet`, `random_forest`, `extra_trees`, `hist_gradient_boosting`, `lightgbm`, `catboost`, `xgboost`
+- binary classification: `logistic_regression`, `random_forest`, `extra_trees`, `hist_gradient_boosting`, `lightgbm`, `catboost`, `xgboost`
+
+Current hard-invalid preprocessing combinations:
+- `categorical_preprocessor: native` with any `model_family` other than `catboost`
+
+Recommended baseline mappings from the older single-field configs:
+- `onehot` -> `numeric_preprocessor: standardize`, `categorical_preprocessor: onehot`
+- `ordinal` -> `numeric_preprocessor: median`, `categorical_preprocessor: ordinal`
+- `frequency` -> `numeric_preprocessor: median`, `categorical_preprocessor: frequency`
+- `native` -> `numeric_preprocessor: median`, `categorical_preprocessor: native`
 
 Built-in `feature_recipe_id` values for model candidates:
 - `identity`: default pass-through recipe for new competitions
@@ -174,7 +189,7 @@ Binary prediction artifact contract:
 
 If `id_column` or `label_column` are omitted, the training pipeline infers them from `train.csv`, `test.csv`, and `sample_submission.csv`. The resolved `id_column` is preserved for prediction outputs and in `candidate.json`, but it is not part of the model feature matrix. Submission preparation consumes the selected artifact manifest as the schema/task source of truth and uses `sample_submission.csv` only for validation. Invalid overrides, ambiguous inference, a `sample_submission.csv` shape that does not exactly match `[id_column, label_column]`, or a submission ID column that differs from `sample_submission.csv` in values or ordering are hard errors.
 
-The current runtime resolves `experiment.candidate.model_family + experiment.candidate.preprocessor` into one internal canonical `model_id` for model candidates. Blend candidates materialize a synthetic `blend_weighted_average` artifact model ID and use their component candidate metadata as provenance.
+The current runtime resolves `experiment.candidate.model_family` to one internal canonical `model_id` for model candidates, then records `numeric_preprocessor`, `categorical_preprocessor`, and `preprocessing_scheme_id` separately in candidate artifacts. Blend candidates materialize a synthetic `blend_weighted_average` artifact model ID and use their component candidate metadata as provenance.
 
 `task_type` and `primary_metric` are always config-driven. The pipeline does not infer them from Kaggle metadata.
 
@@ -204,9 +219,9 @@ Manual verification for each target:
 
 Manual verification for optimization:
 - run `uv run python main.py train` with `experiment.candidate.optimization.enabled: true` and at least one stopping condition
-- supported tunable combinations are:
-  - binary: `logistic_regression + onehot`, `random_forest + ordinal`, `extra_trees + ordinal`, `hist_gradient_boosting + ordinal`, `hist_gradient_boosting + frequency`, `lightgbm + ordinal`, `lightgbm + frequency`, `catboost + native`, `xgboost + ordinal`, `xgboost + frequency`
-  - regression: `random_forest + ordinal`, `extra_trees + ordinal`, `hist_gradient_boosting + ordinal`, `hist_gradient_boosting + frequency`, `lightgbm + ordinal`, `lightgbm + frequency`, `catboost + native`, `xgboost + ordinal`, `xgboost + frequency`
+- supported tunable model families are:
+  - binary: `logistic_regression`, `random_forest`, `extra_trees`, `hist_gradient_boosting`, `lightgbm`, `catboost`, `xgboost`
+  - regression: `random_forest`, `extra_trees`, `hist_gradient_boosting`, `lightgbm`, `catboost`, `xgboost`
 - confirm `artifacts/<competition_slug>/candidates/<candidate_id>/optimization_summary.json` is written
 - confirm `artifacts/<competition_slug>/candidates/<candidate_id>/optimization_trials.csv` records trial state, score, and params
 - confirm `artifacts/<competition_slug>/candidates/<candidate_id>/candidate.json` records `tuning_provenance`
@@ -249,7 +264,7 @@ Manual verification for blend candidates:
 - The resolved `id_column` is identifier metadata and is excluded from preprocessing and model fitting by default.
 - `config.yaml` must use top-level `competition` and `experiment` sections; the old flat layout is unsupported.
 - The current runtime supports `experiment.candidate.candidate_type: model` and `experiment.candidate.candidate_type: blend`.
-- Model candidates resolve `experiment.candidate.model_family + experiment.candidate.preprocessor` to one canonical internal `model_id`; candidate artifacts record that resolved `model_id` and `preprocessing_scheme_id`.
+- Model candidates resolve `experiment.candidate.model_family` to one canonical internal `model_id`; candidate artifacts also record `numeric_preprocessor`, `categorical_preprocessor`, and `preprocessing_scheme_id`.
 - Model candidates default `experiment.candidate.feature_recipe_id` to `identity`; feature recipes are tracked Python modules rather than runtime scripts or YAML transform blocks.
 - Blend candidates consume existing compatible candidate artifacts and write one new blend candidate artifact without retraining the base candidates.
 - `prepare` is the competition-level source of truth for `competition.json` and `folds.csv`; `train` consumes that frozen context and auto-runs `prepare` only when it is missing.

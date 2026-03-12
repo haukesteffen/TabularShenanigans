@@ -8,9 +8,17 @@ from pydantic import BaseModel, ConfigDict, Field, model_validator
 from tabular_shenanigans.data import SUPPORTED_PRIMARY_METRICS, is_metric_valid_for_task, normalize_primary_metric
 from tabular_shenanigans.feature_recipes import resolve_feature_recipe_id
 from tabular_shenanigans.models import (
-    get_tunable_candidate_model_specs,
+    get_tunable_model_ids,
     is_model_tunable,
     resolve_candidate_model_id,
+    validate_model_preprocessing_compatibility,
+)
+from tabular_shenanigans.preprocess import (
+    CATEGORICAL_PREPROCESSOR_IDS,
+    LEGACY_PREPROCESSOR_MAPPING,
+    NUMERIC_PREPROCESSOR_IDS,
+    build_preprocessing_scheme_id,
+    resolve_legacy_preprocessor_selection,
 )
 
 
@@ -69,7 +77,9 @@ class ModelCandidateConfig(BaseCandidateConfig):
 
     candidate_type: Literal["model"] = "model"
     feature_recipe_id: str = Field(default="identity", min_length=1)
-    preprocessor: Literal["onehot", "ordinal", "native", "frequency"]
+    preprocessor: str | None = None
+    numeric_preprocessor: str | None = None
+    categorical_preprocessor: str | None = None
     model_family: Literal[
         "ridge",
         "elasticnet",
@@ -90,7 +100,40 @@ class ModelCandidateConfig(BaseCandidateConfig):
             raise ValueError(
                 "The current runtime does not support combining experiment.candidate.model_params "
                 "with enabled experiment.candidate.optimization."
-        )
+            )
+
+        if self.preprocessor is not None:
+            if self.numeric_preprocessor is not None or self.categorical_preprocessor is not None:
+                raise ValueError(
+                    "Configure either experiment.candidate.preprocessor or the split "
+                    "experiment.candidate.numeric_preprocessor + experiment.candidate.categorical_preprocessor, "
+                    "not both."
+                )
+            resolved_numeric_preprocessor, resolved_categorical_preprocessor = resolve_legacy_preprocessor_selection(
+                self.preprocessor
+            )
+            self.numeric_preprocessor = resolved_numeric_preprocessor
+            self.categorical_preprocessor = resolved_categorical_preprocessor
+
+        if self.numeric_preprocessor is None or self.categorical_preprocessor is None:
+            legacy_preprocessor_ids = sorted(LEGACY_PREPROCESSOR_MAPPING)
+            raise ValueError(
+                "Model candidates require experiment.candidate.numeric_preprocessor and "
+                "experiment.candidate.categorical_preprocessor. "
+                f"Legacy experiment.candidate.preprocessor values remain temporarily supported: {legacy_preprocessor_ids}"
+            )
+
+        if self.numeric_preprocessor not in NUMERIC_PREPROCESSOR_IDS:
+            raise ValueError(
+                "Unsupported experiment.candidate.numeric_preprocessor "
+                f"'{self.numeric_preprocessor}'. Supported values: {sorted(NUMERIC_PREPROCESSOR_IDS)}"
+            )
+
+        if self.categorical_preprocessor not in CATEGORICAL_PREPROCESSOR_IDS:
+            raise ValueError(
+                "Unsupported experiment.candidate.categorical_preprocessor "
+                f"'{self.categorical_preprocessor}'. Supported values: {sorted(CATEGORICAL_PREPROCESSOR_IDS)}"
+            )
         return self
 
 
@@ -212,6 +255,11 @@ class AppConfig(BaseModel):
             )
 
             resolved_model_id = self.resolved_model_id
+            validate_model_preprocessing_compatibility(
+                task_type=self.task_type,
+                model_id=resolved_model_id,
+                categorical_preprocessor_id=self.categorical_preprocessor,
+            )
             optimization = self.experiment.candidate.optimization
             if optimization.enabled:
                 if optimization.n_trials is None and optimization.timeout_seconds is None:
@@ -221,13 +269,10 @@ class AppConfig(BaseModel):
                         "experiment.candidate.optimization.timeout_seconds."
                     )
                 if not is_model_tunable(self.task_type, resolved_model_id):
-                    supported_tunable_combinations = [
-                        f"{model_family}+{preprocessor}"
-                        for model_family, preprocessor, _ in get_tunable_candidate_model_specs(self.task_type)
-                    ]
+                    supported_tunable_model_families = get_tunable_model_ids(self.task_type)
                     raise ValueError(
-                        "Configured experiment.candidate does not support optimization for task_type "
-                        f"'{self.task_type}'. Supported tunable combinations: {supported_tunable_combinations}"
+                        f"Configured model_family '{self.model_family}' does not support optimization for task_type "
+                        f"'{self.task_type}'. Supported tunable model families: {supported_tunable_model_families}"
                     )
 
         return self
@@ -313,10 +358,25 @@ class AppConfig(BaseModel):
         return self.experiment.candidate.feature_recipe_id
 
     @property
-    def preprocessor(self) -> str:
+    def numeric_preprocessor(self) -> str:
+        if not self.is_model_candidate or self.experiment.candidate.numeric_preprocessor is None:
+            raise ValueError("numeric_preprocessor is only available for model candidates.")
+        return self.experiment.candidate.numeric_preprocessor
+
+    @property
+    def categorical_preprocessor(self) -> str:
+        if not self.is_model_candidate or self.experiment.candidate.categorical_preprocessor is None:
+            raise ValueError("categorical_preprocessor is only available for model candidates.")
+        return self.experiment.candidate.categorical_preprocessor
+
+    @property
+    def preprocessing_scheme_id(self) -> str:
         if not self.is_model_candidate:
-            raise ValueError("preprocessor is only available for model candidates.")
-        return self.experiment.candidate.preprocessor
+            raise ValueError("preprocessing_scheme_id is only available for model candidates.")
+        return build_preprocessing_scheme_id(
+            numeric_preprocessor_id=self.numeric_preprocessor,
+            categorical_preprocessor_id=self.categorical_preprocessor,
+        )
 
     @property
     def resolved_model_id(self) -> str:
@@ -325,7 +385,6 @@ class AppConfig(BaseModel):
         return resolve_candidate_model_id(
             task_type=self.task_type,
             model_family=self.model_family,
-            preprocessor=self.preprocessor,
         )
 
     @property

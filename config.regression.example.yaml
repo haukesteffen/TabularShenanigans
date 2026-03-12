@@ -38,17 +38,23 @@ experiment:
     candidate_type: model
     candidate_id: baseline_elasticnet_v1
     feature_recipe_id: identity
-    preprocessor: onehot
     model_family: elasticnet
+    numeric_preprocessor: standardize
+    categorical_preprocessor: onehot
     model_params: {}
 
     # Keep identity for new competitions, then switch to a tracked code recipe
     # only when you need competition-specific features.
 
     # Alternative regression model candidates:
-    # preprocessor: ordinal
+    # numeric_preprocessor: kbins
+    # categorical_preprocessor: onehot
+    # model_family: elasticnet
+    # numeric_preprocessor: median
+    # categorical_preprocessor: ordinal
     # model_family: lightgbm
-    # preprocessor: native
+    # numeric_preprocessor: median
+    # categorical_preprocessor: native
     # model_family: catboost
 
     # Alternative blend candidate shape:

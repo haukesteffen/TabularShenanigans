@@ -6,16 +6,40 @@ import pandas as pd
 from sklearn.compose import ColumnTransformer
 from sklearn.impute import SimpleImputer
 from sklearn.pipeline import Pipeline
-from sklearn.preprocessing import FunctionTransformer, OneHotEncoder, OrdinalEncoder, StandardScaler
+from sklearn.preprocessing import (
+    FunctionTransformer,
+    KBinsDiscretizer,
+    OneHotEncoder,
+    OrdinalEncoder,
+    StandardScaler,
+)
 
-PreprocessorBuilder = Callable[[list[str], list[str], list[str]], object]
+NumericPreprocessorBuilder = Callable[[], object]
+CategoricalPreprocessorBuilder = Callable[[], object]
+
+LEGACY_PREPROCESSOR_MAPPING = {
+    "onehot": ("standardize", "onehot"),
+    "ordinal": ("median", "ordinal"),
+    "frequency": ("median", "frequency"),
+    "native": ("median", "native"),
+}
+NUMERIC_PREPROCESSOR_IDS = tuple(["median", "standardize", "kbins"])
+CATEGORICAL_PREPROCESSOR_IDS = tuple(["onehot", "ordinal", "frequency", "native"])
 
 
 @dataclass(frozen=True)
-class PreprocessingDefinition:
+class NumericPreprocessingDefinition:
     scheme_id: str
     scheme_name: str
-    builder: PreprocessorBuilder
+    builder: NumericPreprocessorBuilder
+
+
+@dataclass(frozen=True)
+class CategoricalPreprocessingDefinition:
+    scheme_id: str
+    scheme_name: str
+    compose_mode: str
+    builder: CategoricalPreprocessorBuilder | None = None
 
 
 @dataclass(frozen=True)
@@ -99,6 +123,45 @@ def resolve_feature_schema(
     )
 
 
+def resolve_legacy_preprocessor_selection(preprocessor_id: str) -> tuple[str, str]:
+    try:
+        return LEGACY_PREPROCESSOR_MAPPING[preprocessor_id]
+    except KeyError as exc:
+        supported_preprocessor_ids = sorted(LEGACY_PREPROCESSOR_MAPPING)
+        raise ValueError(
+            f"Unsupported preprocessing scheme '{preprocessor_id}'. Supported values: {supported_preprocessor_ids}"
+        ) from exc
+
+
+def build_preprocessing_scheme_id(
+    numeric_preprocessor_id: str,
+    categorical_preprocessor_id: str,
+) -> str:
+    return f"num_{numeric_preprocessor_id}__cat_{categorical_preprocessor_id}"
+
+
+def categorical_preprocessor_uses_native_columns(categorical_preprocessor_id: str) -> bool:
+    return categorical_preprocessor_id == "native"
+
+
+def _ensure_dense_array(values: object) -> np.ndarray:
+    if hasattr(values, "toarray"):
+        return values.toarray()
+    return np.asarray(values)
+
+
+def _resolve_transformed_numeric_columns(
+    numeric_preprocessor: object,
+    numeric_columns: list[str],
+) -> list[str]:
+    if not numeric_columns:
+        return []
+    if hasattr(numeric_preprocessor, "get_feature_names_out"):
+        feature_names = numeric_preprocessor.get_feature_names_out(numeric_columns)
+        return [str(feature_name) for feature_name in feature_names]
+    return list(numeric_columns)
+
+
 class NativeFramePreprocessor:
     CATEGORICAL_MISSING_VALUE = "__missing__"
 
@@ -107,42 +170,48 @@ class NativeFramePreprocessor:
         feature_columns: list[str],
         numeric_columns: list[str],
         categorical_columns: list[str],
+        numeric_preprocessor: object,
     ) -> None:
         self.feature_columns = feature_columns
         self.numeric_columns = numeric_columns
         self.categorical_columns = categorical_columns
-        self.numeric_fill_values: pd.Series | None = None
+        self.numeric_preprocessor = numeric_preprocessor
+        self.transformed_numeric_columns: list[str] = list(numeric_columns)
 
     def fit(self, frame: pd.DataFrame) -> "NativeFramePreprocessor":
         if self.numeric_columns:
-            self.numeric_fill_values = frame.loc[:, self.numeric_columns].median()
-        else:
-            self.numeric_fill_values = pd.Series(dtype=float)
+            self.numeric_preprocessor.fit(frame.loc[:, self.numeric_columns])
+            self.transformed_numeric_columns = _resolve_transformed_numeric_columns(
+                self.numeric_preprocessor,
+                self.numeric_columns,
+            )
         return self
 
-    def transform(self, frame: pd.DataFrame) -> pd.DataFrame:
-        transformed_frame = frame.loc[:, self.feature_columns].copy()
+    def _transform_numeric_frame(self, frame: pd.DataFrame) -> pd.DataFrame:
+        if not self.numeric_columns:
+            return pd.DataFrame(index=frame.index)
+        transformed_values = self.numeric_preprocessor.transform(frame.loc[:, self.numeric_columns])
+        return pd.DataFrame(
+            _ensure_dense_array(transformed_values),
+            index=frame.index,
+            columns=self.transformed_numeric_columns,
+        )
 
-        if self.numeric_columns:
-            transformed_frame.loc[:, self.numeric_columns] = transformed_frame.loc[:, self.numeric_columns].fillna(
-                self.numeric_fill_values
-            )
+    def transform(self, frame: pd.DataFrame) -> pd.DataFrame:
+        transformed_frames: list[pd.DataFrame] = [self._transform_numeric_frame(frame)]
 
         if self.categorical_columns:
-            transformed_frame = transformed_frame.astype(
-                {column: object for column in self.categorical_columns},
-                copy=False,
-            )
-            categorical_frame = transformed_frame.loc[:, self.categorical_columns].astype(object)
+            categorical_frame = frame.loc[:, self.categorical_columns].astype(object)
             categorical_frame = categorical_frame.where(
                 categorical_frame.notna(),
                 self.CATEGORICAL_MISSING_VALUE,
             )
-            categorical_frame = categorical_frame.astype(str)
-            for column in self.categorical_columns:
-                transformed_frame.loc[:, column] = categorical_frame.loc[:, column]
+            transformed_frames.append(categorical_frame.astype(str))
 
-        return transformed_frame
+        populated_frames = [transformed_frame for transformed_frame in transformed_frames if not transformed_frame.empty]
+        if not populated_frames:
+            return pd.DataFrame(index=frame.index)
+        return pd.concat(populated_frames, axis=1)
 
     def fit_transform(self, frame: pd.DataFrame) -> pd.DataFrame:
         return self.fit(frame).transform(frame)
@@ -156,24 +225,26 @@ class FrequencyFramePreprocessor:
         feature_columns: list[str],
         numeric_columns: list[str],
         categorical_columns: list[str],
+        numeric_preprocessor: object,
     ) -> None:
         self.feature_columns = feature_columns
         self.numeric_columns = numeric_columns
         self.categorical_columns = categorical_columns
-        self.numeric_fill_values: pd.Series | None = None
+        self.numeric_preprocessor = numeric_preprocessor
+        self.transformed_numeric_columns: list[str] = list(numeric_columns)
         self.category_frequencies: dict[str, dict[str, float]] = {}
 
     def fit(self, frame: pd.DataFrame) -> "FrequencyFramePreprocessor":
-        training_frame = frame.loc[:, self.feature_columns]
-
         if self.numeric_columns:
-            self.numeric_fill_values = training_frame.loc[:, self.numeric_columns].median()
-        else:
-            self.numeric_fill_values = pd.Series(dtype=float)
+            self.numeric_preprocessor.fit(frame.loc[:, self.numeric_columns])
+            self.transformed_numeric_columns = _resolve_transformed_numeric_columns(
+                self.numeric_preprocessor,
+                self.numeric_columns,
+            )
 
         for column in self.categorical_columns:
             normalized_series = _normalize_categorical_series(
-                training_frame[column],
+                frame[column],
                 missing_value=self.CATEGORICAL_MISSING_VALUE,
             )
             value_frequencies = normalized_series.value_counts(normalize=True, dropna=False)
@@ -184,29 +255,35 @@ class FrequencyFramePreprocessor:
 
         return self
 
+    def _transform_numeric_frame(self, frame: pd.DataFrame) -> pd.DataFrame:
+        if not self.numeric_columns:
+            return pd.DataFrame(index=frame.index)
+        transformed_values = self.numeric_preprocessor.transform(frame.loc[:, self.numeric_columns])
+        return pd.DataFrame(
+            _ensure_dense_array(transformed_values),
+            index=frame.index,
+            columns=self.transformed_numeric_columns,
+        )
+
     def transform(self, frame: pd.DataFrame) -> pd.DataFrame:
-        transformed_frame = frame.loc[:, self.feature_columns].copy()
+        transformed_frames: list[pd.DataFrame] = [self._transform_numeric_frame(frame)]
 
-        if self.numeric_columns:
-            transformed_frame.loc[:, self.numeric_columns] = transformed_frame.loc[:, self.numeric_columns].fillna(
-                self.numeric_fill_values
-            )
+        if self.categorical_columns:
+            encoded_categorical_columns: dict[str, pd.Series] = {}
+            for column in self.categorical_columns:
+                normalized_series = _normalize_categorical_series(
+                    frame[column],
+                    missing_value=self.CATEGORICAL_MISSING_VALUE,
+                )
+                encoded_categorical_columns[column] = normalized_series.map(
+                    self.category_frequencies[column]
+                ).fillna(0.0)
+            transformed_frames.append(pd.DataFrame(encoded_categorical_columns, index=frame.index).astype(float))
 
-        encoded_categorical_columns: dict[str, pd.Series] = {}
-        for column in self.categorical_columns:
-            normalized_series = _normalize_categorical_series(
-                transformed_frame[column],
-                missing_value=self.CATEGORICAL_MISSING_VALUE,
-            )
-            encoded_categorical_columns[column] = normalized_series.map(self.category_frequencies[column]).fillna(0.0)
-
-        if encoded_categorical_columns:
-            transformed_frame = transformed_frame.drop(columns=self.categorical_columns)
-            encoded_categorical_frame = pd.DataFrame(encoded_categorical_columns, index=frame.index).astype(float)
-            transformed_frame = transformed_frame.join(encoded_categorical_frame)
-            transformed_frame = transformed_frame.loc[:, self.feature_columns]
-
-        return transformed_frame
+        populated_frames = [transformed_frame for transformed_frame in transformed_frames if not transformed_frame.empty]
+        if not populated_frames:
+            return pd.DataFrame(index=frame.index)
+        return pd.concat(populated_frames, axis=1)
 
     def fit_transform(self, frame: pd.DataFrame) -> pd.DataFrame:
         return self.fit(frame).transform(frame)
@@ -229,9 +306,7 @@ def prepare_feature_frames(
     _validate_column_names("drop_columns", drop_columns, available_feature_columns)
 
     excluded_feature_columns = [id_column]
-    excluded_feature_columns.extend(
-        column for column in drop_columns if column != id_column
-    )
+    excluded_feature_columns.extend(column for column in drop_columns if column != id_column)
 
     x_train_raw = train_df.drop(columns=[label_column, *excluded_feature_columns])
     y_train = train_df[label_column]
@@ -247,20 +322,38 @@ def prepare_feature_frames(
     return x_train_raw, x_test_raw, y_train
 
 
-def _build_linear_onehot_preprocessor(
-    feature_columns: list[str],
-    numeric_columns: list[str],
-    categorical_columns: list[str],
-) -> ColumnTransformer:
-    del feature_columns
-    numeric_pipeline = Pipeline(
+def _build_numeric_median_preprocessor() -> object:
+    return SimpleImputer(strategy="median")
+
+
+def _build_numeric_standardize_preprocessor() -> object:
+    return Pipeline(
         steps=[
             ("imputer", SimpleImputer(strategy="median")),
             ("scaler", StandardScaler()),
         ]
     )
 
-    categorical_pipeline = Pipeline(
+
+def _build_numeric_kbins_preprocessor() -> object:
+    return Pipeline(
+        steps=[
+            ("imputer", SimpleImputer(strategy="median")),
+            (
+                "kbins",
+                KBinsDiscretizer(
+                    n_bins=5,
+                    encode="onehot-dense",
+                    strategy="quantile",
+                    quantile_method="averaged_inverted_cdf",
+                ),
+            ),
+        ]
+    )
+
+
+def _build_categorical_onehot_preprocessor() -> object:
+    return Pipeline(
         steps=[
             ("coerce_object", FunctionTransformer(_coerce_object, feature_names_out="one-to-one")),
             ("imputer", SimpleImputer(strategy="most_frequent")),
@@ -268,27 +361,9 @@ def _build_linear_onehot_preprocessor(
         ]
     )
 
-    transformers = []
-    if numeric_columns:
-        transformers.append(("num", numeric_pipeline, numeric_columns))
-    if categorical_columns:
-        transformers.append(("cat", categorical_pipeline, categorical_columns))
-    return ColumnTransformer(transformers=transformers, remainder="drop")
 
-
-def _build_ordinal_preprocessor(
-    feature_columns: list[str],
-    numeric_columns: list[str],
-    categorical_columns: list[str],
-) -> ColumnTransformer:
-    del feature_columns
-    numeric_pipeline = Pipeline(
-        steps=[
-            ("imputer", SimpleImputer(strategy="median")),
-        ]
-    )
-
-    categorical_pipeline = Pipeline(
+def _build_categorical_ordinal_preprocessor() -> object:
+    return Pipeline(
         steps=[
             ("coerce_object", FunctionTransformer(_coerce_object, feature_names_out="one-to-one")),
             ("imputer", SimpleImputer(strategy="most_frequent")),
@@ -303,75 +378,88 @@ def _build_ordinal_preprocessor(
         ]
     )
 
-    transformers = []
-    if numeric_columns:
-        transformers.append(("num", numeric_pipeline, numeric_columns))
-    if categorical_columns:
-        transformers.append(("cat", categorical_pipeline, categorical_columns))
-    return ColumnTransformer(transformers=transformers, remainder="drop")
 
+NUMERIC_PREPROCESSING_REGISTRY = {
+    "median": NumericPreprocessingDefinition(
+        scheme_id="median",
+        scheme_name="MedianImpute",
+        builder=_build_numeric_median_preprocessor,
+    ),
+    "standardize": NumericPreprocessingDefinition(
+        scheme_id="standardize",
+        scheme_name="MedianImputeStandardize",
+        builder=_build_numeric_standardize_preprocessor,
+    ),
+    "kbins": NumericPreprocessingDefinition(
+        scheme_id="kbins",
+        scheme_name="MedianImputeKBins",
+        builder=_build_numeric_kbins_preprocessor,
+    ),
+}
 
-def _build_native_preprocessor(
-    feature_columns: list[str],
-    numeric_columns: list[str],
-    categorical_columns: list[str],
-) -> NativeFramePreprocessor:
-    return NativeFramePreprocessor(
-        feature_columns=feature_columns,
-        numeric_columns=numeric_columns,
-        categorical_columns=categorical_columns,
-    )
-
-
-def _build_frequency_preprocessor(
-    feature_columns: list[str],
-    numeric_columns: list[str],
-    categorical_columns: list[str],
-) -> FrequencyFramePreprocessor:
-    return FrequencyFramePreprocessor(
-        feature_columns=feature_columns,
-        numeric_columns=numeric_columns,
-        categorical_columns=categorical_columns,
-    )
-
-
-PREPROCESSING_REGISTRY = {
-    "onehot": PreprocessingDefinition(
+CATEGORICAL_PREPROCESSING_REGISTRY = {
+    "onehot": CategoricalPreprocessingDefinition(
         scheme_id="onehot",
-        scheme_name="OneHotLinear",
-        builder=_build_linear_onehot_preprocessor,
+        scheme_name="OneHotCategorical",
+        compose_mode="column_transformer",
+        builder=_build_categorical_onehot_preprocessor,
     ),
-    "ordinal": PreprocessingDefinition(
+    "ordinal": CategoricalPreprocessingDefinition(
         scheme_id="ordinal",
-        scheme_name="OrdinalTree",
-        builder=_build_ordinal_preprocessor,
+        scheme_name="OrdinalCategorical",
+        compose_mode="column_transformer",
+        builder=_build_categorical_ordinal_preprocessor,
     ),
-    "native": PreprocessingDefinition(
-        scheme_id="native",
-        scheme_name="NativeFrame",
-        builder=_build_native_preprocessor,
-    ),
-    "frequency": PreprocessingDefinition(
+    "frequency": CategoricalPreprocessingDefinition(
         scheme_id="frequency",
-        scheme_name="FrequencyEncoded",
-        builder=_build_frequency_preprocessor,
+        scheme_name="FrequencyCategorical",
+        compose_mode="frequency_frame",
+    ),
+    "native": CategoricalPreprocessingDefinition(
+        scheme_id="native",
+        scheme_name="NativeCategorical",
+        compose_mode="native_frame",
     ),
 }
 
 
-def get_preprocessing_definition(scheme_id: str) -> PreprocessingDefinition:
+def get_numeric_preprocessing_definition(scheme_id: str) -> NumericPreprocessingDefinition:
     try:
-        return PREPROCESSING_REGISTRY[scheme_id]
+        return NUMERIC_PREPROCESSING_REGISTRY[scheme_id]
     except KeyError as exc:
-        supported_scheme_ids = sorted(PREPROCESSING_REGISTRY)
+        supported_scheme_ids = sorted(NUMERIC_PREPROCESSING_REGISTRY)
         raise ValueError(
-            f"Unsupported preprocessing scheme '{scheme_id}'. Supported values: {supported_scheme_ids}"
+            f"Unsupported numeric_preprocessor '{scheme_id}'. Supported values: {supported_scheme_ids}"
         ) from exc
 
 
+def get_categorical_preprocessing_definition(scheme_id: str) -> CategoricalPreprocessingDefinition:
+    try:
+        return CATEGORICAL_PREPROCESSING_REGISTRY[scheme_id]
+    except KeyError as exc:
+        supported_scheme_ids = sorted(CATEGORICAL_PREPROCESSING_REGISTRY)
+        raise ValueError(
+            f"Unsupported categorical_preprocessor '{scheme_id}'. Supported values: {supported_scheme_ids}"
+        ) from exc
+
+
+def _build_column_transformer_preprocessor(
+    feature_schema: ResolvedFeatureSchema,
+    numeric_preprocessor: object,
+    categorical_preprocessor: object,
+) -> ColumnTransformer:
+    transformers = []
+    if feature_schema.numeric_columns:
+        transformers.append(("num", numeric_preprocessor, feature_schema.numeric_columns))
+    if feature_schema.categorical_columns:
+        transformers.append(("cat", categorical_preprocessor, feature_schema.categorical_columns))
+    return ColumnTransformer(transformers=transformers, remainder="drop")
+
+
 def build_preprocessor(
-    scheme_id: str,
     x_train_raw: pd.DataFrame,
+    numeric_preprocessor_id: str,
+    categorical_preprocessor_id: str,
     force_categorical: list[str] | None = None,
     force_numeric: list[str] | None = None,
     low_cardinality_int_threshold: int | None = None,
@@ -383,29 +471,54 @@ def build_preprocessor(
         low_cardinality_int_threshold=low_cardinality_int_threshold,
     )
     preprocessor = build_preprocessor_from_schema(
-        scheme_id=scheme_id,
         feature_schema=feature_schema,
+        numeric_preprocessor_id=numeric_preprocessor_id,
+        categorical_preprocessor_id=categorical_preprocessor_id,
     )
-    return (
-        preprocessor,
-        feature_schema.numeric_columns,
-        feature_schema.categorical_columns,
-    )
+    return preprocessor, feature_schema.numeric_columns, feature_schema.categorical_columns
+
 
 def build_preprocessor_from_schema(
-    scheme_id: str,
     feature_schema: ResolvedFeatureSchema,
+    numeric_preprocessor_id: str,
+    categorical_preprocessor_id: str,
 ) -> object:
     if not feature_schema.numeric_columns and not feature_schema.categorical_columns:
         raise ValueError("No modeled features remain after excluding id_column and applying drop_columns.")
 
-    preprocessing_definition = get_preprocessing_definition(scheme_id)
-    preprocessor = preprocessing_definition.builder(
-        feature_schema.feature_columns,
-        feature_schema.numeric_columns,
-        feature_schema.categorical_columns,
+    numeric_definition = get_numeric_preprocessing_definition(numeric_preprocessor_id)
+    categorical_definition = get_categorical_preprocessing_definition(categorical_preprocessor_id)
+    numeric_preprocessor = numeric_definition.builder()
+
+    if categorical_definition.compose_mode == "column_transformer":
+        if categorical_definition.builder is None:
+            raise RuntimeError("column_transformer categorical preprocessing requires a builder.")
+        return _build_column_transformer_preprocessor(
+            feature_schema=feature_schema,
+            numeric_preprocessor=numeric_preprocessor,
+            categorical_preprocessor=categorical_definition.builder(),
+        )
+
+    if categorical_definition.compose_mode == "frequency_frame":
+        return FrequencyFramePreprocessor(
+            feature_columns=feature_schema.feature_columns,
+            numeric_columns=feature_schema.numeric_columns,
+            categorical_columns=feature_schema.categorical_columns,
+            numeric_preprocessor=numeric_preprocessor,
+        )
+
+    if categorical_definition.compose_mode == "native_frame":
+        return NativeFramePreprocessor(
+            feature_columns=feature_schema.feature_columns,
+            numeric_columns=feature_schema.numeric_columns,
+            categorical_columns=feature_schema.categorical_columns,
+            numeric_preprocessor=numeric_preprocessor,
+        )
+
+    raise ValueError(
+        "Unsupported categorical preprocessing compose mode: "
+        f"{categorical_definition.compose_mode!r}"
     )
-    return preprocessor
 
 
 def summarize_feature_types(
