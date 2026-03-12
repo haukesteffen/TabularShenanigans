@@ -172,8 +172,9 @@ Current hard-invalid preprocessing combinations:
 Built-in `feature_recipe_id` values for model candidates:
 - `fr0`: default pass-through recipe for new competitions
 - `fr1`: first competition-specific feature set for `playground-series-s6e3`
+- `fr2`: expanded `playground-series-s6e3` feature set with broader service-count, contract, payment, and charge-consistency features
 
-Feature recipes live in tracked Python modules under `src/tabular_shenanigans/feature_recipes/`. They are intended for deterministic, leakage-safe competition-specific feature transforms. New competitions should start with `fr0`; add a tracked recipe module only when the generic baseline plateaus.
+Feature recipes live in tracked Python modules under `src/tabular_shenanigans/feature_recipes/`. They are intended for deterministic, leakage-safe competition-specific feature transforms. New competitions should start with `fr0`; add a tracked recipe module only when the generic baseline plateaus. For `playground-series-s6e3`, start with `fr1` as the first engineered Telco recipe and use `fr2` when you want the expanded service-count plus contract and payment feature set.
 
 `frequency` encodes each categorical value as its fold-local relative frequency in the training fold. Unseen categories at transform time map to `0.0`.
 

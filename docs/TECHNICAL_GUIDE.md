@@ -135,7 +135,7 @@ The config is validated by Pydantic with `extra="forbid"`. Unknown keys, schema 
 Configured metrics are normalized to the internal metric names during config validation.
 The old flat config layout is unsupported and fails fast.
 Runtime modules consume `config.competition` and `config.experiment` directly; `AppConfig` keeps only minimal derived helpers such as candidate-type checks and resolved model registry key lookup.
-The current runtime resolves `experiment.candidate.feature_recipe_id` to one tracked feature recipe for model candidates; built-in recipe IDs are `fr0` and `fr1`.
+The current runtime resolves `experiment.candidate.feature_recipe_id` to one tracked feature recipe for model candidates; built-in recipe IDs are `fr0`, `fr1`, and `fr2`. `fr1` is the first `playground-series-s6e3` Telco churn recipe, and `fr2` extends that path with additional service-count, contract, payment, and charge-consistency features.
 Model candidates configure preprocessing with split selectors:
 - `numeric_preprocessor`: `median`, `standardize`, or `kbins`
 - `categorical_preprocessor`: `onehot`, `ordinal`, `frequency`, or `native`
@@ -320,6 +320,6 @@ Hard-error cases include:
 - If the user-facing config workflow changes, update `config.binary.example.yaml` and `config.regression.example.yaml` alongside the docs.
 - New metrics should be normalized and validated during config loading, then scored in `cv.py`.
 - New model families should be introduced in `models.py` with explicit task compatibility, capability metadata, and matching artifact outputs.
-- New feature recipes should be added under `src/tabular_shenanigans/feature_recipes/`, registered explicitly, and kept deterministic plus leakage-safe.
+- New feature recipes should be added under `src/tabular_shenanigans/feature_recipes/`, registered explicitly, and kept deterministic plus leakage-safe. Keep fold-fitted transforms such as learned binning in preprocessing rather than feature recipes.
 - New preprocessing modes should be added in `preprocess.py` without breaking the existing feature-frame contract or the preprocessing-first recipe naming convention.
 - New candidate or submission artifacts should be reflected in both the artifact contract above and the corresponding ledger rows.

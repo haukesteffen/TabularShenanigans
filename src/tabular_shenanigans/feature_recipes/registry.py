@@ -1,7 +1,10 @@
 import pandas as pd
 
 from tabular_shenanigans.feature_recipes.base import FeatureRecipeDefinition
-from tabular_shenanigans.feature_recipes.playground_series_s6e3 import S6E3_V1_FEATURE_RECIPE
+from tabular_shenanigans.feature_recipes.playground_series_s6e3 import (
+    S6E3_V1_FEATURE_RECIPE,
+    S6E3_V2_FEATURE_RECIPE,
+)
 
 IDENTITY_FEATURE_RECIPE_ID = "fr0"
 
@@ -21,6 +24,7 @@ FEATURE_RECIPE_REGISTRY = {
         transform=_identity_recipe,
     ),
     S6E3_V1_FEATURE_RECIPE.recipe_id: S6E3_V1_FEATURE_RECIPE,
+    S6E3_V2_FEATURE_RECIPE.recipe_id: S6E3_V2_FEATURE_RECIPE,
 }
 
 
