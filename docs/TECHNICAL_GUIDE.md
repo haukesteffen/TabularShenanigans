@@ -200,6 +200,12 @@ Naming contract:
 Hard-invalid preprocessing combination:
 - `categorical_preprocessor: native` with any model family other than `catboost`
 
+Sparse onehot runtime contract:
+- `categorical_preprocessor: onehot` stays an internal runtime choice rather than a user-facing dense/sparse switch
+- sparse CSR output is used for `ridge`, `elasticnet`, `logistic_regression`, `random_forest`, `extra_trees`, `lightgbm`, `catboost`, and `xgboost`
+- dense array output remains in place for `hist_gradient_boosting`
+- `numeric_preprocessor: kbins` follows the same sparse-versus-dense output contract when composed with `onehot`
+
 ## Candidate Manifest Contract
 Model candidate manifests currently record:
 - identity: `candidate_id`, `candidate_type`, `competition_slug`, `task_type`, `primary_metric`

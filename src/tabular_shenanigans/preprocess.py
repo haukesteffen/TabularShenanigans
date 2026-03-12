@@ -14,8 +14,9 @@ from sklearn.preprocessing import (
     StandardScaler,
 )
 
-NumericPreprocessorBuilder = Callable[[], object]
-CategoricalPreprocessorBuilder = Callable[[], object]
+MatrixOutputKind = str
+NumericPreprocessorBuilder = Callable[[MatrixOutputKind], object]
+CategoricalPreprocessorBuilder = Callable[[MatrixOutputKind], object]
 
 NUMERIC_PREPROCESSOR_IDS = tuple(["median", "standardize", "kbins"])
 CATEGORICAL_PREPROCESSOR_IDS = tuple(["onehot", "ordinal", "frequency", "native"])
@@ -306,11 +307,13 @@ def prepare_feature_frames(
     return x_train_raw, x_test_raw, y_train
 
 
-def _build_numeric_median_preprocessor() -> object:
+def _build_numeric_median_preprocessor(matrix_output_kind: MatrixOutputKind) -> object:
+    del matrix_output_kind
     return SimpleImputer(strategy="median")
 
 
-def _build_numeric_standardize_preprocessor() -> object:
+def _build_numeric_standardize_preprocessor(matrix_output_kind: MatrixOutputKind) -> object:
+    del matrix_output_kind
     return Pipeline(
         steps=[
             ("imputer", SimpleImputer(strategy="median")),
@@ -319,7 +322,10 @@ def _build_numeric_standardize_preprocessor() -> object:
     )
 
 
-def _build_numeric_kbins_preprocessor() -> object:
+def _build_numeric_kbins_preprocessor(matrix_output_kind: MatrixOutputKind) -> object:
+    kbins_encode = "onehot-dense"
+    if matrix_output_kind == "sparse_csr":
+        kbins_encode = "onehot"
     return Pipeline(
         steps=[
             ("imputer", SimpleImputer(strategy="median")),
@@ -327,7 +333,7 @@ def _build_numeric_kbins_preprocessor() -> object:
                 "kbins",
                 KBinsDiscretizer(
                     n_bins=5,
-                    encode="onehot-dense",
+                    encode=kbins_encode,
                     strategy="quantile",
                     quantile_method="averaged_inverted_cdf",
                 ),
@@ -336,17 +342,19 @@ def _build_numeric_kbins_preprocessor() -> object:
     )
 
 
-def _build_categorical_onehot_preprocessor() -> object:
+def _build_categorical_onehot_preprocessor(matrix_output_kind: MatrixOutputKind) -> object:
+    sparse_output = matrix_output_kind == "sparse_csr"
     return Pipeline(
         steps=[
             ("coerce_object", FunctionTransformer(_coerce_object, feature_names_out="one-to-one")),
             ("imputer", SimpleImputer(strategy="most_frequent")),
-            ("onehot", OneHotEncoder(handle_unknown="ignore", sparse_output=False)),
+            ("onehot", OneHotEncoder(handle_unknown="ignore", sparse_output=sparse_output)),
         ]
     )
 
 
-def _build_categorical_ordinal_preprocessor() -> object:
+def _build_categorical_ordinal_preprocessor(matrix_output_kind: MatrixOutputKind) -> object:
+    del matrix_output_kind
     return Pipeline(
         steps=[
             ("coerce_object", FunctionTransformer(_coerce_object, feature_names_out="one-to-one")),
@@ -431,13 +439,17 @@ def _build_column_transformer_preprocessor(
     feature_schema: ResolvedFeatureSchema,
     numeric_preprocessor: object,
     categorical_preprocessor: object,
+    matrix_output_kind: MatrixOutputKind,
 ) -> ColumnTransformer:
     transformers = []
     if feature_schema.numeric_columns:
         transformers.append(("num", numeric_preprocessor, feature_schema.numeric_columns))
     if feature_schema.categorical_columns:
         transformers.append(("cat", categorical_preprocessor, feature_schema.categorical_columns))
-    return ColumnTransformer(transformers=transformers, remainder="drop")
+    sparse_threshold = 0.0
+    if matrix_output_kind == "sparse_csr":
+        sparse_threshold = 1.0
+    return ColumnTransformer(transformers=transformers, remainder="drop", sparse_threshold=sparse_threshold)
 
 
 def build_preprocessor(
@@ -466,13 +478,14 @@ def build_preprocessor_from_schema(
     feature_schema: ResolvedFeatureSchema,
     numeric_preprocessor_id: str,
     categorical_preprocessor_id: str,
+    matrix_output_kind: MatrixOutputKind = "dense_array",
 ) -> object:
     if not feature_schema.numeric_columns and not feature_schema.categorical_columns:
         raise ValueError("No modeled features remain after excluding id_column and applying drop_columns.")
 
     numeric_definition = get_numeric_preprocessing_definition(numeric_preprocessor_id)
     categorical_definition = get_categorical_preprocessing_definition(categorical_preprocessor_id)
-    numeric_preprocessor = numeric_definition.builder()
+    numeric_preprocessor = numeric_definition.builder(matrix_output_kind)
 
     if categorical_definition.compose_mode == "column_transformer":
         if categorical_definition.builder is None:
@@ -480,7 +493,8 @@ def build_preprocessor_from_schema(
         return _build_column_transformer_preprocessor(
             feature_schema=feature_schema,
             numeric_preprocessor=numeric_preprocessor,
-            categorical_preprocessor=categorical_definition.builder(),
+            categorical_preprocessor=categorical_definition.builder(matrix_output_kind),
+            matrix_output_kind=matrix_output_kind,
         )
 
     if categorical_definition.compose_mode == "frequency_frame":
