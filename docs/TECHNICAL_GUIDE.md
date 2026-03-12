@@ -50,7 +50,7 @@ The default `submit` path supports current candidate artifacts only. Unsupported
 - `src/tabular_shenanigans/feature_recipes/*`: deterministic experiment-scoped feature transforms, including the `identity` default and tracked competition-specific recipe modules.
 - `src/tabular_shenanigans/model_evaluation.py`: shared prepared training-context construction, reusable CV scoring and prediction generation, resolved feature-schema reuse, and model evaluation contracts consumed by both `train` and `tune`.
 - `src/tabular_shenanigans/models.py`: task-scoped model-family registry, capability-based compatibility checks, tunable-model search spaces, optional booster loading, and estimator construction for supported model families.
-- `src/tabular_shenanigans/preprocess.py`: feature frame preparation, resolved feature-schema inference, split numeric/categorical preprocessing components, legacy preprocessor mapping, and native-frame support for CatBoost.
+- `src/tabular_shenanigans/preprocess.py`: feature frame preparation, resolved feature-schema inference, split numeric/categorical preprocessing components, and native-frame support for CatBoost.
 - `src/tabular_shenanigans/cv.py`: task-aware CV splitters and metric scoring helpers.
 - `src/tabular_shenanigans/blend.py`: blend-candidate validation, base-candidate artifact compatibility checks, weighted prediction combination, blend-specific manifest fields, and `blend_summary.csv` writing on top of the shared candidate-artifact layer.
 - `src/tabular_shenanigans/train.py`: config-selected model training orchestration, candidate artifact writing, model-specific manifest fields, and optimization-aware workflow control on top of the shared candidate-artifact and model-evaluation layers.
@@ -100,7 +100,6 @@ Input:
       - binary classification: `logistic_regression`, `random_forest`, `extra_trees`, `hist_gradient_boosting`, `lightgbm`, `catboost`, `xgboost`
     - `numeric_preprocessor` (`median`, `standardize`, or `kbins`)
     - `categorical_preprocessor` (`onehot`, `ordinal`, `frequency`, or `native`)
-    - temporary legacy shim: `preprocessor` resolves to one baseline-equivalent split pair when the split fields are omitted
     - optional `model_params`
     - optional `optimization`:
       - `enabled` (boolean, default false)
@@ -132,7 +131,6 @@ The current runtime resolves `experiment.candidate.feature_recipe_id` to one tra
 Model candidates configure preprocessing with split selectors:
 - `numeric_preprocessor`: `median`, `standardize`, or `kbins`
 - `categorical_preprocessor`: `onehot`, `ordinal`, `frequency`, or `native`
-- legacy `experiment.candidate.preprocessor` remains as a temporary migration shim and resolves to one of the supported split pairs
 The current runtime resolves `experiment.candidate.model_family` to one internal canonical `model_id` for model candidates, and records `preprocessing_scheme_id` separately from the model ID.
 Blend candidates consume compatible existing candidate artifacts and materialize a synthetic `blend_weighted_average` artifact model ID.
 optimization requires at least one stopping condition: `experiment.candidate.optimization.n_trials` or `experiment.candidate.optimization.timeout_seconds`.

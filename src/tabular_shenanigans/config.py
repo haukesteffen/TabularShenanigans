@@ -15,10 +15,8 @@ from tabular_shenanigans.models import (
 )
 from tabular_shenanigans.preprocess import (
     CATEGORICAL_PREPROCESSOR_IDS,
-    LEGACY_PREPROCESSOR_MAPPING,
     NUMERIC_PREPROCESSOR_IDS,
     build_preprocessing_scheme_id,
-    resolve_legacy_preprocessor_selection,
 )
 
 
@@ -77,7 +75,6 @@ class ModelCandidateConfig(BaseCandidateConfig):
 
     candidate_type: Literal["model"] = "model"
     feature_recipe_id: str = Field(default="identity", min_length=1)
-    preprocessor: str | None = None
     numeric_preprocessor: str | None = None
     categorical_preprocessor: str | None = None
     model_family: Literal[
@@ -94,6 +91,17 @@ class ModelCandidateConfig(BaseCandidateConfig):
     model_params: dict[str, object] = Field(default_factory=dict)
     optimization: CandidateOptimizationConfig = Field(default_factory=CandidateOptimizationConfig)
 
+    @model_validator(mode="before")
+    @classmethod
+    def reject_legacy_preprocessor(cls, values: object) -> object:
+        if isinstance(values, dict) and "preprocessor" in values:
+            raise ValueError(
+                "experiment.candidate.preprocessor is no longer supported. "
+                "Use experiment.candidate.numeric_preprocessor and "
+                "experiment.candidate.categorical_preprocessor."
+            )
+        return values
+
     @model_validator(mode="after")
     def validate_model_candidate(self) -> "ModelCandidateConfig":
         if self.model_params and self.optimization.enabled:
@@ -102,25 +110,10 @@ class ModelCandidateConfig(BaseCandidateConfig):
                 "with enabled experiment.candidate.optimization."
             )
 
-        if self.preprocessor is not None:
-            if self.numeric_preprocessor is not None or self.categorical_preprocessor is not None:
-                raise ValueError(
-                    "Configure either experiment.candidate.preprocessor or the split "
-                    "experiment.candidate.numeric_preprocessor + experiment.candidate.categorical_preprocessor, "
-                    "not both."
-                )
-            resolved_numeric_preprocessor, resolved_categorical_preprocessor = resolve_legacy_preprocessor_selection(
-                self.preprocessor
-            )
-            self.numeric_preprocessor = resolved_numeric_preprocessor
-            self.categorical_preprocessor = resolved_categorical_preprocessor
-
         if self.numeric_preprocessor is None or self.categorical_preprocessor is None:
-            legacy_preprocessor_ids = sorted(LEGACY_PREPROCESSOR_MAPPING)
             raise ValueError(
                 "Model candidates require experiment.candidate.numeric_preprocessor and "
-                "experiment.candidate.categorical_preprocessor. "
-                f"Legacy experiment.candidate.preprocessor values remain temporarily supported: {legacy_preprocessor_ids}"
+                "experiment.candidate.categorical_preprocessor."
             )
 
         if self.numeric_preprocessor not in NUMERIC_PREPROCESSOR_IDS:

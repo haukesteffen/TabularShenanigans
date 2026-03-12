@@ -139,7 +139,6 @@ Current `experiment.candidate` contract:
     - binary classification: `logistic_regression`, `random_forest`, `extra_trees`, `hist_gradient_boosting`, `lightgbm`, `catboost`, `xgboost`
   - `numeric_preprocessor`: `median`, `standardize`, or `kbins`
   - `categorical_preprocessor`: `onehot`, `ordinal`, `frequency`, or `native`
-  - temporary legacy shim: `preprocessor` maps to one baseline-equivalent split pair when the split fields are omitted
   - optional `model_params`
   - optional `optimization`:
     - `enabled`
@@ -163,12 +162,6 @@ Current model-family support by task:
 
 Current hard-invalid preprocessing combinations:
 - `categorical_preprocessor: native` with any `model_family` other than `catboost`
-
-Recommended baseline mappings from the older single-field configs:
-- `onehot` -> `numeric_preprocessor: standardize`, `categorical_preprocessor: onehot`
-- `ordinal` -> `numeric_preprocessor: median`, `categorical_preprocessor: ordinal`
-- `frequency` -> `numeric_preprocessor: median`, `categorical_preprocessor: frequency`
-- `native` -> `numeric_preprocessor: median`, `categorical_preprocessor: native`
 
 Built-in `feature_recipe_id` values for model candidates:
 - `identity`: default pass-through recipe for new competitions
