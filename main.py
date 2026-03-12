@@ -1,6 +1,5 @@
 import argparse
 import sys
-from contextlib import nullcontext
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parent / "src"))
@@ -11,14 +10,13 @@ from tabular_shenanigans.data import fetch_competition_data, load_competition_da
 from tabular_shenanigans.eda import run_eda
 from tabular_shenanigans.submit import run_submission, run_submission_refresh
 from tabular_shenanigans.tracking import (
-    is_tracking_enabled,
-    log_prepare_outputs,
+    build_train_tracking_tags,
+    log_prepare_stage_outputs,
     log_submission_refresh_outputs,
-    log_runtime_config,
     log_submit_outputs,
     log_train_outputs,
     make_pipeline_invocation_id,
-    start_stage_run,
+    run_stage_with_tracking,
 )
 from tabular_shenanigans.train import run_training_workflow
 
@@ -101,46 +99,6 @@ def _prepare_competition_stage(config: AppConfig):
     return dataset_context, prepared_context
 
 
-def _build_train_tracking_tags(config: AppConfig) -> dict[str, object]:
-    candidate = config.experiment.candidate
-    tags: dict[str, object] = {
-        "candidate_id": candidate.candidate_id,
-        "candidate_type": candidate.candidate_type,
-    }
-    if config.is_model_candidate:
-        tags["model_registry_key"] = config.resolved_model_registry_key
-        tags["model_family"] = candidate.model_family
-        tags["feature_recipe_id"] = candidate.feature_recipe_id
-        tags["numeric_preprocessor"] = candidate.numeric_preprocessor
-        tags["categorical_preprocessor"] = candidate.categorical_preprocessor
-        tags["preprocessing_scheme_id"] = candidate.preprocessing_scheme_id
-        return tags
-
-    tags["base_candidate_count"] = len(candidate.base_candidate_ids)
-    return tags
-
-
-def _run_prepare_stage_with_tracking(
-    config: AppConfig,
-    pipeline_invocation_id: str,
-):
-    tracking_context = nullcontext()
-    if is_tracking_enabled(config):
-        tracking_context = start_stage_run(
-            config=config,
-            stage="prepare",
-            pipeline_invocation_id=pipeline_invocation_id,
-        )
-
-    with tracking_context:
-        if is_tracking_enabled(config):
-            log_runtime_config(config)
-        dataset_context, prepared_context = _prepare_competition_stage(config)
-        if is_tracking_enabled(config):
-            log_prepare_outputs(prepared_context)
-        return dataset_context, prepared_context
-
-
 def _run_eda_stage(config: AppConfig) -> None:
     _ensure_data_ready(config)
     dataset_context = _load_shared_dataset_context(config)
@@ -158,29 +116,6 @@ def _run_train_stage(
     candidate_dir = run_training_workflow(config=config, dataset_context=dataset_context)
     print(f"Candidate artifacts ready: {candidate_dir}")
     return candidate_dir
-
-
-def _run_train_stage_with_tracking(
-    config: AppConfig,
-    pipeline_invocation_id: str,
-    dataset_context=None,
-):
-    tracking_context = nullcontext()
-    if is_tracking_enabled(config):
-        tracking_context = start_stage_run(
-            config=config,
-            stage="train",
-            pipeline_invocation_id=pipeline_invocation_id,
-            extra_tags=_build_train_tracking_tags(config),
-        )
-
-    with tracking_context:
-        if is_tracking_enabled(config):
-            log_runtime_config(config)
-        candidate_dir = _run_train_stage(config=config, dataset_context=dataset_context)
-        if is_tracking_enabled(config):
-            log_train_outputs(candidate_dir=candidate_dir)
-        return candidate_dir
 
 
 def _run_submit_stage(
@@ -208,33 +143,6 @@ def _run_submit_stage(
     return submission_result
 
 
-def _run_submit_stage_with_tracking(
-    config: AppConfig,
-    pipeline_invocation_id: str,
-    candidate_id: str | None = None,
-):
-    resolved_candidate_id = candidate_id or config.experiment.candidate.candidate_id
-    tracking_context = nullcontext()
-    if is_tracking_enabled(config):
-        tracking_context = start_stage_run(
-            config=config,
-            stage="submit",
-            pipeline_invocation_id=pipeline_invocation_id,
-            extra_tags={"candidate_id": resolved_candidate_id},
-        )
-
-    with tracking_context:
-        if is_tracking_enabled(config):
-            log_runtime_config(config)
-        submission_result = _run_submit_stage(
-            config=config,
-            candidate_id=resolved_candidate_id,
-        )
-        if is_tracking_enabled(config):
-            log_submit_outputs(submission_result=submission_result)
-        return submission_result
-
-
 def _run_submission_refresh_stage(config: AppConfig):
     refresh_result = run_submission_refresh(config)
     print(
@@ -247,43 +155,32 @@ def _run_submission_refresh_stage(config: AppConfig):
     return refresh_result
 
 
-def _run_submission_refresh_stage_with_tracking(
-    config: AppConfig,
-    pipeline_invocation_id: str,
-):
-    tracking_context = nullcontext()
-    if is_tracking_enabled(config):
-        tracking_context = start_stage_run(
-            config=config,
-            stage="refresh-submissions",
-            pipeline_invocation_id=pipeline_invocation_id,
-        )
-
-    with tracking_context:
-        if is_tracking_enabled(config):
-            log_runtime_config(config)
-        refresh_result = _run_submission_refresh_stage(config)
-        if is_tracking_enabled(config):
-            log_submission_refresh_outputs(refresh_result)
-        return refresh_result
-
-
 def _run_full_pipeline(
     config: AppConfig,
     pipeline_invocation_id: str,
 ) -> None:
-    dataset_context, _ = _run_prepare_stage_with_tracking(
+    dataset_context, _ = run_stage_with_tracking(
         config=config,
+        stage="prepare",
         pipeline_invocation_id=pipeline_invocation_id,
+        stage_fn=lambda: _prepare_competition_stage(config),
+        result_logger=log_prepare_stage_outputs,
     )
-    _run_train_stage_with_tracking(
+    run_stage_with_tracking(
         config=config,
+        stage="train",
         pipeline_invocation_id=pipeline_invocation_id,
-        dataset_context=dataset_context,
+        stage_fn=lambda: _run_train_stage(config=config, dataset_context=dataset_context),
+        extra_tags=build_train_tracking_tags(config),
+        result_logger=log_train_outputs,
     )
-    _run_submit_stage_with_tracking(
+    run_stage_with_tracking(
         config=config,
+        stage="submit",
         pipeline_invocation_id=pipeline_invocation_id,
+        stage_fn=lambda: _run_submit_stage(config=config),
+        extra_tags={"candidate_id": config.experiment.candidate.candidate_id},
+        result_logger=log_submit_outputs,
     )
 
 
@@ -303,9 +200,12 @@ def main(argv: list[str] | None = None) -> None:
         return
 
     if args.stage == "prepare":
-        _run_prepare_stage_with_tracking(
+        run_stage_with_tracking(
             config=config,
+            stage="prepare",
             pipeline_invocation_id=pipeline_invocation_id,
+            stage_fn=lambda: _prepare_competition_stage(config),
+            result_logger=log_prepare_stage_outputs,
         )
         return
 
@@ -314,24 +214,38 @@ def main(argv: list[str] | None = None) -> None:
         return
 
     if args.stage == "train":
-        _run_train_stage_with_tracking(
+        run_stage_with_tracking(
             config=config,
+            stage="train",
             pipeline_invocation_id=pipeline_invocation_id,
+            stage_fn=lambda: _run_train_stage(config=config),
+            extra_tags=build_train_tracking_tags(config),
+            result_logger=log_train_outputs,
         )
         return
 
     if args.stage == "refresh-submissions":
-        _run_submission_refresh_stage_with_tracking(
+        run_stage_with_tracking(
             config=config,
+            stage="refresh-submissions",
             pipeline_invocation_id=pipeline_invocation_id,
+            stage_fn=lambda: _run_submission_refresh_stage(config),
+            result_logger=log_submission_refresh_outputs,
         )
         return
 
     if args.stage == "submit":
-        _run_submit_stage_with_tracking(
+        resolved_candidate_id = args.candidate_id or config.experiment.candidate.candidate_id
+        run_stage_with_tracking(
             config=config,
+            stage="submit",
             pipeline_invocation_id=pipeline_invocation_id,
-            candidate_id=args.candidate_id,
+            stage_fn=lambda: _run_submit_stage(
+                config=config,
+                candidate_id=resolved_candidate_id,
+            ),
+            extra_tags={"candidate_id": resolved_candidate_id},
+            result_logger=log_submit_outputs,
         )
         return
 

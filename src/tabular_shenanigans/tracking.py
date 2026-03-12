@@ -1,17 +1,16 @@
 import json
-from collections.abc import Iterator, Mapping
-from contextlib import contextmanager
+from collections.abc import Callable, Iterator, Mapping
+from contextlib import contextmanager, nullcontext
 from dataclasses import asdict
 from datetime import datetime, timezone
 from pathlib import Path
+from typing import TypeVar
 
 from tabular_shenanigans.candidate_artifacts import json_ready, load_candidate_manifest
 from tabular_shenanigans.config import AppConfig
 from tabular_shenanigans.submission_history import SubmissionRefreshResult
 
-
-def is_tracking_enabled(config: AppConfig) -> bool:
-    return config.experiment.tracking.enabled
+StageResult = TypeVar("StageResult")
 
 
 def make_pipeline_invocation_id() -> str:
@@ -92,6 +91,52 @@ def start_stage_run(
         mlflow.end_run(status="FINISHED")
 
 
+def build_train_tracking_tags(config: AppConfig) -> dict[str, object]:
+    candidate = config.experiment.candidate
+    tags: dict[str, object] = {
+        "candidate_id": candidate.candidate_id,
+        "candidate_type": candidate.candidate_type,
+    }
+    if config.is_model_candidate:
+        tags["model_registry_key"] = config.resolved_model_registry_key
+        tags["model_family"] = candidate.model_family
+        tags["feature_recipe_id"] = candidate.feature_recipe_id
+        tags["numeric_preprocessor"] = candidate.numeric_preprocessor
+        tags["categorical_preprocessor"] = candidate.categorical_preprocessor
+        tags["preprocessing_scheme_id"] = candidate.preprocessing_scheme_id
+        return tags
+
+    tags["base_candidate_count"] = len(candidate.base_candidate_ids)
+    return tags
+
+
+def run_stage_with_tracking(
+    config: AppConfig,
+    stage: str,
+    pipeline_invocation_id: str,
+    stage_fn: Callable[[], StageResult],
+    extra_tags: Mapping[str, object] | None = None,
+    result_logger: Callable[[StageResult], None] | None = None,
+) -> StageResult:
+    tracking_enabled = config.experiment.tracking.enabled
+    tracking_context = nullcontext()
+    if tracking_enabled:
+        tracking_context = start_stage_run(
+            config=config,
+            stage=stage,
+            pipeline_invocation_id=pipeline_invocation_id,
+            extra_tags=extra_tags,
+        )
+
+    with tracking_context:
+        if tracking_enabled:
+            log_runtime_config(config)
+        stage_result = stage_fn()
+        if tracking_enabled and result_logger is not None:
+            result_logger(stage_result)
+        return stage_result
+
+
 def log_runtime_config(config: AppConfig) -> None:
     mlflow = _load_mlflow()
     mlflow.log_dict(config.model_dump(mode="json"), "config/runtime_config.json")
@@ -106,6 +151,11 @@ def log_prepare_outputs(prepared_context) -> None:
     mlflow.log_artifact(str(prepared_context.manifest_path), "prepared_context")
     mlflow.log_artifact(str(prepared_context.folds_path), "prepared_context")
     mlflow.log_artifacts(str(prepared_context.report_dir), "reports")
+
+
+def log_prepare_stage_outputs(stage_result: tuple[object, object]) -> None:
+    _, prepared_context = stage_result
+    log_prepare_outputs(prepared_context)
 
 
 def log_train_outputs(candidate_dir: Path) -> None:
