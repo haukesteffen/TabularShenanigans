@@ -149,7 +149,7 @@ Current `experiment.candidate` contract:
   - `base_candidate_ids`: list of at least two existing compatible candidate IDs under the same competition
   - optional `weights`: positive numeric weights with equal-weight default
 
-Blend candidates validate that all base candidates share the same competition slug, task type, primary metric, resolved schema, frozen fold assignments, OOF row order, and test ID order.
+Blend candidates validate that all base candidates share the same competition slug, task type, primary metric, resolved schema, frozen fold assignments, OOF row order, and test ID order. For binary `roc_auc` and `log_loss` blends, base candidates must also share the same saved `positive_label`, `negative_label`, and `observed_label_pair` contract.
 
 Supported `model_family + preprocessor` combinations for model candidates:
 - regression: `ridge + onehot`, `elasticnet + onehot`, `random_forest + ordinal`, `extra_trees + ordinal`, `hist_gradient_boosting + ordinal`, `hist_gradient_boosting + frequency`, `lightgbm + ordinal`, `lightgbm + frequency`, `catboost + native`, `xgboost + ordinal`, `xgboost + frequency`
@@ -216,6 +216,7 @@ Manual verification for blend candidates:
 - confirm `artifacts/<competition_slug>/candidates/<candidate_id>/candidate.json` is written with `candidate_type: blend` and component provenance
 - confirm `artifacts/<competition_slug>/candidates/<candidate_id>/blend_summary.csv` records component candidate IDs, weights, component CV scores, and OOF correlation hints
 - confirm `artifacts/<competition_slug>/candidates/<candidate_id>/test_predictions.csv` is written without retraining the base candidates
+- for binary `roc_auc` and `log_loss` blends, confirm mismatched base-candidate label contracts fail before predictions are averaged
 - run `uv run python main.py submit`
 - confirm `artifacts/<competition_slug>/candidates/<candidate_id>/submission.csv` is written and validated against `sample_submission.csv`
 

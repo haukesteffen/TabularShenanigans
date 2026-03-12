@@ -20,7 +20,7 @@ The intended operating scope is Kaggle Playground Series tabular competitions. C
 9. For model candidates, resolve the current `experiment.candidate.model_family + preprocessor` combination to one internal canonical model recipe, then train that one configured candidate:
   - regression: `ridge + onehot`, `elasticnet + onehot`, `random_forest + ordinal`, `extra_trees + ordinal`, `hist_gradient_boosting + ordinal`, `hist_gradient_boosting + frequency`, `lightgbm + ordinal`, `lightgbm + frequency`, `catboost + native`, `xgboost + ordinal`, `xgboost + frequency`
   - binary classification: `logistic_regression + onehot`, `random_forest + ordinal`, `extra_trees + ordinal`, `hist_gradient_boosting + ordinal`, `hist_gradient_boosting + frequency`, `lightgbm + ordinal`, `lightgbm + frequency`, `catboost + native`, `xgboost + ordinal`, `xgboost + frequency`
-10. For blend candidates, load compatible base candidate artifacts from `artifacts/<competition_slug>/candidates/<base_candidate_id>/`, validate shared schema plus frozen-fold alignment, and materialize blended OOF plus test predictions without retraining the base candidates.
+10. For blend candidates, load compatible base candidate artifacts from `artifacts/<competition_slug>/candidates/<base_candidate_id>/`, validate shared schema plus frozen-fold alignment, validate the binary probability label contract when `primary_metric` is `roc_auc` or `log_loss`, and materialize blended OOF plus test predictions without retraining the base candidates.
 11. When `experiment.candidate.optimization.enabled=true` for a model candidate, `train` runs an Optuna study on the frozen fold assignments, retrains the best trial into the standard candidate artifact layout, and writes optimization metadata inside the candidate directory.
 12. Write one candidate artifact directory under `artifacts/<competition_slug>/candidates/<candidate_id>/` with `candidate.json`, `fold_metrics.csv`, `oof_predictions.csv`, `test_predictions.csv`, and optional candidate-type-specific files such as `blend_summary.csv` or optimization metadata.
 13. Validate predictions against `sample_submission.csv`, including exact ID content and order, using `candidate.json` as the submission metadata contract, apply metric-aware binary prediction validation, write `submission.csv` in the selected candidate directory, and optionally submit to Kaggle.
@@ -196,6 +196,7 @@ Manual verification steps for each target:
 - model candidates: `experiment.candidate.feature_recipe_id` must resolve to one supported tracked recipe; `identity` is the default path for new competitions
 - model candidates: `experiment.candidate.model_family + experiment.candidate.preprocessor` must resolve to one supported canonical recipe for the configured task
 - blend candidates: `experiment.candidate.base_candidate_ids` must resolve to existing compatible candidate artifacts for the same competition context
+- binary probability blend candidates: all base candidates must share the same saved `positive_label`, `negative_label`, and `observed_label_pair` contract
 - feature recipes are experiment-scoped, deterministic, leakage-safe transforms applied after raw feature extraction and before preprocessing
 - feature recipes must preserve row counts and row order and must produce identical train/test feature columns
 - training must write exactly one candidate artifact directory keyed by `candidate_id`
@@ -254,7 +255,7 @@ Hard-error cases include:
 - Unsupported metric for chosen task -> hard error
 - Any CV/training fit or scoring failure -> hard error
 - Blend base candidate artifact missing `candidate.json`, `oof_predictions.csv`, or `test_predictions.csv` -> hard error
-- Blend base candidate mismatch in competition slug, task type, primary metric, schema, OOF row order, fold assignments, or test ID order -> hard error
+- Blend base candidate mismatch in competition slug, task type, primary metric, schema, binary probability label contract, OOF row order, fold assignments, or test ID order -> hard error
 - Fold assignment gaps in OOF generation -> hard error
 - Candidate artifact directory already exists for the configured `candidate_id` -> hard error
 - Missing configured candidate artifacts at submit time -> hard error
