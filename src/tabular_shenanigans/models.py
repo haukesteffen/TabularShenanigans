@@ -363,7 +363,7 @@ def _build_logreg_tuning_space(trial: object) -> dict[str, object]:
     params: dict[str, object] = {
         "C": trial.suggest_float("C", 1e-4, 1e3, log=True),
         "class_weight": trial.suggest_categorical("class_weight", [None, "balanced"]),
-        "max_iter": trial.suggest_categorical("max_iter", [1000, 2000, 4000]),
+        "max_iter": 5000,
         "solver": solver,
     }
 
