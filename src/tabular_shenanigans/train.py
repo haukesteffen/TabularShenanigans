@@ -38,7 +38,7 @@ def _resolve_training_model_spec(
         return model_spec
     candidate = config.experiment.candidate
     return TrainingModelSpec(
-        model_id=config.resolved_model_id,
+        model_registry_key=config.resolved_model_registry_key,
         parameter_overrides=candidate.model_params or None,
     )
 
@@ -58,7 +58,7 @@ def _build_config_snapshot(
         id_column=id_column,
         label_column=label_column,
     )
-    config_snapshot["resolved_model_id"] = model_spec.model_id
+    config_snapshot["resolved_model_registry_key"] = model_spec.model_registry_key
     config_snapshot["resolved_numeric_preprocessor"] = candidate.numeric_preprocessor
     config_snapshot["resolved_categorical_preprocessor"] = candidate.categorical_preprocessor
     config_snapshot["resolved_preprocessing_scheme_id"] = candidate.preprocessing_scheme_id
@@ -107,8 +107,8 @@ def _build_candidate_manifest(
         "feature_columns": training_context.x_train_features.columns.tolist(),
         "numeric_preprocessor": candidate.numeric_preprocessor,
         "categorical_preprocessor": candidate.categorical_preprocessor,
-        "model_id": model_result.model_id,
-        "model_name": model_result.model_name,
+        "model_registry_key": model_result.model_registry_key,
+        "estimator_name": model_result.estimator_name,
         "preprocessing_scheme_id": model_result.preprocessing_scheme_id,
         "model_params": model_result.model_params,
         "cv_summary": model_result.cv_summary.to_dict(),
@@ -193,7 +193,7 @@ def run_training(
     print(
         f"Training candidate: {candidate.candidate_id} | "
         f"feature_recipe={candidate.feature_recipe_id} | "
-        f"model={model_result.model_id} ({model_result.model_name}) | "
+        f"estimator={model_result.estimator_name} | "
         f"preprocessing={model_result.preprocessing_scheme_id} | "
         f"features={training_context.x_train_features.shape[1]} | "
         f"CV {competition.primary_metric}: mean={model_result.cv_summary.metric_mean:.6f}, "

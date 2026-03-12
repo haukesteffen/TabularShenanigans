@@ -40,7 +40,7 @@ def _require_columns(frame: pd.DataFrame, dataset_name: str) -> None:
     missing_columns = [column for column in REQUIRED_COLUMNS if column not in frame.columns]
     if missing_columns:
         raise ValueError(
-            "Feature recipe 's6e3_v1' requires the Telco churn columns used by "
+            "Feature recipe 'fr1' requires the Telco churn columns used by "
             f"playground-series-s6e3. Missing columns in {dataset_name}: {missing_columns}"
         )
 
@@ -103,7 +103,8 @@ def build_s6e3_v1_features(
 
 
 S6E3_V1_FEATURE_RECIPE = FeatureRecipeDefinition(
-    recipe_id="s6e3_v1",
-    recipe_name="S6E3FeatureSetV1",
+    recipe_id="fr1",
+    recipe_name="TelcoChurnFeatureSetV1",
+    recipe_description="Playground Series S6E3 engineered feature set for the Telco churn schema.",
     transform=build_s6e3_v1_features,
 )

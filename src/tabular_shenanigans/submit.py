@@ -17,8 +17,8 @@ SUBMISSION_LEDGER_COLUMNS = [
     "timestamp_utc",
     "competition_slug",
     "candidate_id",
-    "model_id",
-    "model_name",
+    "model_registry_key",
+    "estimator_name",
     "config_fingerprint",
     "submission_path",
     "submit_enabled",
@@ -33,8 +33,8 @@ class SubmissionContext:
     competition_slug: str
     task_type: str
     primary_metric: str
-    model_id: str
-    model_name: str
+    model_registry_key: str
+    estimator_name: str
     metric_name: str
     metric_mean: float
     id_column: str
@@ -116,8 +116,8 @@ def _load_submission_context(
         competition_slug=str(_require_manifest_value(candidate_manifest, "competition_slug")),
         task_type=str(_require_manifest_value(candidate_manifest, "task_type")),
         primary_metric=str(_require_manifest_value(candidate_manifest, "primary_metric")),
-        model_id=str(_require_manifest_value(candidate_manifest, "model_id")),
-        model_name=str(_require_manifest_value(candidate_manifest, "model_name")),
+        model_registry_key=str(_require_manifest_value(candidate_manifest, "model_registry_key")),
+        estimator_name=str(_require_manifest_value(candidate_manifest, "estimator_name")),
         metric_name=str(cv_summary["metric_name"]),
         metric_mean=float(cv_summary["metric_mean"]),
         id_column=str(_require_manifest_value(candidate_manifest, "id_column")),
@@ -278,7 +278,6 @@ def _build_submission_message_from_context(
     if submit_message_prefix:
         message_parts.append(submit_message_prefix.strip())
     message_parts.append(f"candidate={submission_context.candidate_id}")
-    message_parts.append(f"model={submission_context.model_id}")
     message_parts.append(f"{submission_context.metric_name}={submission_context.metric_mean:.6f}")
     return " | ".join(message_parts)
 
@@ -343,8 +342,8 @@ def run_submission(
         "timestamp_utc": datetime.now(timezone.utc).isoformat(),
         "competition_slug": submission_context.competition_slug,
         "candidate_id": submission_context.candidate_id,
-        "model_id": submission_context.model_id,
-        "model_name": submission_context.model_name,
+        "model_registry_key": submission_context.model_registry_key,
+        "estimator_name": submission_context.estimator_name,
         "config_fingerprint": submission_context.config_fingerprint,
         "submission_path": str(submission_path),
         "submit_enabled": submit_config.enabled,

@@ -11,7 +11,7 @@ The intended operating scope is Kaggle Playground Series tabular competitions. C
 4. Load one shared dataset context from `train.csv`, `test.csv`, and `sample_submission.csv`.
 5. Run `prepare` to write report CSVs under `reports/<competition_slug>/`, persist `artifacts/<competition_slug>/competition.json`, and freeze `artifacts/<competition_slug>/folds.csv`.
 6. Resolve `id_column` and `label_column` from `train.csv`, `test.csv`, and `sample_submission.csv`, then prepare raw feature frames from the train/test data with the resolved `id_column` excluded from modeled features.
-7. For model candidates during training and tuning, apply the selected deterministic feature recipe to the raw feature frames. The default `identity` recipe leaves the features unchanged.
+7. For model candidates during training and tuning, apply the selected deterministic feature recipe to the raw feature frames. The default `fr0` recipe leaves the features unchanged.
 8. For model candidates during training, load the frozen fold assignments from `folds.csv` and build fold-local preprocessing from the selected split preprocessing components:
    - numeric:
      - `median`: numeric median imputation
@@ -47,7 +47,7 @@ The default `submit` path supports current candidate artifacts only. Unsupported
 - `src/tabular_shenanigans/candidate_artifacts.py`: shared candidate artifact path resolution, manifest loading, config fingerprint helpers, target-summary generation, and common candidate file writing.
 - `src/tabular_shenanigans/data.py`: competition download, zip access, metric helpers, dataset schema resolution, and sample-submission template loading.
 - `src/tabular_shenanigans/eda.py`: competition-scan EDA summaries written to CSV from the shared dataset context, including missingness, categorical cardinality, target summary, and feature-type counts.
-- `src/tabular_shenanigans/feature_recipes/*`: deterministic experiment-scoped feature transforms, including the `identity` default and tracked competition-specific recipe modules.
+- `src/tabular_shenanigans/feature_recipes/*`: deterministic experiment-scoped feature transforms, including the `fr0` default and tracked competition-specific recipe modules.
 - `src/tabular_shenanigans/model_evaluation.py`: shared prepared training-context construction, reusable CV scoring and prediction generation, resolved feature-schema reuse, and model evaluation contracts consumed by both `train` and `tune`.
 - `src/tabular_shenanigans/models.py`: task-scoped model-family registry, capability-based compatibility checks, tunable-model search spaces, optional booster loading, and estimator construction for supported model families.
 - `src/tabular_shenanigans/preprocess.py`: feature frame preparation, resolved feature-schema inference, split numeric/categorical preprocessing components, and native-frame support for CatBoost.
@@ -93,8 +93,11 @@ Input:
   - shared:
     - `candidate_type` (`model` or `blend`)
     - `candidate_id`
+      - model candidates must follow `<feature_recipe_id>--<preprocessing_scheme_id>--<variant_token>--vN`
+      - blend candidates must follow `blend__vN`
+      - `candidate_id` must not repeat `competition.slug`
   - model candidate:
-    - `feature_recipe_id` (string, default `identity`; resolves to a tracked deterministic feature recipe applied before preprocessing)
+    - `feature_recipe_id` (string, default `fr0`; resolves to a tracked deterministic feature recipe applied before preprocessing)
     - `model_family`
       - regression: `ridge`, `elasticnet`, `random_forest`, `extra_trees`, `hist_gradient_boosting`, `lightgbm`, `catboost`, `xgboost`
       - binary classification: `logistic_regression`, `random_forest`, `extra_trees`, `hist_gradient_boosting`, `lightgbm`, `catboost`, `xgboost`
@@ -127,13 +130,13 @@ Binary prediction artifact contract:
 The config is validated by Pydantic with `extra="forbid"`. Unknown keys, schema mismatches, and missing required fields are hard errors.
 Configured metrics are normalized to the internal metric names during config validation.
 The old flat config layout is unsupported and fails fast.
-Runtime modules consume `config.competition` and `config.experiment` directly; `AppConfig` keeps only minimal derived helpers such as candidate-type checks and resolved model ID lookup.
-The current runtime resolves `experiment.candidate.feature_recipe_id` to one tracked feature recipe for model candidates; built-in recipe IDs are `identity` and `s6e3_v1`.
+Runtime modules consume `config.competition` and `config.experiment` directly; `AppConfig` keeps only minimal derived helpers such as candidate-type checks and resolved model registry key lookup.
+The current runtime resolves `experiment.candidate.feature_recipe_id` to one tracked feature recipe for model candidates; built-in recipe IDs are `fr0` and `fr1`.
 Model candidates configure preprocessing with split selectors:
 - `numeric_preprocessor`: `median`, `standardize`, or `kbins`
 - `categorical_preprocessor`: `onehot`, `ordinal`, `frequency`, or `native`
-The current runtime resolves `experiment.candidate.model_family` to one internal canonical `model_id` for model candidates, and records `preprocessing_scheme_id` separately from the model ID.
-Blend candidates consume compatible existing candidate artifacts and materialize a synthetic `blend_weighted_average` artifact model ID.
+The current runtime resolves `experiment.candidate.model_family` to one internal canonical `model_registry_key` for model candidates, and records `preprocessing_scheme_id` separately from the registry key.
+Blend candidates consume compatible existing candidate artifacts and materialize a synthetic `blend_weighted_average` internal registry key.
 optimization requires at least one stopping condition: `experiment.candidate.optimization.n_trials` or `experiment.candidate.optimization.timeout_seconds`.
 enabled optimization is consumed by `train`, applies to model candidates only, and reuses one prepared training context for Optuna scoring plus the final best-trial retrain within the same invocation.
 Frequency encoding is fold-local and maps unseen categorical values to `0.0`.
@@ -181,9 +184,9 @@ Manual verification steps for each target:
   - `fold_metrics.csv`
   - `oof_predictions.csv`
   - `test_predictions.csv`
-  - `submission.csv` when prepared or submitted
+- `submission.csv` when prepared or submitted
 - binary `accuracy` candidates and blends also include `test_prediction_probabilities.csv`, and `candidate.json` records `binary_accuracy_blend_rule` plus `binary_accuracy_test_probability_path`
-- model candidates also record `feature_recipe_id`, `numeric_preprocessor`, `categorical_preprocessor`, `preprocessing_scheme_id`, and the engineered `feature_columns`
+- model candidates also record `feature_recipe_id`, `numeric_preprocessor`, `categorical_preprocessor`, `preprocessing_scheme_id`, `model_registry_key`, `estimator_name`, and the engineered `feature_columns`
 - blend candidates also include `blend_summary.csv` and record component candidate provenance plus normalized weights in `candidate.json`
 - optimized model candidates record `tuning_provenance` in `candidate.json`
 - optimized candidates also include:
@@ -207,7 +210,7 @@ Manual verification steps for each target:
 - `prepare` is the competition-level source of truth for `competition.json` and `folds.csv`
 - `train` must consume the prepared fold assignments and fail if the prepared context no longer matches the current config or resolved dataset schema
 - the current runtime supports one `experiment.candidate` of type `model` or `blend`
-- model candidates: `experiment.candidate.feature_recipe_id` must resolve to one supported tracked recipe; `identity` is the default path for new competitions
+- model candidates: `experiment.candidate.feature_recipe_id` must resolve to one supported tracked recipe; `fr0` is the default path for new competitions
 - model candidates: `experiment.candidate.model_family` must resolve to one supported canonical model for the configured task
 - model candidates: `experiment.candidate.numeric_preprocessor` and `experiment.candidate.categorical_preprocessor` must each resolve to one supported preprocessing component
 - model candidates: `categorical_preprocessor: native` is only valid with `model_family: catboost`
@@ -220,7 +223,7 @@ Manual verification steps for each target:
 - rerunning an existing `candidate_id` must fail instead of mutating an existing artifact directory
 - enabled optimization is part of `train`, applies to model candidates only, reuses one prepared training context for scoring and retraining, and retrains exactly one tuned candidate into the normal candidate artifact layout
 - enabled optimization must have at least one stopping condition: `experiment.candidate.optimization.n_trials` or `experiment.candidate.optimization.timeout_seconds`
-- `submit` must resolve one candidate by `candidate_id`, defaulting to `config.candidate_id`
+- `submit` must resolve one candidate by `candidate_id`, defaulting to `config.experiment.candidate.candidate_id`
 - `categorical_preprocessor: native` must preserve categorical feature positions through preprocessing so CatBoost can receive `cat_features`
 - Kaggle CLI and authentication are expected to be preconfigured
 - Competition zip contents are expected to include `train.csv`, `test.csv`, and `sample_submission.csv`

@@ -36,15 +36,15 @@ class CvSummary:
 
 @dataclass(frozen=True)
 class ModelRunResult:
-    model_id: str
-    model_name: str
+    model_registry_key: str
+    estimator_name: str
     preprocessing_scheme_id: str
     model_params: dict[str, object]
     cv_summary: CvSummary
 
     def to_fingerprint_entry(self) -> dict[str, object]:
         return {
-            "model_id": self.model_id,
+            "model_registry_key": self.model_registry_key,
             "preprocessing_scheme_id": self.preprocessing_scheme_id,
             "model_params": self.model_params,
         }
@@ -52,7 +52,7 @@ class ModelRunResult:
 
 @dataclass(frozen=True)
 class TrainingModelSpec:
-    model_id: str
+    model_registry_key: str
     parameter_overrides: dict[str, object] | None = None
 
 
@@ -176,12 +176,12 @@ def _run_cv_evaluation(
 ) -> tuple[ModelCvEvaluation, np.ndarray | None, np.ndarray | None, np.ndarray | None]:
     model_definition, _, model_params = build_model(
         task_type,
-        model_spec.model_id,
+        model_spec.model_registry_key,
         cv_random_state,
         parameter_overrides=model_spec.parameter_overrides,
     )
-    resolved_model_id = model_definition.model_id
-    model_name = model_definition.model_name
+    resolved_model_registry_key = model_definition.model_id
+    estimator_name = model_definition.model_name
     preprocessing_scheme_id = training_context.preprocessing_scheme_id
 
     oof_predictions = (
@@ -191,7 +191,7 @@ def _run_cv_evaluation(
     )
     test_predictions_per_fold = [] if collect_prediction_artifacts else None
     fold_metrics: list[dict[str, object]] = []
-    use_named_columns = model_name.startswith("LGBM")
+    use_named_columns = estimator_name.startswith("LGBM")
     binary_prediction_kind = None
     if task_type == "binary":
         binary_prediction_kind = get_binary_prediction_kind(primary_metric)
@@ -223,7 +223,7 @@ def _run_cv_evaluation(
 
         _, model, _ = build_model(
             task_type,
-            resolved_model_id,
+            resolved_model_registry_key,
             cv_random_state,
             parameter_overrides=model_spec.parameter_overrides,
         )
@@ -275,8 +275,8 @@ def _run_cv_evaluation(
     fold_metrics_df = pd.DataFrame(fold_metrics)
     cv_evaluation = ModelCvEvaluation(
         model_result=ModelRunResult(
-            model_id=resolved_model_id,
-            model_name=model_name,
+            model_registry_key=resolved_model_registry_key,
+            estimator_name=estimator_name,
             preprocessing_scheme_id=preprocessing_scheme_id,
             model_params=model_params,
             cv_summary=CvSummary(
