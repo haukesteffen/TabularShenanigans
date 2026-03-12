@@ -181,6 +181,9 @@ Model candidate contract:
 - optional `model_params` (manual estimator overrides; when omitted, the runtime uses repo defaults plus estimator library defaults)
 - optional `optimization`
 
+Optimization note:
+- logistic regression Optuna trials fix `max_iter=5000` and do not sample `max_iter`
+
 Blend candidate contract:
 - `candidate_type: blend`
 - `base_candidate_ids`
