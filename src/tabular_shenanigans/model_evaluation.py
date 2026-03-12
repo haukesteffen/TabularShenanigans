@@ -12,6 +12,7 @@ from tabular_shenanigans.feature_recipes import apply_feature_recipe
 from tabular_shenanigans.models import build_model, build_model_fit_kwargs
 from tabular_shenanigans.preprocess import (
     ResolvedFeatureSchema,
+    build_preprocessing_scheme_id,
     build_preprocessor_from_schema,
     prepare_feature_frames,
     resolve_feature_schema,
@@ -45,6 +46,7 @@ class ModelRunResult:
     def to_fingerprint_entry(self) -> dict[str, object]:
         return {
             "model_id": self.model_id,
+            "preprocessing_scheme_id": self.preprocessing_scheme_id,
             "model_params": self.model_params,
         }
 
@@ -84,6 +86,9 @@ class PreparedTrainingContext:
     observed_label_pair: tuple[object, object] | None
     target_summary: dict[str, object]
     feature_schema: ResolvedFeatureSchema
+    numeric_preprocessor: str
+    categorical_preprocessor: str
+    preprocessing_scheme_id: str
 
 
 def build_prepared_training_context(
@@ -153,6 +158,12 @@ def build_prepared_training_context(
         observed_label_pair=observed_label_pair,
         target_summary=target_summary,
         feature_schema=feature_schema,
+        numeric_preprocessor=config.numeric_preprocessor,
+        categorical_preprocessor=config.categorical_preprocessor,
+        preprocessing_scheme_id=build_preprocessing_scheme_id(
+            numeric_preprocessor_id=config.numeric_preprocessor,
+            categorical_preprocessor_id=config.categorical_preprocessor,
+        ),
     )
 
 
@@ -172,7 +183,7 @@ def _run_cv_evaluation(
     )
     resolved_model_id = model_definition.model_id
     model_name = model_definition.model_name
-    preprocessing_scheme_id = model_definition.preprocessing_scheme_id
+    preprocessing_scheme_id = training_context.preprocessing_scheme_id
 
     oof_predictions = (
         np.zeros(training_context.x_train_features.shape[0], dtype=float)
@@ -193,8 +204,9 @@ def _run_cv_evaluation(
         y_fold_valid = training_context.y_train.iloc[valid_idx]
 
         preprocessor = build_preprocessor_from_schema(
-            scheme_id=preprocessing_scheme_id,
             feature_schema=training_context.feature_schema,
+            numeric_preprocessor_id=training_context.numeric_preprocessor,
+            categorical_preprocessor_id=training_context.categorical_preprocessor,
         )
         if use_named_columns and hasattr(preprocessor, "set_output"):
             preprocessor.set_output(transform="pandas")
@@ -204,7 +216,7 @@ def _run_cv_evaluation(
         if collect_prediction_artifacts:
             x_test_processed = preprocessor.transform(training_context.x_test_features)
 
-        if preprocessing_scheme_id != "native" and not use_named_columns:
+        if training_context.categorical_preprocessor != "native" and not use_named_columns:
             x_fold_train_processed = np.asarray(x_fold_train_processed)
             x_fold_valid_processed = np.asarray(x_fold_valid_processed)
             if x_test_processed is not None:
@@ -221,6 +233,7 @@ def _run_cv_evaluation(
             x_train_processed=x_fold_train_processed,
             numeric_columns=training_context.feature_schema.numeric_columns,
             categorical_columns=training_context.feature_schema.categorical_columns,
+            uses_native_categorical_preprocessing=training_context.categorical_preprocessor == "native",
         )
         model.fit(x_fold_train_processed, y_fold_train, **model_fit_kwargs)
 

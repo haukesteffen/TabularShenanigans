@@ -23,10 +23,10 @@ TuningSpaceBuilder = Callable[[object], dict[str, object]]
 class ModelDefinition:
     model_id: str
     model_name: str
-    preprocessing_scheme_id: str
     builder: ModelBuilder
     fit_kwargs_builder: FitKwargsBuilder | None = None
     tuning_space_builder: TuningSpaceBuilder | None = None
+    supports_native_categorical_preprocessing: bool = False
 
 
 class BinaryLabelEncodingClassifier:
@@ -427,6 +427,8 @@ def _build_catboost_fit_kwargs(
     categorical_columns: list[str],
 ) -> dict[str, object]:
     del numeric_columns
+    if not categorical_columns:
+        return {}
     if not isinstance(x_train_processed, pd.DataFrame):
         raise ValueError("CatBoost native preprocessing must produce a pandas DataFrame.")
     cat_feature_indices = [x_train_processed.columns.get_loc(column) for column in categorical_columns]
@@ -434,234 +436,122 @@ def _build_catboost_fit_kwargs(
 
 
 DEFAULT_MODEL_ID_BY_TASK = {
-    "regression": "onehot_elasticnet",
-    "binary": "onehot_logreg",
+    "regression": "elasticnet",
+    "binary": "logistic_regression",
 }
 
 MODEL_REGISTRY: dict[str, dict[str, ModelDefinition]] = {
     "regression": {
-        "onehot_ridge": ModelDefinition(
-            model_id="onehot_ridge",
+        "ridge": ModelDefinition(
+            model_id="ridge",
             model_name="Ridge",
-            preprocessing_scheme_id="onehot",
             builder=_build_ridge,
         ),
-        "onehot_elasticnet": ModelDefinition(
-            model_id="onehot_elasticnet",
+        "elasticnet": ModelDefinition(
+            model_id="elasticnet",
             model_name="ElasticNet",
-            preprocessing_scheme_id="onehot",
             builder=_build_elasticnet,
         ),
-        "ordinal_randomforest": ModelDefinition(
-            model_id="ordinal_randomforest",
+        "random_forest": ModelDefinition(
+            model_id="random_forest",
             model_name="RandomForestRegressor",
-            preprocessing_scheme_id="ordinal",
             builder=_build_random_forest_regressor,
             tuning_space_builder=_build_random_forest_tuning_space,
         ),
-        "ordinal_extratrees": ModelDefinition(
-            model_id="ordinal_extratrees",
+        "extra_trees": ModelDefinition(
+            model_id="extra_trees",
             model_name="ExtraTreesRegressor",
-            preprocessing_scheme_id="ordinal",
             builder=_build_extra_trees_regressor,
             tuning_space_builder=_build_extra_trees_tuning_space,
         ),
-        "ordinal_hgb": ModelDefinition(
-            model_id="ordinal_hgb",
+        "hist_gradient_boosting": ModelDefinition(
+            model_id="hist_gradient_boosting",
             model_name="HistGradientBoostingRegressor",
-            preprocessing_scheme_id="ordinal",
             builder=_build_hist_gradient_boosting_regressor,
             tuning_space_builder=_build_hist_gradient_boosting_tuning_space,
         ),
-        "frequency_hgb": ModelDefinition(
-            model_id="frequency_hgb",
-            model_name="HistGradientBoostingRegressor",
-            preprocessing_scheme_id="frequency",
-            builder=_build_hist_gradient_boosting_regressor,
-            tuning_space_builder=_build_hist_gradient_boosting_tuning_space,
-        ),
-        "ordinal_lightgbm": ModelDefinition(
-            model_id="ordinal_lightgbm",
+        "lightgbm": ModelDefinition(
+            model_id="lightgbm",
             model_name="LGBMRegressor",
-            preprocessing_scheme_id="ordinal",
             builder=_build_lightgbm_regressor,
             tuning_space_builder=_build_lightgbm_tuning_space,
         ),
-        "frequency_lightgbm": ModelDefinition(
-            model_id="frequency_lightgbm",
-            model_name="LGBMRegressor",
-            preprocessing_scheme_id="frequency",
-            builder=_build_lightgbm_regressor,
-            tuning_space_builder=_build_lightgbm_tuning_space,
-        ),
-        "native_catboost": ModelDefinition(
-            model_id="native_catboost",
+        "catboost": ModelDefinition(
+            model_id="catboost",
             model_name="CatBoostRegressor",
-            preprocessing_scheme_id="native",
             builder=_build_catboost_regressor,
             fit_kwargs_builder=_build_catboost_fit_kwargs,
             tuning_space_builder=_build_catboost_tuning_space,
+            supports_native_categorical_preprocessing=True,
         ),
-        "ordinal_xgboost": ModelDefinition(
-            model_id="ordinal_xgboost",
+        "xgboost": ModelDefinition(
+            model_id="xgboost",
             model_name="XGBRegressor",
-            preprocessing_scheme_id="ordinal",
-            builder=_build_xgboost_regressor,
-            tuning_space_builder=_build_xgboost_tuning_space,
-        ),
-        "frequency_xgboost": ModelDefinition(
-            model_id="frequency_xgboost",
-            model_name="XGBRegressor",
-            preprocessing_scheme_id="frequency",
             builder=_build_xgboost_regressor,
             tuning_space_builder=_build_xgboost_tuning_space,
         ),
     },
     "binary": {
-        "onehot_logreg": ModelDefinition(
-            model_id="onehot_logreg",
+        "logistic_regression": ModelDefinition(
+            model_id="logistic_regression",
             model_name="LogisticRegression",
-            preprocessing_scheme_id="onehot",
             builder=_build_logreg,
             tuning_space_builder=_build_logreg_tuning_space,
         ),
-        "ordinal_randomforest": ModelDefinition(
-            model_id="ordinal_randomforest",
+        "random_forest": ModelDefinition(
+            model_id="random_forest",
             model_name="RandomForestClassifier",
-            preprocessing_scheme_id="ordinal",
             builder=_build_random_forest_classifier,
             tuning_space_builder=_build_random_forest_tuning_space,
         ),
-        "ordinal_extratrees": ModelDefinition(
-            model_id="ordinal_extratrees",
+        "extra_trees": ModelDefinition(
+            model_id="extra_trees",
             model_name="ExtraTreesClassifier",
-            preprocessing_scheme_id="ordinal",
             builder=_build_extra_trees_classifier,
             tuning_space_builder=_build_extra_trees_tuning_space,
         ),
-        "ordinal_hgb": ModelDefinition(
-            model_id="ordinal_hgb",
+        "hist_gradient_boosting": ModelDefinition(
+            model_id="hist_gradient_boosting",
             model_name="HistGradientBoostingClassifier",
-            preprocessing_scheme_id="ordinal",
             builder=_build_hist_gradient_boosting_classifier,
             tuning_space_builder=_build_hist_gradient_boosting_tuning_space,
         ),
-        "frequency_hgb": ModelDefinition(
-            model_id="frequency_hgb",
-            model_name="HistGradientBoostingClassifier",
-            preprocessing_scheme_id="frequency",
-            builder=_build_hist_gradient_boosting_classifier,
-            tuning_space_builder=_build_hist_gradient_boosting_tuning_space,
-        ),
-        "ordinal_lightgbm": ModelDefinition(
-            model_id="ordinal_lightgbm",
+        "lightgbm": ModelDefinition(
+            model_id="lightgbm",
             model_name="LGBMClassifier",
-            preprocessing_scheme_id="ordinal",
             builder=_build_lightgbm_classifier,
             tuning_space_builder=_build_lightgbm_tuning_space,
         ),
-        "frequency_lightgbm": ModelDefinition(
-            model_id="frequency_lightgbm",
-            model_name="LGBMClassifier",
-            preprocessing_scheme_id="frequency",
-            builder=_build_lightgbm_classifier,
-            tuning_space_builder=_build_lightgbm_tuning_space,
-        ),
-        "native_catboost": ModelDefinition(
-            model_id="native_catboost",
+        "catboost": ModelDefinition(
+            model_id="catboost",
             model_name="CatBoostClassifier",
-            preprocessing_scheme_id="native",
             builder=_build_catboost_classifier,
             fit_kwargs_builder=_build_catboost_fit_kwargs,
             tuning_space_builder=_build_catboost_tuning_space,
+            supports_native_categorical_preprocessing=True,
         ),
-        "ordinal_xgboost": ModelDefinition(
-            model_id="ordinal_xgboost",
+        "xgboost": ModelDefinition(
+            model_id="xgboost",
             model_name="XGBClassifier",
-            preprocessing_scheme_id="ordinal",
-            builder=_build_xgboost_classifier,
-            tuning_space_builder=_build_xgboost_tuning_space,
-        ),
-        "frequency_xgboost": ModelDefinition(
-            model_id="frequency_xgboost",
-            model_name="XGBClassifier",
-            preprocessing_scheme_id="frequency",
             builder=_build_xgboost_classifier,
             tuning_space_builder=_build_xgboost_tuning_space,
         ),
     },
 }
-
-
-CANDIDATE_MODEL_REGISTRY: dict[str, dict[tuple[str, str], str]] = {
-    "regression": {
-        ("ridge", "onehot"): "onehot_ridge",
-        ("elasticnet", "onehot"): "onehot_elasticnet",
-        ("random_forest", "ordinal"): "ordinal_randomforest",
-        ("extra_trees", "ordinal"): "ordinal_extratrees",
-        ("hist_gradient_boosting", "ordinal"): "ordinal_hgb",
-        ("hist_gradient_boosting", "frequency"): "frequency_hgb",
-        ("lightgbm", "ordinal"): "ordinal_lightgbm",
-        ("lightgbm", "frequency"): "frequency_lightgbm",
-        ("catboost", "native"): "native_catboost",
-        ("xgboost", "ordinal"): "ordinal_xgboost",
-        ("xgboost", "frequency"): "frequency_xgboost",
-    },
-    "binary": {
-        ("logistic_regression", "onehot"): "onehot_logreg",
-        ("random_forest", "ordinal"): "ordinal_randomforest",
-        ("extra_trees", "ordinal"): "ordinal_extratrees",
-        ("hist_gradient_boosting", "ordinal"): "ordinal_hgb",
-        ("hist_gradient_boosting", "frequency"): "frequency_hgb",
-        ("lightgbm", "ordinal"): "ordinal_lightgbm",
-        ("lightgbm", "frequency"): "frequency_lightgbm",
-        ("catboost", "native"): "native_catboost",
-        ("xgboost", "ordinal"): "ordinal_xgboost",
-        ("xgboost", "frequency"): "frequency_xgboost",
-    },
-}
-
-
-def _get_task_candidate_model_registry(task_type: str) -> dict[tuple[str, str], str]:
-    try:
-        return CANDIDATE_MODEL_REGISTRY[task_type]
-    except KeyError as exc:
-        raise ValueError(f"Unsupported task_type for candidate model selection: {task_type}") from exc
-
-
-def get_supported_candidate_model_specs(task_type: str) -> list[tuple[str, str, str]]:
-    task_registry = _get_task_candidate_model_registry(task_type)
-    return sorted(
-        (model_family, preprocessor, model_id)
-        for (model_family, preprocessor), model_id in task_registry.items()
-    )
-
-
-def get_tunable_candidate_model_specs(task_type: str) -> list[tuple[str, str, str]]:
-    return sorted(
-        (model_family, preprocessor, model_id)
-        for model_family, preprocessor, model_id in get_supported_candidate_model_specs(task_type)
-        if is_model_tunable(task_type, model_id)
-    )
 
 
 def resolve_candidate_model_id(
     task_type: str,
     model_family: str,
-    preprocessor: str,
 ) -> str:
-    task_registry = _get_task_candidate_model_registry(task_type)
-    candidate_key = (model_family, preprocessor)
-    if candidate_key in task_registry:
-        return resolve_model_id(task_type, task_registry[candidate_key])
+    task_registry = _get_task_model_registry(task_type)
+    if model_family in task_registry:
+        return model_family
 
-    supported_combinations = [
-        f"{supported_model_family}+{supported_preprocessor}"
-        for supported_model_family, supported_preprocessor, _ in get_supported_candidate_model_specs(task_type)
-    ]
+    supported_model_families = sorted(task_registry)
     raise ValueError(
-        f"Candidate model_family '{model_family}' with preprocessor '{preprocessor}' is not valid for task_type "
-        f"'{task_type}'. Supported combinations: {supported_combinations}"
+        f"Candidate model_family '{model_family}' is not valid for task_type '{task_type}'. "
+        f"Supported model families: {supported_model_families}"
     )
 
 
@@ -689,6 +579,22 @@ def get_tunable_model_ids(task_type: str) -> list[str]:
         model_id
         for model_id, model_definition in task_registry.items()
         if model_definition.tuning_space_builder is not None
+    )
+
+
+def validate_model_preprocessing_compatibility(
+    task_type: str,
+    model_id: str,
+    categorical_preprocessor_id: str,
+) -> None:
+    model_definition = get_model_definition(task_type, model_id)
+    if categorical_preprocessor_id != "native":
+        return
+    if model_definition.supports_native_categorical_preprocessing:
+        return
+    raise ValueError(
+        f"Model family '{model_definition.model_id}' does not support "
+        "categorical_preprocessor='native'. Use model_family='catboost' for native categorical handling."
     )
 
 
@@ -749,7 +655,8 @@ def build_model_fit_kwargs(
     x_train_processed: object,
     numeric_columns: list[str],
     categorical_columns: list[str],
+    uses_native_categorical_preprocessing: bool,
 ) -> dict[str, object]:
-    if model_definition.fit_kwargs_builder is None:
+    if model_definition.fit_kwargs_builder is None or not uses_native_categorical_preprocessing:
         return {}
     return model_definition.fit_kwargs_builder(x_train_processed, numeric_columns, categorical_columns)

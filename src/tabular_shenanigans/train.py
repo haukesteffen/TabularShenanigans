@@ -57,6 +57,9 @@ def _build_config_snapshot(
         label_column=label_column,
     )
     config_snapshot["resolved_model_id"] = model_spec.model_id
+    config_snapshot["resolved_numeric_preprocessor"] = config.numeric_preprocessor
+    config_snapshot["resolved_categorical_preprocessor"] = config.categorical_preprocessor
+    config_snapshot["resolved_preprocessing_scheme_id"] = config.preprocessing_scheme_id
     if model_spec.parameter_overrides:
         config_snapshot["resolved_model_parameter_overrides"] = model_spec.parameter_overrides
     if tuning_provenance is not None:
@@ -98,7 +101,8 @@ def _build_candidate_manifest(
         "model_family": config.model_family,
         "feature_recipe_id": config.feature_recipe_id,
         "feature_columns": training_context.x_train_features.columns.tolist(),
-        "preprocessor": config.preprocessor,
+        "numeric_preprocessor": config.numeric_preprocessor,
+        "categorical_preprocessor": config.categorical_preprocessor,
         "model_id": model_result.model_id,
         "model_name": model_result.model_name,
         "preprocessing_scheme_id": model_result.preprocessing_scheme_id,

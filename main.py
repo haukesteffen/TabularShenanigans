@@ -61,7 +61,9 @@ def _print_resolved_setup(config: AppConfig) -> None:
         f"task_type={config.task_type}, primary_metric={config.primary_metric}, "
         f"candidate_id={config.candidate_id}, candidate_type=model, "
         f"feature_recipe={config.feature_recipe_id}, model_family={config.model_family}, "
-        f"preprocessor={config.preprocessor}, model_id={config.resolved_model_id}"
+        f"numeric_preprocessor={config.numeric_preprocessor}, "
+        f"categorical_preprocessor={config.categorical_preprocessor}, "
+        f"model_id={config.resolved_model_id}"
     )
 
 
@@ -97,7 +99,9 @@ def _build_train_tracking_tags(config: AppConfig) -> dict[str, object]:
     if config.is_model_candidate:
         tags["model_id"] = config.resolved_model_id
         tags["feature_recipe_id"] = config.feature_recipe_id
-        tags["preprocessor"] = config.preprocessor
+        tags["numeric_preprocessor"] = config.numeric_preprocessor
+        tags["categorical_preprocessor"] = config.categorical_preprocessor
+        tags["preprocessing_scheme_id"] = config.preprocessing_scheme_id
         return tags
 
     tags["base_candidate_count"] = len(config.base_candidate_ids)
