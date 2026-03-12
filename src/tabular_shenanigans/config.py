@@ -11,6 +11,7 @@ from tabular_shenanigans.models import (
     get_tunable_model_ids,
     is_model_tunable,
     resolve_candidate_model_id,
+    validate_model_parameter_overrides,
     validate_model_preprocessing_compatibility,
 )
 from tabular_shenanigans.naming import (
@@ -246,6 +247,11 @@ class AppConfig(BaseModel):
                 task_type=competition.task_type,
                 model_id=resolved_model_registry_key,
                 categorical_preprocessor_id=candidate.categorical_preprocessor,
+            )
+            validate_model_parameter_overrides(
+                task_type=competition.task_type,
+                model_id=resolved_model_registry_key,
+                parameter_overrides=candidate.model_params,
             )
             optimization = candidate.optimization
             if optimization.enabled:

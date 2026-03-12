@@ -127,7 +127,11 @@ Required top-level sections:
   - `numeric_preprocessor`: `median`, `standardize`, or `kbins`
   - `categorical_preprocessor`: `onehot`, `ordinal`, `frequency`, or `native`
   - optional `model_params`: manual estimator overrides; when omitted, the runtime uses repo defaults plus the estimator library defaults
+    - `logistic_regression` is `saga`-only in this runtime
+    - logistic `model_params` use `l1_ratio` only; `penalty` and `solver` are not supported
   - optional `optimization`
+    - logistic regression Optuna trials fix `solver="saga"` and `max_iter=1000`
+    - logistic regression Optuna trials tune `C`, `tol`, `class_weight`, and `l1_ratio`
 - blend candidate:
   - `base_candidate_ids`: at least two existing compatible candidate IDs from the same competition experiment
   - optional `weights`

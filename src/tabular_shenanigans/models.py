@@ -1,4 +1,5 @@
 from dataclasses import dataclass
+from collections.abc import Mapping
 from typing import Callable
 
 import numpy as np
@@ -123,7 +124,8 @@ def _build_logreg(
     parameter_overrides: dict[str, object] | None = None,
 ) -> tuple[LogisticRegression, dict[str, object]]:
     del random_state
-    params = _merge_model_params({"max_iter": 1000}, parameter_overrides)
+    _validate_logreg_parameter_overrides(parameter_overrides)
+    params = _merge_model_params({"solver": "saga", "max_iter": 1000}, parameter_overrides)
     return LogisticRegression(**params), params
 
 
@@ -359,26 +361,97 @@ def _build_hist_gradient_boosting_tuning_space(trial: object) -> dict[str, objec
 
 
 def _build_logreg_tuning_space(trial: object) -> dict[str, object]:
-    solver = trial.suggest_categorical("solver", ["lbfgs", "liblinear", "saga"])
-    params: dict[str, object] = {
+    return {
         "C": trial.suggest_float("C", 1e-4, 1e3, log=True),
         "class_weight": trial.suggest_categorical("class_weight", [None, "balanced"]),
-        "max_iter": 5000,
-        "solver": solver,
+        "l1_ratio": trial.suggest_float("l1_ratio", 0.0, 1.0, step=0.05),
+        "max_iter": 1000,
+        "tol": trial.suggest_float("tol", 1e-4, 1e-2, log=True),
     }
 
-    if solver == "lbfgs":
-        params["penalty"] = "l2"
-        return params
 
-    if solver == "liblinear":
-        params["penalty"] = trial.suggest_categorical("liblinear_penalty", ["l1", "l2"])
-        return params
+def _is_numeric_logreg_param(value: object) -> bool:
+    return isinstance(value, int | float) and not isinstance(value, bool)
 
-    params["penalty"] = trial.suggest_categorical("saga_penalty", ["l1", "l2", "elasticnet"])
-    if params["penalty"] == "elasticnet":
-        params["l1_ratio"] = trial.suggest_float("l1_ratio", 0.0, 1.0)
-    return params
+
+def _validate_logreg_parameter_overrides(parameter_overrides: Mapping[str, object] | None) -> None:
+    if not parameter_overrides:
+        return
+
+    if "penalty" in parameter_overrides:
+        raise ValueError(
+            "Logistic regression model_params no longer accept 'penalty'. "
+            "Use l1_ratio only: 0.0 for L2, 1.0 for L1, and values between 0 and 1 for elastic net."
+        )
+
+    if "solver" in parameter_overrides:
+        raise ValueError(
+            "Logistic regression uses solver='saga' only. Remove model_params.solver from config.yaml."
+        )
+
+    if "n_jobs" in parameter_overrides:
+        raise ValueError(
+            "Logistic regression model_params do not support n_jobs in this runtime. "
+            "Remove model_params.n_jobs from config.yaml."
+        )
+
+    if "l1_ratio" in parameter_overrides:
+        l1_ratio = parameter_overrides["l1_ratio"]
+        if not _is_numeric_logreg_param(l1_ratio):
+            raise ValueError("Logistic regression model_params.l1_ratio must be numeric.")
+        l1_ratio_value = float(l1_ratio)
+        if not np.isfinite(l1_ratio_value) or not 0.0 <= l1_ratio_value <= 1.0:
+            raise ValueError(
+                "Logistic regression model_params.l1_ratio must be finite and within [0, 1]."
+            )
+
+    if "C" in parameter_overrides:
+        c_value = parameter_overrides["C"]
+        if not _is_numeric_logreg_param(c_value):
+            raise ValueError("Logistic regression model_params.C must be numeric.")
+        c_value_float = float(c_value)
+        if not np.isfinite(c_value_float) or c_value_float <= 0.0:
+            raise ValueError("Logistic regression model_params.C must be finite and > 0.")
+
+    if "tol" in parameter_overrides:
+        tol_value = parameter_overrides["tol"]
+        if not _is_numeric_logreg_param(tol_value):
+            raise ValueError("Logistic regression model_params.tol must be numeric.")
+        tol_value_float = float(tol_value)
+        if not np.isfinite(tol_value_float) or tol_value_float <= 0.0:
+            raise ValueError("Logistic regression model_params.tol must be finite and > 0.")
+
+    if "max_iter" in parameter_overrides:
+        max_iter = parameter_overrides["max_iter"]
+        if not isinstance(max_iter, int) or isinstance(max_iter, bool):
+            raise ValueError("Logistic regression model_params.max_iter must be an integer.")
+        if max_iter <= 0:
+            raise ValueError("Logistic regression model_params.max_iter must be > 0.")
+
+    if "class_weight" not in parameter_overrides:
+        return
+
+    class_weight = parameter_overrides["class_weight"]
+    if class_weight is None or isinstance(class_weight, Mapping):
+        return
+    if isinstance(class_weight, str) and class_weight == "balanced":
+        return
+    raise ValueError(
+        "Logistic regression model_params.class_weight must be 'balanced', null, or a mapping."
+    )
+
+
+def validate_model_parameter_overrides(
+    task_type: str,
+    model_id: str,
+    parameter_overrides: Mapping[str, object] | None,
+) -> None:
+    if not parameter_overrides:
+        return
+
+    resolved_model_id = resolve_model_id(task_type, model_id)
+    if resolved_model_id == "logistic_regression":
+        _validate_logreg_parameter_overrides(parameter_overrides)
 
 
 def _build_lightgbm_tuning_space(trial: object) -> dict[str, object]:
