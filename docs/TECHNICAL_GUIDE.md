@@ -179,10 +179,13 @@ Model candidate contract:
 - `numeric_preprocessor`
 - `categorical_preprocessor`
 - optional `model_params` (manual estimator overrides; when omitted, the runtime uses repo defaults plus estimator library defaults)
+  - `logistic_regression` is `saga`-only
+  - logistic `model_params` use `l1_ratio` only; `penalty` and `solver` are invalid
 - optional `optimization`
 
 Optimization note:
-- logistic regression Optuna trials fix `max_iter=5000` and do not sample `max_iter`
+- logistic regression Optuna trials fix `solver="saga"` and `max_iter=1000`
+- logistic regression Optuna trials tune `C`, `tol`, `class_weight`, and `l1_ratio`
 
 Blend candidate contract:
 - `candidate_type: blend`

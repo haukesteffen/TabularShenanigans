@@ -39,6 +39,12 @@ experiment:
     numeric_preprocessor: standardize
     categorical_preprocessor: onehot
     model_params: {}
+    # For logistic_regression, use l1_ratio only:
+    # model_params:
+    #   C: 1.0
+    #   tol: 0.001
+    #   l1_ratio: 0.0
+    #   class_weight: balanced
 
     # Alternative binary model candidates:
     # numeric_preprocessor: kbins
