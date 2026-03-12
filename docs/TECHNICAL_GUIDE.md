@@ -43,7 +43,7 @@ The intended operating scope is Kaggle Playground Series tabular competitions. C
 The default `submit` path supports current candidate artifacts only. Unsupported or missing candidate artifacts fail directly.
 
 ## Module Responsibilities
-- `main.py`: orchestration entrypoint for config loading plus stage-specific CLI dispatch across fetch, prepare, EDA, training, submission, and submission refresh.
+- `main.py`: orchestration entrypoint for config loading plus thin stage-specific CLI dispatch across fetch, prepare, EDA, training, submission, and submission refresh.
 - `src/tabular_shenanigans/competition.py`: competition-level preparation, `competition.json` persistence, `folds.csv` persistence, prepared-context validation, and split reconstruction from frozen folds.
 - `src/tabular_shenanigans/config.py`: Pydantic-backed nested config schema for `competition` plus `experiment`, metric normalization, candidate-to-model resolution, runtime contract validation, and a small set of derived helpers on `AppConfig`.
 - `src/tabular_shenanigans/candidate_artifacts.py`: shared candidate artifact path resolution, manifest loading, config fingerprint helpers, target-summary generation, and common candidate file writing.
@@ -59,7 +59,7 @@ The default `submit` path supports current candidate artifacts only. Unsupported
 - `src/tabular_shenanigans/tune.py`: internal Optuna orchestration used by `train` when candidate optimization is enabled, consuming the shared prepared training context and shared evaluation functions.
 - `src/tabular_shenanigans/submit.py`: submission schema validation, candidate selection by `candidate_id`, submission message creation, Kaggle submission, and stage-level submission orchestration.
 - `src/tabular_shenanigans/submission_history.py`: append-only submission event and outcome ledger helpers, `submission_event_id` generation, Kaggle submission-history refresh, and duplicate-observation suppression.
-- `src/tabular_shenanigans/tracking.py`: optional MLflow run creation, tag/metric logging, config snapshot logging, and post-stage artifact publishing using the shared candidate manifest and submission-history contracts.
+- `src/tabular_shenanigans/tracking.py`: optional MLflow run creation, shared tracked-stage orchestration, tag/metric logging, config snapshot logging, and post-stage artifact publishing using the shared candidate manifest and submission-history contracts.
 
 ## Configuration Contract
 Input:
