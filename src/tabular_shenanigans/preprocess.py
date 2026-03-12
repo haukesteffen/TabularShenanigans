@@ -17,12 +17,6 @@ from sklearn.preprocessing import (
 NumericPreprocessorBuilder = Callable[[], object]
 CategoricalPreprocessorBuilder = Callable[[], object]
 
-LEGACY_PREPROCESSOR_MAPPING = {
-    "onehot": ("standardize", "onehot"),
-    "ordinal": ("median", "ordinal"),
-    "frequency": ("median", "frequency"),
-    "native": ("median", "native"),
-}
 NUMERIC_PREPROCESSOR_IDS = tuple(["median", "standardize", "kbins"])
 CATEGORICAL_PREPROCESSOR_IDS = tuple(["onehot", "ordinal", "frequency", "native"])
 
@@ -121,16 +115,6 @@ def resolve_feature_schema(
         numeric_columns=numeric_columns,
         categorical_columns=categorical_columns,
     )
-
-
-def resolve_legacy_preprocessor_selection(preprocessor_id: str) -> tuple[str, str]:
-    try:
-        return LEGACY_PREPROCESSOR_MAPPING[preprocessor_id]
-    except KeyError as exc:
-        supported_preprocessor_ids = sorted(LEGACY_PREPROCESSOR_MAPPING)
-        raise ValueError(
-            f"Unsupported preprocessing scheme '{preprocessor_id}'. Supported values: {supported_preprocessor_ids}"
-        ) from exc
 
 
 def build_preprocessing_scheme_id(
