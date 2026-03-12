@@ -31,7 +31,7 @@ The repository is developed and manually verified primarily against these Playgr
 - Materialize one explicit experiment candidate at a time:
   - train one cross-validated model candidate using an optional config-selected feature recipe plus config-selected preprocessing and model-family choices that resolve internally to the current canonical recipe IDs
   - or build one blend candidate from existing compatible candidate artifacts under the same prepared competition context
-- Write one candidate artifact directory under `artifacts/<competition_slug>/candidates/<candidate_id>/`, including `candidate.json`, `fold_metrics.csv`, `oof_predictions.csv`, and `test_predictions.csv`, plus optional candidate-type-specific metadata such as `blend_summary.csv` or optimization files.
+- Write one candidate artifact directory under `artifacts/<competition_slug>/candidates/<candidate_id>/`, including `candidate.json`, `fold_metrics.csv`, `oof_predictions.csv`, and `test_predictions.csv`, plus optional candidate-type-specific metadata such as `blend_summary.csv`, binary-accuracy blend probabilities, or optimization files.
 - When `experiment.candidate.optimization.enabled=true` for a model candidate, run Optuna inside `train`, retrain the best trial into the candidate artifact directory, and keep optimization metadata next to that candidate.
 - Validate predictions against `sample_submission.csv`, including exact ID content and order, with task-aware binary prediction checks, and optionally submit to Kaggle from the current candidate artifact selected by `candidate_id`.
 - Optionally publish `prepare`, `train`, and `submit` runs plus generated artifacts to a remote MLflow tracking server while preserving the current local file-based workflow.
@@ -170,6 +170,7 @@ Current `experiment.submit` keys:
 Binary prediction artifact contract:
 - `roc_auc` and `log_loss`: `test_predictions.csv` and `submission.csv` contain positive-class probabilities in `[0, 1]`
 - `accuracy`: `test_predictions.csv` and `submission.csv` contain predicted class labels from the observed binary label set
+- `accuracy`: candidates also write `test_prediction_probabilities.csv` with positive-class probabilities for blend reuse, and blends average those probabilities before applying a `0.5` label threshold
 
 If `id_column` or `label_column` are omitted, the training pipeline infers them from `train.csv`, `test.csv`, and `sample_submission.csv`. The resolved `id_column` is preserved for prediction outputs and in `candidate.json`, but it is not part of the model feature matrix. Submission preparation consumes the selected artifact manifest as the schema/task source of truth and uses `sample_submission.csv` only for validation. Invalid overrides, ambiguous inference, a `sample_submission.csv` shape that does not exactly match `[id_column, label_column]`, or a submission ID column that differs from `sample_submission.csv` in values or ordering are hard errors.
 
@@ -196,6 +197,7 @@ Manual verification for each target:
 - confirm `artifacts/<competition_slug>/candidates/<candidate_id>/candidate.json` is written
 - for model candidates, confirm `candidate.json` records the selected `feature_recipe_id`
 - confirm `artifacts/<competition_slug>/candidates/<candidate_id>/test_predictions.csv` is written for the selected candidate artifact
+- for binary `accuracy` candidates, confirm `candidate.json` records the probability-average blend rule and sidecar path, and `artifacts/<competition_slug>/candidates/<candidate_id>/test_prediction_probabilities.csv` is also written
 - run `uv run python main.py submit`
 - confirm `artifacts/<competition_slug>/candidates/<candidate_id>/submission.csv` is written and validated against `sample_submission.csv`, including exact ID values and order
 - confirm binary outputs match the configured metric contract: probabilities for `roc_auc`/`log_loss`, labels for `accuracy`
@@ -216,6 +218,8 @@ Manual verification for blend candidates:
 - confirm `artifacts/<competition_slug>/candidates/<candidate_id>/candidate.json` is written with `candidate_type: blend` and component provenance
 - confirm `artifacts/<competition_slug>/candidates/<candidate_id>/blend_summary.csv` records component candidate IDs, weights, component CV scores, and OOF correlation hints
 - confirm `artifacts/<competition_slug>/candidates/<candidate_id>/test_predictions.csv` is written without retraining the base candidates
+- for binary `accuracy` blends, confirm `artifacts/<competition_slug>/candidates/<candidate_id>/test_prediction_probabilities.csv` is written and `test_predictions.csv` matches a `0.5` threshold on those blended probabilities
+- for binary `accuracy` blends, confirm a legacy base candidate without `test_prediction_probabilities.csv` fails fast and must be retrained
 - for binary `roc_auc` and `log_loss` blends, confirm mismatched base-candidate label contracts fail before predictions are averaged
 - run `uv run python main.py submit`
 - confirm `artifacts/<competition_slug>/candidates/<candidate_id>/submission.csv` is written and validated against `sample_submission.csv`
@@ -228,6 +232,7 @@ Manual verification for blend candidates:
 - EDA reports: `reports/<competition_slug>/`
 - Candidate artifacts: `artifacts/<competition_slug>/candidates/<candidate_id>/`
   - includes `candidate.json`, `fold_metrics.csv`, `oof_predictions.csv`, `test_predictions.csv`, and `submission.csv` when prepared or submitted
+  - binary `accuracy` candidates and blends also include `test_prediction_probabilities.csv` for probability-average-then-threshold blending, and `candidate.json` records that rule plus the sidecar path
   - model candidates record the selected `feature_recipe_id`, engineered `feature_columns`, and optional `tuning_provenance`
   - blend candidates also include `blend_summary.csv` and record their component candidates plus normalized weights in `candidate.json`
   - optimized model candidates also include `optimization_summary.json`, `optimization_trials.csv`, and `optimization_best_params.json`
