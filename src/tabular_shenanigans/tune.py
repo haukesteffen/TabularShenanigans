@@ -5,19 +5,17 @@ from datetime import datetime, timezone
 import optuna
 import pandas as pd
 
-from tabular_shenanigans.competition import ensure_prepared_competition_context
+from tabular_shenanigans.candidate_artifacts import build_base_config_snapshot, json_ready
 from tabular_shenanigans.config import AppConfig
-from tabular_shenanigans.cv import is_higher_better, resolve_positive_label
+from tabular_shenanigans.cv import is_higher_better
 from tabular_shenanigans.data import CompetitionDatasetContext
-from tabular_shenanigans.feature_recipes import apply_feature_recipe
-from tabular_shenanigans.models import build_tuning_space, get_model_definition
-from tabular_shenanigans.preprocess import prepare_feature_frames
-from tabular_shenanigans.train import (
+from tabular_shenanigans.model_evaluation import (
+    PreparedTrainingContext,
     TrainingModelSpec,
-    _build_target_summary,
-    _json_ready,
-    _score_model_spec,
+    build_prepared_training_context,
+    score_model_spec,
 )
+from tabular_shenanigans.models import build_tuning_space, get_model_definition
 
 
 @dataclass(frozen=True)
@@ -37,21 +35,16 @@ def _make_study_id() -> str:
 def _build_optimization_config_snapshot(
     config: AppConfig,
     tuning_model_spec: TrainingModelSpec,
-    positive_label: object | None,
-    id_column: str,
-    label_column: str,
+    training_context: PreparedTrainingContext,
 ) -> dict[str, object]:
-    return {
-        "competition": {
-            **config.competition.model_dump(mode="python"),
-            "primary_metric": config.primary_metric,
-            "positive_label": positive_label,
-            "id_column": id_column,
-            "label_column": label_column,
-        },
-        "experiment": config.experiment.model_dump(mode="python"),
-        "resolved_model_id": tuning_model_spec.model_id,
-    }
+    config_snapshot = build_base_config_snapshot(
+        config=config,
+        positive_label=training_context.positive_label,
+        id_column=training_context.id_column,
+        label_column=training_context.label_column,
+    )
+    config_snapshot["resolved_model_id"] = tuning_model_spec.model_id
+    return config_snapshot
 
 
 def _build_trials_df(study: optuna.Study, metric_name: str) -> pd.DataFrame:
@@ -67,8 +60,8 @@ def _build_trials_df(study: optuna.Study, metric_name: str) -> pd.DataFrame:
             "started_at_utc": trial.datetime_start.isoformat() if trial.datetime_start is not None else "",
             "completed_at_utc": trial.datetime_complete.isoformat() if trial.datetime_complete is not None else "",
             "duration_seconds": trial.duration.total_seconds() if trial.duration is not None else None,
-            "params_json": json.dumps(_json_ready(trial.params), sort_keys=True),
-            "model_params_json": json.dumps(_json_ready(trial.user_attrs.get("model_params")), sort_keys=True),
+            "params_json": json.dumps(json_ready(trial.params), sort_keys=True),
+            "model_params_json": json.dumps(json_ready(trial.user_attrs.get("model_params")), sort_keys=True),
         }
         for param_name in param_names:
             row[f"param_{param_name}"] = trial.params.get(param_name)
@@ -103,7 +96,9 @@ def _build_optimization_summary(
         "model_name": model_name,
         "preprocessing_scheme_id": preprocessing_scheme_id,
         "trial_count": len(study.trials),
-        "completed_trial_count": len([trial for trial in study.trials if trial.state == optuna.trial.TrialState.COMPLETE]),
+        "completed_trial_count": len(
+            [trial for trial in study.trials if trial.state == optuna.trial.TrialState.COMPLETE]
+        ),
         "best_trial_number": best_trial.number,
         "best_value": best_trial.value,
         "best_params": best_parameter_overrides,
@@ -115,6 +110,7 @@ def _build_optimization_summary(
 def run_optimization(
     config: AppConfig,
     dataset_context: CompetitionDatasetContext,
+    prepared_training_context: PreparedTrainingContext | None = None,
 ) -> OptimizationResult:
     if not config.is_model_candidate:
         raise ValueError("Optimization only supports experiment.candidate.candidate_type=model.")
@@ -128,56 +124,18 @@ def run_optimization(
     tuning_model_spec = TrainingModelSpec(model_id=config.resolved_model_id)
     model_definition = get_model_definition(task_type, tuning_model_spec.model_id)
 
-    train_df = dataset_context.train_df
-    test_df = dataset_context.test_df
-    id_column = dataset_context.id_column
-    label_column = dataset_context.label_column
-
-    x_train_raw, x_test_raw, y_train = prepare_feature_frames(
-        train_df=train_df,
-        test_df=test_df,
-        id_column=id_column,
-        label_column=label_column,
-        force_categorical=config.force_categorical,
-        force_numeric=config.force_numeric,
-        drop_columns=config.drop_columns,
-    )
-
-    positive_label = config.positive_label
-    observed_label_pair = None
-    negative_label = None
-    if task_type == "binary":
-        negative_label, positive_label, observed_label_pair = resolve_positive_label(
-            y_values=y_train,
-            configured_positive_label=positive_label,
+    training_context = prepared_training_context
+    if training_context is None:
+        training_context = build_prepared_training_context(
+            config=config,
+            dataset_context=dataset_context,
         )
-
-    prepared_context = ensure_prepared_competition_context(
-        config=config,
-        dataset_context=dataset_context,
-        expected_feature_columns=x_train_raw.columns.tolist(),
-    )
-    split_indices = prepared_context.split_indices
-    x_train_features, _ = apply_feature_recipe(
-        recipe_id=config.feature_recipe_id,
-        x_train_raw=x_train_raw,
-        x_test_raw=x_test_raw,
-    )
-    target_summary = _build_target_summary(
-        task_type=task_type,
-        y_train=y_train,
-        positive_label=positive_label,
-        negative_label=negative_label,
-        observed_label_pair=observed_label_pair,
-    )
 
     study_id = _make_study_id()
     optimization_config_snapshot = _build_optimization_config_snapshot(
         config=config,
         tuning_model_spec=tuning_model_spec,
-        positive_label=positive_label,
-        id_column=id_column,
-        label_column=label_column,
+        training_context=training_context,
     )
 
     direction = "maximize" if is_higher_better(primary_metric) else "minimize"
@@ -187,28 +145,21 @@ def run_optimization(
 
     def objective(trial: optuna.Trial) -> float:
         parameter_overrides = build_tuning_space(task_type, tuning_model_spec.model_id, trial)
-        cv_evaluation = _score_model_spec(
+        cv_evaluation = score_model_spec(
             task_type=task_type,
             primary_metric=primary_metric,
             model_spec=TrainingModelSpec(
                 model_id=tuning_model_spec.model_id,
                 parameter_overrides=parameter_overrides,
             ),
-            x_train_raw=x_train_features,
-            y_train=y_train,
-            split_indices=split_indices,
-            force_categorical=config.force_categorical,
-            force_numeric=config.force_numeric,
-            low_cardinality_int_threshold=config.low_cardinality_int_threshold,
+            training_context=training_context,
             cv_random_state=config.cv_random_state,
-            positive_label=positive_label,
-            negative_label=negative_label,
         )
         metric_mean = cv_evaluation.model_result.cv_summary.metric_mean
         metric_std = cv_evaluation.model_result.cv_summary.metric_std
         trial.set_user_attr("metric_std", metric_std)
-        trial.set_user_attr("parameter_overrides", _json_ready(parameter_overrides))
-        trial.set_user_attr("model_params", _json_ready(cv_evaluation.model_result.model_params))
+        trial.set_user_attr("parameter_overrides", json_ready(parameter_overrides))
+        trial.set_user_attr("model_params", json_ready(cv_evaluation.model_result.model_params))
         print(
             f"Trial {trial.number}: {primary_metric}={metric_mean:.6f} "
             f"(std={metric_std:.6f}) params={parameter_overrides}"
@@ -242,7 +193,7 @@ def run_optimization(
         tuning_model_spec=tuning_model_spec,
         model_name=model_definition.model_name,
         preprocessing_scheme_id=model_definition.preprocessing_scheme_id,
-        target_summary=target_summary,
+        target_summary=training_context.target_summary,
         best_parameter_overrides=best_parameter_overrides,
     )
     return OptimizationResult(
