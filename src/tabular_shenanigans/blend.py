@@ -1,6 +1,7 @@
 import json
 import tempfile
 import time
+import traceback
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
@@ -28,9 +29,16 @@ from tabular_shenanigans.mlflow_store import (
     download_candidate_bundle,
     log_candidate_run,
     terminate_run,
+    upload_run_log,
 )
 from tabular_shenanigans.naming import normalize_blend_weights
 from tabular_shenanigans.preprocess import prepare_feature_frames
+from tabular_shenanigans.runtime_logging import (
+    append_runtime_log_message,
+    build_runtime_log_path,
+    capture_runtime_log,
+    emit_runtime_log_header,
+)
 
 BLEND_REGISTRY_KEY = "blend_weighted_average"
 BLEND_ESTIMATOR_NAME = "WeightedAverageBlend"
@@ -664,183 +672,209 @@ def run_blend_training(
     features = competition.features
     candidate = config.experiment.candidate
     candidate_id = config.resolved_candidate_id
-    train_df = dataset_context.train_df
-    test_df = dataset_context.test_df
-    id_column = dataset_context.id_column
-    label_column = dataset_context.label_column
-    y_train = train_df[label_column].reset_index(drop=True)
-
-    x_train_raw, x_test_raw, _ = prepare_feature_frames(
-        train_df=train_df,
-        test_df=test_df,
-        id_column=id_column,
-        label_column=label_column,
-        force_categorical=features.force_categorical,
-        force_numeric=features.force_numeric,
-        drop_columns=features.drop_columns,
-    )
-    prepared_context = ensure_prepared_competition_context(
-        config=config,
-        dataset_context=dataset_context,
-        expected_feature_columns=x_train_raw.columns.tolist(),
-    )
-    fold_assignments = prepared_context.fold_assignments
-
-    positive_label = competition.positive_label
-    negative_label = None
-    observed_label_pair = None
-    if competition.task_type == "binary":
-        negative_label, positive_label, observed_label_pair = resolve_positive_label(
-            y_values=y_train,
-            configured_positive_label=positive_label,
-        )
-
-    normalized_weights = config.resolved_blend_weights
-    fit_started = time.perf_counter()
-    with tempfile.TemporaryDirectory(prefix="tabular-shenanigans-blend-components-") as component_dir:
-        components = [
-            _load_blend_component(
-                config=config,
-                candidate_id=base_candidate_id,
-                destination_dir=Path(component_dir) / base_candidate_id,
-                task_type=competition.task_type,
-                primary_metric=competition.primary_metric,
-                id_column=id_column,
-                label_column=label_column,
-                expected_y_train=y_train,
-                expected_fold_assignments=fold_assignments,
-                expected_test_ids=test_df[id_column],
-                positive_label=positive_label,
-                negative_label=negative_label,
-                observed_label_pair=observed_label_pair,
-            )
-            for base_candidate_id in candidate.base_candidate_ids
-        ]
-
-        component_oof_predictions = np.vstack([component.oof_predictions for component in components])
-        component_test_predictions = np.vstack([component.test_predictions for component in components])
-        weight_array = np.asarray(normalized_weights, dtype=float)
-        blended_oof_predictions = np.average(component_oof_predictions, axis=0, weights=weight_array)
-        blended_test_predictions = np.average(component_test_predictions, axis=0, weights=weight_array)
-        fit_wall_seconds = time.perf_counter() - fit_started
-
-    test_prediction_probabilities = None
-    if competition.task_type == "regression":
-        final_test_predictions: np.ndarray | list[object] = blended_test_predictions
-        if competition.primary_metric == "rmsle":
-            final_test_predictions = np.clip(blended_test_predictions, a_min=0.0, a_max=None)
-    elif get_binary_prediction_kind(competition.primary_metric) == "label":
-        if positive_label is None or negative_label is None:
-            raise ValueError("Binary label blends require resolved class metadata.")
-        test_prediction_probabilities = np.asarray(blended_test_predictions, dtype=float)
-        final_test_predictions = np.where(
-            blended_test_predictions >= 0.5,
-            positive_label,
-            negative_label,
-        )
-    else:
-        final_test_predictions = blended_test_predictions
-
-    fold_metrics_df = _build_fold_metrics(
-        task_type=competition.task_type,
-        primary_metric=competition.primary_metric,
-        y_train=y_train,
-        oof_predictions=blended_oof_predictions,
-        fold_assignments=fold_assignments,
-        positive_label=positive_label,
-    )
-    metric_mean = float(fold_metrics_df["metric_value"].mean())
-    metric_std = float(fold_metrics_df["metric_value"].std(ddof=0))
-    blend_summary_df = _build_blend_summary(
-        candidate_id=candidate_id,
-        metric_name=competition.primary_metric,
-        metric_mean=metric_mean,
-        metric_std=metric_std,
-        components=components,
-        normalized_weights=normalized_weights,
-    )
-    print(
-        f"Blend candidate: {candidate_id} | "
-        f"components={candidate.base_candidate_ids} | "
-        f"weights={normalized_weights} | "
-        f"CV {competition.primary_metric}: mean={metric_mean:.6f}, std={metric_std:.6f}"
-    )
-
-    target_summary = build_target_summary(
-        task_type=competition.task_type,
-        y_train=y_train,
-        positive_label=positive_label,
-        negative_label=negative_label,
-        observed_label_pair=observed_label_pair,
-    )
-    config_snapshot = _build_config_snapshot(
-        config=config,
-        positive_label=positive_label,
-        id_column=id_column,
-        label_column=label_column,
-        normalized_weights=normalized_weights,
-    )
-    config_fingerprint = _build_config_fingerprint(
-        config_snapshot=config_snapshot,
-        components=components,
-        normalized_weights=normalized_weights,
-    )
     candidate_run = create_candidate_run(
         config=config,
         candidate_id=candidate_id,
         candidate_type=candidate.candidate_type,
     )
-    candidate_manifest = _build_candidate_manifest(
-        config=config,
-        generated_at_utc=datetime.now(timezone.utc).isoformat(),
-        config_snapshot=config_snapshot,
-        config_fingerprint=config_fingerprint,
-        metric_mean=metric_mean,
-        metric_std=metric_std,
-        observed_label_pair=observed_label_pair,
-        negative_label=negative_label,
-        positive_label=positive_label,
-        id_column=id_column,
-        label_column=label_column,
-        target_summary=target_summary,
-        feature_columns=x_train_raw.columns.tolist(),
-        train_rows=int(train_df.shape[0]),
-        train_cols=int(x_train_raw.shape[1]),
-        test_rows=int(test_df.shape[0]),
-        test_cols=int(x_test_raw.shape[1]),
-        components=components,
-        normalized_weights=normalized_weights,
-        mlflow_run_id=candidate_run.run_id,
-    )
+    run_status = "FAILED"
+    train_df = dataset_context.train_df
+    test_df = dataset_context.test_df
+    id_column = dataset_context.id_column
+    label_column = dataset_context.label_column
+    y_train = train_df[label_column].reset_index(drop=True)
+    with tempfile.TemporaryDirectory(prefix="tabular-shenanigans-blend-candidate-") as temp_dir:
+        bundle_root = Path(temp_dir)
+        log_path = build_runtime_log_path(bundle_root)
+        log_uploaded = False
+        try:
+            with capture_runtime_log(log_path):
+                emit_runtime_log_header(
+                    stage_name="blend",
+                    competition_slug=competition.slug,
+                    candidate_id=candidate_run.candidate_id,
+                    mlflow_run_id=candidate_run.run_id,
+                )
+                try:
+                    x_train_raw, x_test_raw, _ = prepare_feature_frames(
+                        train_df=train_df,
+                        test_df=test_df,
+                        id_column=id_column,
+                        label_column=label_column,
+                        force_categorical=features.force_categorical,
+                        force_numeric=features.force_numeric,
+                        drop_columns=features.drop_columns,
+                    )
+                    prepared_context = ensure_prepared_competition_context(
+                        config=config,
+                        dataset_context=dataset_context,
+                        expected_feature_columns=x_train_raw.columns.tolist(),
+                    )
+                    fold_assignments = prepared_context.fold_assignments
 
-    try:
-        with tempfile.TemporaryDirectory(prefix="tabular-shenanigans-blend-candidate-") as temp_dir:
-            bundle_root = Path(temp_dir)
-            _stage_blend_bundle(
-                bundle_root=bundle_root,
+                    positive_label = competition.positive_label
+                    negative_label = None
+                    observed_label_pair = None
+                    if competition.task_type == "binary":
+                        negative_label, positive_label, observed_label_pair = resolve_positive_label(
+                            y_values=y_train,
+                            configured_positive_label=positive_label,
+                        )
+
+                    normalized_weights = config.resolved_blend_weights
+                    fit_started = time.perf_counter()
+                    with tempfile.TemporaryDirectory(prefix="tabular-shenanigans-blend-components-") as component_dir:
+                        components = [
+                            _load_blend_component(
+                                config=config,
+                                candidate_id=base_candidate_id,
+                                destination_dir=Path(component_dir) / base_candidate_id,
+                                task_type=competition.task_type,
+                                primary_metric=competition.primary_metric,
+                                id_column=id_column,
+                                label_column=label_column,
+                                expected_y_train=y_train,
+                                expected_fold_assignments=fold_assignments,
+                                expected_test_ids=test_df[id_column],
+                                positive_label=positive_label,
+                                negative_label=negative_label,
+                                observed_label_pair=observed_label_pair,
+                            )
+                            for base_candidate_id in candidate.base_candidate_ids
+                        ]
+
+                        component_oof_predictions = np.vstack([component.oof_predictions for component in components])
+                        component_test_predictions = np.vstack([component.test_predictions for component in components])
+                        weight_array = np.asarray(normalized_weights, dtype=float)
+                        blended_oof_predictions = np.average(component_oof_predictions, axis=0, weights=weight_array)
+                        blended_test_predictions = np.average(component_test_predictions, axis=0, weights=weight_array)
+                        fit_wall_seconds = time.perf_counter() - fit_started
+
+                    test_prediction_probabilities = None
+                    if competition.task_type == "regression":
+                        final_test_predictions: np.ndarray | list[object] = blended_test_predictions
+                        if competition.primary_metric == "rmsle":
+                            final_test_predictions = np.clip(blended_test_predictions, a_min=0.0, a_max=None)
+                    elif get_binary_prediction_kind(competition.primary_metric) == "label":
+                        if positive_label is None or negative_label is None:
+                            raise ValueError("Binary label blends require resolved class metadata.")
+                        test_prediction_probabilities = np.asarray(blended_test_predictions, dtype=float)
+                        final_test_predictions = np.where(
+                            blended_test_predictions >= 0.5,
+                            positive_label,
+                            negative_label,
+                        )
+                    else:
+                        final_test_predictions = blended_test_predictions
+
+                    fold_metrics_df = _build_fold_metrics(
+                        task_type=competition.task_type,
+                        primary_metric=competition.primary_metric,
+                        y_train=y_train,
+                        oof_predictions=blended_oof_predictions,
+                        fold_assignments=fold_assignments,
+                        positive_label=positive_label,
+                    )
+                    metric_mean = float(fold_metrics_df["metric_value"].mean())
+                    metric_std = float(fold_metrics_df["metric_value"].std(ddof=0))
+                    blend_summary_df = _build_blend_summary(
+                        candidate_id=candidate_id,
+                        metric_name=competition.primary_metric,
+                        metric_mean=metric_mean,
+                        metric_std=metric_std,
+                        components=components,
+                        normalized_weights=normalized_weights,
+                    )
+                    print(
+                        f"Blend candidate: {candidate_id} | "
+                        f"components={candidate.base_candidate_ids} | "
+                        f"weights={normalized_weights} | "
+                        f"CV {competition.primary_metric}: mean={metric_mean:.6f}, std={metric_std:.6f}"
+                    )
+
+                    target_summary = build_target_summary(
+                        task_type=competition.task_type,
+                        y_train=y_train,
+                        positive_label=positive_label,
+                        negative_label=negative_label,
+                        observed_label_pair=observed_label_pair,
+                    )
+                    config_snapshot = _build_config_snapshot(
+                        config=config,
+                        positive_label=positive_label,
+                        id_column=id_column,
+                        label_column=label_column,
+                        normalized_weights=normalized_weights,
+                    )
+                    config_fingerprint = _build_config_fingerprint(
+                        config_snapshot=config_snapshot,
+                        components=components,
+                        normalized_weights=normalized_weights,
+                    )
+                    candidate_manifest = _build_candidate_manifest(
+                        config=config,
+                        generated_at_utc=datetime.now(timezone.utc).isoformat(),
+                        config_snapshot=config_snapshot,
+                        config_fingerprint=config_fingerprint,
+                        metric_mean=metric_mean,
+                        metric_std=metric_std,
+                        observed_label_pair=observed_label_pair,
+                        negative_label=negative_label,
+                        positive_label=positive_label,
+                        id_column=id_column,
+                        label_column=label_column,
+                        target_summary=target_summary,
+                        feature_columns=x_train_raw.columns.tolist(),
+                        train_rows=int(train_df.shape[0]),
+                        train_cols=int(x_train_raw.shape[1]),
+                        test_rows=int(test_df.shape[0]),
+                        test_cols=int(x_test_raw.shape[1]),
+                        components=components,
+                        normalized_weights=normalized_weights,
+                        mlflow_run_id=candidate_run.run_id,
+                    )
+
+                    _stage_blend_bundle(
+                        bundle_root=bundle_root,
+                        config=config,
+                        candidate_manifest=candidate_manifest,
+                        competition_manifest=prepared_context.manifest,
+                        fold_assignments=fold_assignments,
+                        fold_metrics_df=fold_metrics_df,
+                        y_train=y_train,
+                        oof_predictions=blended_oof_predictions,
+                        test_ids=test_df[id_column],
+                        test_predictions=np.asarray(final_test_predictions),
+                        id_column=id_column,
+                        label_column=label_column,
+                        blend_summary_df=blend_summary_df,
+                        test_prediction_probabilities=test_prediction_probabilities,
+                    )
+                    log_candidate_run(
+                        config=config,
+                        candidate_run=candidate_run,
+                        bundle_root=bundle_root,
+                        manifest=candidate_manifest,
+                        fit_wall_seconds=fit_wall_seconds,
+                    )
+                except Exception:
+                    append_runtime_log_message(log_path, "stderr", traceback.format_exc())
+                    raise
+            upload_run_log(
                 config=config,
-                candidate_manifest=candidate_manifest,
-                competition_manifest=prepared_context.manifest,
-                fold_assignments=fold_assignments,
-                fold_metrics_df=fold_metrics_df,
-                y_train=y_train,
-                oof_predictions=blended_oof_predictions,
-                test_ids=test_df[id_column],
-                test_predictions=np.asarray(final_test_predictions),
-                id_column=id_column,
-                label_column=label_column,
-                blend_summary_df=blend_summary_df,
-                test_prediction_probabilities=test_prediction_probabilities,
+                run_id=candidate_run.run_id,
+                log_path=log_path,
             )
-            log_candidate_run(
-                config=config,
-                candidate_run=candidate_run,
-                bundle_root=bundle_root,
-                manifest=candidate_manifest,
-                fit_wall_seconds=fit_wall_seconds,
-            )
-        terminate_run(config=config, run_id=candidate_run.run_id, status="FINISHED")
-        return candidate_run
-    except Exception:
-        terminate_run(config=config, run_id=candidate_run.run_id, status="FAILED")
-        raise
+            log_uploaded = True
+            run_status = "FINISHED"
+            return candidate_run
+        except Exception:
+            if log_path.exists() and not log_uploaded:
+                upload_run_log(
+                    config=config,
+                    run_id=candidate_run.run_id,
+                    log_path=log_path,
+                )
+            raise
+        finally:
+            terminate_run(config=config, run_id=candidate_run.run_id, status=run_status)

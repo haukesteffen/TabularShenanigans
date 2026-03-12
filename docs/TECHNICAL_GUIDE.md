@@ -87,6 +87,7 @@ Current candidate-run metrics:
 
 ### Artifacts
 Every candidate run stores:
+- `logs/runtime.log`
 - `config/runtime_config.json`
 - `context/competition.json`
 - `context/folds.csv`
@@ -248,6 +249,7 @@ Refresh behavior:
 - Reusing an existing derived `candidate_id` within a competition experiment is a hard error.
 - `prepare` is not a persisted source of truth anymore.
 - `train` and `blend` must produce exactly one candidate run keyed by `candidate_id`.
+- Candidate runs should upload `logs/runtime.log` on both success and failure once the run exists.
 - `submit` resolves candidates from MLflow, not from local artifact directories.
 - `refresh-submissions` updates existing candidate runs and does not create standalone tracking runs.
 - Feature recipes must be deterministic, leakage-safe, and schema-preserving across train/test.
@@ -262,6 +264,7 @@ Recommended manual checks:
 - one synthetic or smaller smoke workflow covering:
   - two model candidates
   - one blend candidate
+  - one intentionally failing candidate run with `logs/runtime.log` plus traceback uploaded before run termination
   - one dry-run submit
   - one submission-refresh path against seeded submission history
 
