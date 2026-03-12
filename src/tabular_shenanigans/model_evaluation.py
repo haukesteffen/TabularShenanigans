@@ -2,6 +2,7 @@ from dataclasses import dataclass
 
 import numpy as np
 import pandas as pd
+from scipy import sparse
 
 from tabular_shenanigans.candidate_artifacts import build_target_summary
 from tabular_shenanigans.competition import ensure_prepared_competition_context
@@ -9,7 +10,11 @@ from tabular_shenanigans.config import AppConfig
 from tabular_shenanigans.cv import is_higher_better, resolve_positive_label, score_predictions
 from tabular_shenanigans.data import CompetitionDatasetContext, get_binary_prediction_kind
 from tabular_shenanigans.feature_recipes import apply_feature_recipe
-from tabular_shenanigans.models import build_model, build_model_fit_kwargs
+from tabular_shenanigans.models import (
+    build_model,
+    build_model_fit_kwargs,
+    resolve_model_matrix_output_kind,
+)
 from tabular_shenanigans.preprocess import (
     ResolvedFeatureSchema,
     build_preprocessor_from_schema,
@@ -89,6 +94,7 @@ class PreparedTrainingContext:
     numeric_preprocessor: str
     categorical_preprocessor: str
     preprocessing_scheme_id: str
+    matrix_output_kind: str
 
 
 def build_prepared_training_context(
@@ -148,6 +154,11 @@ def build_prepared_training_context(
         force_numeric=features.force_numeric,
         low_cardinality_int_threshold=features.low_cardinality_int_threshold,
     )
+    matrix_output_kind = resolve_model_matrix_output_kind(
+        task_type=competition.task_type,
+        model_id=config.resolved_model_registry_key,
+        categorical_preprocessor_id=candidate.categorical_preprocessor,
+    )
     return PreparedTrainingContext(
         id_column=id_column,
         label_column=label_column,
@@ -165,7 +176,18 @@ def build_prepared_training_context(
         numeric_preprocessor=candidate.numeric_preprocessor,
         categorical_preprocessor=candidate.categorical_preprocessor,
         preprocessing_scheme_id=candidate.preprocessing_scheme_id,
+        matrix_output_kind=matrix_output_kind,
     )
+
+
+def _coerce_processed_matrix(values: object, matrix_output_kind: str) -> object:
+    if matrix_output_kind == "native_frame":
+        if not isinstance(values, pd.DataFrame):
+            raise ValueError("Native categorical preprocessing must produce a pandas DataFrame.")
+        return values
+    if matrix_output_kind == "sparse_csr":
+        return sparse.csr_matrix(values)
+    return np.asarray(values)
 
 
 def _run_cv_evaluation(
@@ -185,6 +207,7 @@ def _run_cv_evaluation(
     resolved_model_registry_key = model_definition.model_id
     estimator_name = model_definition.model_name
     preprocessing_scheme_id = training_context.preprocessing_scheme_id
+    matrix_output_kind = training_context.matrix_output_kind
 
     oof_predictions = (
         np.zeros(training_context.x_train_features.shape[0], dtype=float)
@@ -193,7 +216,6 @@ def _run_cv_evaluation(
     )
     test_predictions_per_fold = [] if collect_prediction_artifacts else None
     fold_metrics: list[dict[str, object]] = []
-    use_named_columns = estimator_name.startswith("LGBM")
     binary_prediction_kind = None
     if task_type == "binary":
         binary_prediction_kind = get_binary_prediction_kind(primary_metric)
@@ -208,20 +230,18 @@ def _run_cv_evaluation(
             feature_schema=training_context.feature_schema,
             numeric_preprocessor_id=training_context.numeric_preprocessor,
             categorical_preprocessor_id=training_context.categorical_preprocessor,
+            matrix_output_kind=matrix_output_kind,
         )
-        if use_named_columns and hasattr(preprocessor, "set_output"):
-            preprocessor.set_output(transform="pandas")
         x_fold_train_processed = preprocessor.fit_transform(x_fold_train)
         x_fold_valid_processed = preprocessor.transform(x_fold_valid)
         x_test_processed = None
         if collect_prediction_artifacts:
             x_test_processed = preprocessor.transform(training_context.x_test_features)
 
-        if training_context.categorical_preprocessor != "native" and not use_named_columns:
-            x_fold_train_processed = np.asarray(x_fold_train_processed)
-            x_fold_valid_processed = np.asarray(x_fold_valid_processed)
-            if x_test_processed is not None:
-                x_test_processed = np.asarray(x_test_processed)
+        x_fold_train_processed = _coerce_processed_matrix(x_fold_train_processed, matrix_output_kind)
+        x_fold_valid_processed = _coerce_processed_matrix(x_fold_valid_processed, matrix_output_kind)
+        if x_test_processed is not None:
+            x_test_processed = _coerce_processed_matrix(x_test_processed, matrix_output_kind)
 
         _, model, _ = build_model(
             task_type,
@@ -234,7 +254,7 @@ def _run_cv_evaluation(
             x_train_processed=x_fold_train_processed,
             numeric_columns=training_context.feature_schema.numeric_columns,
             categorical_columns=training_context.feature_schema.categorical_columns,
-            uses_native_categorical_preprocessing=training_context.categorical_preprocessor == "native",
+            uses_native_categorical_preprocessing=matrix_output_kind == "native_frame",
         )
         model.fit(x_fold_train_processed, y_fold_train, **model_fit_kwargs)
 

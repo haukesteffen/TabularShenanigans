@@ -132,6 +132,10 @@ Required top-level sections:
   - optional `optimization`
     - logistic regression Optuna trials fix `solver="saga"` and `max_iter=1000`
     - logistic regression Optuna trials tune `C`, `tol`, `class_weight`, and `l1_ratio`
+  - `categorical_preprocessor: onehot` is an internal matrix-output decision, not a config knob:
+    - sparse CSR output: `ridge`, `elasticnet`, `logistic_regression`, `random_forest`, `extra_trees`, `lightgbm`, `catboost`, `xgboost`
+    - dense array output: `hist_gradient_boosting`
+    - `numeric_preprocessor: kbins` follows the same sparse-versus-dense decision when combined with `onehot`
 - blend candidate:
   - `base_candidate_ids`: at least two existing compatible candidate IDs from the same competition experiment
   - optional `weights`

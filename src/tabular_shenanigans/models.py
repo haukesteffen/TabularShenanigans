@@ -28,6 +28,7 @@ class ModelDefinition:
     fit_kwargs_builder: FitKwargsBuilder | None = None
     tuning_space_builder: TuningSpaceBuilder | None = None
     supports_native_categorical_preprocessing: bool = False
+    supports_sparse_preprocessed_input: bool = False
 
 
 class BinaryLabelEncodingClassifier:
@@ -519,23 +520,27 @@ MODEL_REGISTRY: dict[str, dict[str, ModelDefinition]] = {
             model_id="ridge",
             model_name="Ridge",
             builder=_build_ridge,
+            supports_sparse_preprocessed_input=True,
         ),
         "elasticnet": ModelDefinition(
             model_id="elasticnet",
             model_name="ElasticNet",
             builder=_build_elasticnet,
+            supports_sparse_preprocessed_input=True,
         ),
         "random_forest": ModelDefinition(
             model_id="random_forest",
             model_name="RandomForestRegressor",
             builder=_build_random_forest_regressor,
             tuning_space_builder=_build_random_forest_tuning_space,
+            supports_sparse_preprocessed_input=True,
         ),
         "extra_trees": ModelDefinition(
             model_id="extra_trees",
             model_name="ExtraTreesRegressor",
             builder=_build_extra_trees_regressor,
             tuning_space_builder=_build_extra_trees_tuning_space,
+            supports_sparse_preprocessed_input=True,
         ),
         "hist_gradient_boosting": ModelDefinition(
             model_id="hist_gradient_boosting",
@@ -548,6 +553,7 @@ MODEL_REGISTRY: dict[str, dict[str, ModelDefinition]] = {
             model_name="LGBMRegressor",
             builder=_build_lightgbm_regressor,
             tuning_space_builder=_build_lightgbm_tuning_space,
+            supports_sparse_preprocessed_input=True,
         ),
         "catboost": ModelDefinition(
             model_id="catboost",
@@ -556,12 +562,14 @@ MODEL_REGISTRY: dict[str, dict[str, ModelDefinition]] = {
             fit_kwargs_builder=_build_catboost_fit_kwargs,
             tuning_space_builder=_build_catboost_tuning_space,
             supports_native_categorical_preprocessing=True,
+            supports_sparse_preprocessed_input=True,
         ),
         "xgboost": ModelDefinition(
             model_id="xgboost",
             model_name="XGBRegressor",
             builder=_build_xgboost_regressor,
             tuning_space_builder=_build_xgboost_tuning_space,
+            supports_sparse_preprocessed_input=True,
         ),
     },
     "binary": {
@@ -570,18 +578,21 @@ MODEL_REGISTRY: dict[str, dict[str, ModelDefinition]] = {
             model_name="LogisticRegression",
             builder=_build_logreg,
             tuning_space_builder=_build_logreg_tuning_space,
+            supports_sparse_preprocessed_input=True,
         ),
         "random_forest": ModelDefinition(
             model_id="random_forest",
             model_name="RandomForestClassifier",
             builder=_build_random_forest_classifier,
             tuning_space_builder=_build_random_forest_tuning_space,
+            supports_sparse_preprocessed_input=True,
         ),
         "extra_trees": ModelDefinition(
             model_id="extra_trees",
             model_name="ExtraTreesClassifier",
             builder=_build_extra_trees_classifier,
             tuning_space_builder=_build_extra_trees_tuning_space,
+            supports_sparse_preprocessed_input=True,
         ),
         "hist_gradient_boosting": ModelDefinition(
             model_id="hist_gradient_boosting",
@@ -594,6 +605,7 @@ MODEL_REGISTRY: dict[str, dict[str, ModelDefinition]] = {
             model_name="LGBMClassifier",
             builder=_build_lightgbm_classifier,
             tuning_space_builder=_build_lightgbm_tuning_space,
+            supports_sparse_preprocessed_input=True,
         ),
         "catboost": ModelDefinition(
             model_id="catboost",
@@ -602,12 +614,14 @@ MODEL_REGISTRY: dict[str, dict[str, ModelDefinition]] = {
             fit_kwargs_builder=_build_catboost_fit_kwargs,
             tuning_space_builder=_build_catboost_tuning_space,
             supports_native_categorical_preprocessing=True,
+            supports_sparse_preprocessed_input=True,
         ),
         "xgboost": ModelDefinition(
             model_id="xgboost",
             model_name="XGBClassifier",
             builder=_build_xgboost_classifier,
             tuning_space_builder=_build_xgboost_tuning_space,
+            supports_sparse_preprocessed_input=True,
         ),
     },
 }
@@ -669,6 +683,19 @@ def validate_model_preprocessing_compatibility(
         f"Model family '{model_definition.model_id}' does not support "
         "categorical_preprocessor='native'. Use model_family='catboost' for native categorical handling."
     )
+
+
+def resolve_model_matrix_output_kind(
+    task_type: str,
+    model_id: str,
+    categorical_preprocessor_id: str,
+) -> str:
+    model_definition = get_model_definition(task_type, model_id)
+    if categorical_preprocessor_id == "native":
+        return "native_frame"
+    if categorical_preprocessor_id == "onehot" and model_definition.supports_sparse_preprocessed_input:
+        return "sparse_csr"
+    return "dense_array"
 
 
 def resolve_model_id(task_type: str, model_id: str) -> str:
