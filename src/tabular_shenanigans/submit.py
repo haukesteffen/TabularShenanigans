@@ -1,4 +1,3 @@
-import json
 import subprocess
 from dataclasses import dataclass
 from datetime import datetime, timezone
@@ -7,6 +6,10 @@ from pathlib import Path
 import numpy as np
 import pandas as pd
 
+from tabular_shenanigans.candidate_artifacts import (
+    candidate_dir as resolve_candidate_dir,
+    load_candidate_manifest,
+)
 from tabular_shenanigans.config import AppConfig
 from tabular_shenanigans.data import get_binary_prediction_kind, load_sample_submission_template, validate_sample_submission_schema
 
@@ -41,10 +44,6 @@ class SubmissionContext:
     prediction_path: Path
 
 
-def _candidate_dir(competition_slug: str, candidate_id: str) -> Path:
-    return Path("artifacts") / competition_slug / "candidates" / candidate_id
-
-
 def _submission_ledger_path(competition_slug: str) -> Path:
     return Path("artifacts") / competition_slug / "submissions.csv"
 
@@ -69,19 +68,6 @@ def _append_submission_ledger(ledger_path: Path, row: dict[str, object]) -> None
         merged_df.to_csv(ledger_path, index=False)
         return
     ledger_df.to_csv(ledger_path, index=False)
-
-
-def _load_candidate_manifest(candidate_dir: Path) -> dict[str, object]:
-    manifest_path = candidate_dir / "candidate.json"
-    if not manifest_path.exists():
-        raise ValueError(
-            f"Missing candidate manifest: {manifest_path}. Submission requires current candidate artifacts."
-        )
-    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
-    if not isinstance(manifest, dict):
-        raise ValueError(f"Candidate manifest must be a JSON object: {manifest_path}")
-    return manifest
-
 
 def _require_manifest_value(manifest: dict[str, object], field_name: str) -> object:
     field_value = manifest.get(field_name)
@@ -113,8 +99,14 @@ def _load_submission_context(
     competition_slug: str,
     candidate_id: str,
 ) -> SubmissionContext:
-    candidate_dir = _candidate_dir(competition_slug=competition_slug, candidate_id=candidate_id)
-    candidate_manifest = _load_candidate_manifest(candidate_dir=candidate_dir)
+    candidate_dir = resolve_candidate_dir(competition_slug=competition_slug, candidate_id=candidate_id)
+    candidate_manifest = load_candidate_manifest(
+        candidate_dir_path=candidate_dir,
+        missing_message=(
+            f"Missing candidate manifest: {candidate_dir / 'candidate.json'}. "
+            "Submission requires current candidate artifacts."
+        ),
+    )
     cv_summary = candidate_manifest.get("cv_summary")
     if not isinstance(cv_summary, dict):
         raise ValueError("Candidate manifest cv_summary must be a mapping.")

@@ -4,6 +4,7 @@ from contextlib import contextmanager
 from datetime import datetime, timezone
 from pathlib import Path
 
+from tabular_shenanigans.candidate_artifacts import load_candidate_manifest
 from tabular_shenanigans.config import AppConfig
 
 
@@ -44,15 +45,6 @@ def _build_stage_run_name(
     if extra_tags is not None and extra_tags.get("candidate_id") is not None:
         run_name_parts.append(str(extra_tags["candidate_id"]))
     return " | ".join(run_name_parts)
-
-
-def _load_candidate_manifest(candidate_dir: Path) -> dict[str, object]:
-    manifest_path = candidate_dir / "candidate.json"
-    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
-    if not isinstance(manifest, dict):
-        raise ValueError(f"Candidate manifest must be a JSON object: {manifest_path}")
-    return manifest
-
 
 @contextmanager
 def start_stage_run(
@@ -111,7 +103,7 @@ def log_prepare_outputs(prepared_context) -> None:
 
 def log_train_outputs(candidate_dir: Path) -> None:
     mlflow = _load_mlflow()
-    manifest = _load_candidate_manifest(candidate_dir=candidate_dir)
+    manifest = load_candidate_manifest(candidate_dir_path=candidate_dir)
     cv_summary = manifest.get("cv_summary")
     if not isinstance(cv_summary, dict):
         raise ValueError(f"Candidate manifest cv_summary must be a mapping: {candidate_dir / 'candidate.json'}")
@@ -169,7 +161,7 @@ def log_submit_outputs(
 ) -> None:
     mlflow = _load_mlflow()
     candidate_dir = submission_path.parent
-    manifest = _load_candidate_manifest(candidate_dir=candidate_dir)
+    manifest = load_candidate_manifest(candidate_dir_path=candidate_dir)
     cv_summary = manifest.get("cv_summary")
     if not isinstance(cv_summary, dict):
         raise ValueError(f"Candidate manifest cv_summary must be a mapping: {candidate_dir / 'candidate.json'}")
