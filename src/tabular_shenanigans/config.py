@@ -6,13 +6,14 @@ import yaml
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from tabular_shenanigans.data import SUPPORTED_PRIMARY_METRICS, is_metric_valid_for_task, normalize_primary_metric
-from tabular_shenanigans.feature_recipes import resolve_feature_recipe_id
+from tabular_shenanigans.feature_recipes import IDENTITY_FEATURE_RECIPE_ID, resolve_feature_recipe_id
 from tabular_shenanigans.models import (
     get_tunable_model_ids,
     is_model_tunable,
     resolve_candidate_model_id,
     validate_model_preprocessing_compatibility,
 )
+from tabular_shenanigans.naming import validate_blend_candidate_id, validate_model_candidate_id
 from tabular_shenanigans.preprocess import (
     CATEGORICAL_PREPROCESSOR_IDS,
     NUMERIC_PREPROCESSOR_IDS,
@@ -74,7 +75,7 @@ class ModelCandidateConfig(BaseCandidateConfig):
     model_config = ConfigDict(extra="forbid")
 
     candidate_type: Literal["model"] = "model"
-    feature_recipe_id: str = Field(default="identity", min_length=1)
+    feature_recipe_id: str = Field(default=IDENTITY_FEATURE_RECIPE_ID, min_length=1)
     numeric_preprocessor: str | None = None
     categorical_preprocessor: str | None = None
     model_family: Literal[
@@ -258,10 +259,16 @@ class AppConfig(BaseModel):
         if self.is_model_candidate:
             candidate = self.experiment.candidate
             candidate.feature_recipe_id = resolve_feature_recipe_id(candidate.feature_recipe_id)
-            resolved_model_id = self.resolved_model_id
+            validate_model_candidate_id(
+                candidate_id=candidate.candidate_id,
+                competition_slug=competition.slug,
+                feature_recipe_id=candidate.feature_recipe_id,
+                preprocessing_scheme_id=candidate.preprocessing_scheme_id,
+            )
+            resolved_model_registry_key = self.resolved_model_registry_key
             validate_model_preprocessing_compatibility(
                 task_type=competition.task_type,
-                model_id=resolved_model_id,
+                model_id=resolved_model_registry_key,
                 categorical_preprocessor_id=candidate.categorical_preprocessor,
             )
             optimization = candidate.optimization
@@ -272,13 +279,19 @@ class AppConfig(BaseModel):
                         "Set experiment.candidate.optimization.n_trials or "
                         "experiment.candidate.optimization.timeout_seconds."
                     )
-                if not is_model_tunable(competition.task_type, resolved_model_id):
+                if not is_model_tunable(competition.task_type, resolved_model_registry_key):
                     supported_tunable_model_families = get_tunable_model_ids(competition.task_type)
                     raise ValueError(
                         f"Configured model_family '{candidate.model_family}' does not support optimization for "
                         f"task_type '{competition.task_type}'. Supported tunable model families: "
                         f"{supported_tunable_model_families}"
                     )
+        else:
+            candidate = self.experiment.candidate
+            validate_blend_candidate_id(
+                candidate_id=candidate.candidate_id,
+                competition_slug=competition.slug,
+            )
 
         return self
 
@@ -291,9 +304,9 @@ class AppConfig(BaseModel):
         return isinstance(self.experiment.candidate, BlendCandidateConfig)
 
     @property
-    def resolved_model_id(self) -> str:
+    def resolved_model_registry_key(self) -> str:
         if not self.is_model_candidate:
-            raise ValueError("resolved_model_id is only available for model candidates.")
+            raise ValueError("resolved_model_registry_key is only available for model candidates.")
         candidate = self.experiment.candidate
         return resolve_candidate_model_id(
             task_type=self.competition.task_type,

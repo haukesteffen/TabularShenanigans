@@ -80,7 +80,7 @@ Stage behavior:
 - `train`: fetches if needed, prepares competition context when it is missing, then writes one candidate artifact directory on the frozen folds; model candidates train on raw data plus preprocessing, while blend candidates combine existing compatible candidate artifacts without retraining base models; when optimization is enabled for a model candidate, `train` first runs Optuna and stores optimization metadata inside that candidate directory
 - `submit`: resolves one candidate artifact by `candidate_id` and never retrains implicitly
 
-`submit` defaults to `config.candidate_id`. Use `--candidate-id` only when you want to submit another existing candidate for the same competition.
+`submit` defaults to `config.experiment.candidate.candidate_id`. Use `--candidate-id` only when you want to submit another existing candidate for the same competition.
 
 ## Config Overview
 Tracked example configs:
@@ -132,8 +132,11 @@ Current `experiment.candidate` contract:
 - shared keys:
   - `candidate_type`: `model` or `blend`
   - `candidate_id`
+    - model candidates must follow `<feature_recipe_id>--<preprocessing_scheme_id>--<variant_token>--vN`
+    - blend candidates must follow `blend__vN`
+    - `candidate_id` must not repeat `competition.slug`
 - model candidate keys:
-  - optional `feature_recipe_id`: tracked deterministic feature recipe applied after raw feature extraction and before preprocessing/model fitting; defaults to `identity`
+  - optional `feature_recipe_id`: tracked deterministic feature recipe applied after raw feature extraction and before preprocessing/model fitting; defaults to `fr0`
   - `model_family`
     - regression: `ridge`, `elasticnet`, `random_forest`, `extra_trees`, `hist_gradient_boosting`, `lightgbm`, `catboost`, `xgboost`
     - binary classification: `logistic_regression`, `random_forest`, `extra_trees`, `hist_gradient_boosting`, `lightgbm`, `catboost`, `xgboost`
@@ -164,10 +167,10 @@ Current hard-invalid preprocessing combinations:
 - `categorical_preprocessor: native` with any `model_family` other than `catboost`
 
 Built-in `feature_recipe_id` values for model candidates:
-- `identity`: default pass-through recipe for new competitions
-- `s6e3_v1`: a first competition-specific feature set for `playground-series-s6e3`
+- `fr0`: default pass-through recipe for new competitions
+- `fr1`: first competition-specific feature set for `playground-series-s6e3`
 
-Feature recipes live in tracked Python modules under `src/tabular_shenanigans/feature_recipes/`. They are intended for deterministic, leakage-safe competition-specific feature transforms. New competitions should start with `identity`; add a tracked recipe module only when the generic baseline plateaus.
+Feature recipes live in tracked Python modules under `src/tabular_shenanigans/feature_recipes/`. They are intended for deterministic, leakage-safe competition-specific feature transforms. New competitions should start with `fr0`; add a tracked recipe module only when the generic baseline plateaus.
 
 `frequency` encodes each categorical value as its fold-local relative frequency in the training fold. Unseen categories at transform time map to `0.0`.
 
@@ -182,7 +185,7 @@ Binary prediction artifact contract:
 
 If `id_column` or `label_column` are omitted, the training pipeline infers them from `train.csv`, `test.csv`, and `sample_submission.csv`. The resolved `id_column` is preserved for prediction outputs and in `candidate.json`, but it is not part of the model feature matrix. Submission preparation consumes the selected artifact manifest as the schema/task source of truth and uses `sample_submission.csv` only for validation. Invalid overrides, ambiguous inference, a `sample_submission.csv` shape that does not exactly match `[id_column, label_column]`, or a submission ID column that differs from `sample_submission.csv` in values or ordering are hard errors.
 
-The current runtime resolves `experiment.candidate.model_family` to one internal canonical `model_id` for model candidates, then records `numeric_preprocessor`, `categorical_preprocessor`, and `preprocessing_scheme_id` separately in candidate artifacts. Blend candidates materialize a synthetic `blend_weighted_average` artifact model ID and use their component candidate metadata as provenance.
+The current runtime resolves `experiment.candidate.model_family` to one internal canonical `model_registry_key` for model candidates, then records `numeric_preprocessor`, `categorical_preprocessor`, and `preprocessing_scheme_id` separately in candidate artifacts. Blend candidates materialize a synthetic `blend_weighted_average` internal registry key and use their component candidate metadata as provenance. Human-facing labels come from `candidate_id`, not from the internal registry key.
 
 `task_type` and `primary_metric` are always config-driven. The pipeline does not infer them from Kaggle metadata.
 
@@ -241,7 +244,7 @@ Manual verification for blend candidates:
 - Candidate artifacts: `artifacts/<competition_slug>/candidates/<candidate_id>/`
   - includes `candidate.json`, `fold_metrics.csv`, `oof_predictions.csv`, `test_predictions.csv`, and `submission.csv` when prepared or submitted
   - binary `accuracy` candidates and blends also include `test_prediction_probabilities.csv` for probability-average-then-threshold blending, and `candidate.json` records that rule plus the sidecar path
-  - model candidates record the selected `feature_recipe_id`, engineered `feature_columns`, and optional `tuning_provenance`
+  - model candidates record the selected `feature_recipe_id`, `model_registry_key`, `estimator_name`, engineered `feature_columns`, and optional `tuning_provenance`
   - blend candidates also include `blend_summary.csv` and record their component candidates plus normalized weights in `candidate.json`
   - optimized model candidates also include `optimization_summary.json`, `optimization_trials.csv`, and `optimization_best_params.json`
 - Submission ledger: `artifacts/<competition_slug>/submissions.csv` as an append-only submission event table keyed by `candidate_id`
@@ -257,15 +260,17 @@ Manual verification for blend candidates:
 - The resolved `id_column` is identifier metadata and is excluded from preprocessing and model fitting by default.
 - `config.yaml` must use top-level `competition` and `experiment` sections; the old flat layout is unsupported.
 - The current runtime supports `experiment.candidate.candidate_type: model` and `experiment.candidate.candidate_type: blend`.
-- Model candidates resolve `experiment.candidate.model_family` to one canonical internal `model_id`; candidate artifacts also record `numeric_preprocessor`, `categorical_preprocessor`, and `preprocessing_scheme_id`.
-- Model candidates default `experiment.candidate.feature_recipe_id` to `identity`; feature recipes are tracked Python modules rather than runtime scripts or YAML transform blocks.
+- Model candidates resolve `experiment.candidate.model_family` to one canonical internal `model_registry_key`; candidate artifacts also record `numeric_preprocessor`, `categorical_preprocessor`, and `preprocessing_scheme_id`.
+- Model candidates default `experiment.candidate.feature_recipe_id` to `fr0`; feature recipes are tracked Python modules rather than runtime scripts or YAML transform blocks.
+- Model candidate ids must follow `<feature_recipe_id>--<preprocessing_scheme_id>--<variant_token>--vN`; blend candidate ids must follow `blend__vN`.
+- Candidate ids must not repeat `competition.slug`.
 - Blend candidates consume existing compatible candidate artifacts and write one new blend candidate artifact without retraining the base candidates.
 - `prepare` is the competition-level source of truth for `competition.json` and `folds.csv`; `train` consumes that frozen context and auto-runs `prepare` only when it is missing.
 - Enabled optimization is part of `train`, applies to model candidates only, and writes candidate-local metadata alongside the tuned artifact with `tuning_provenance`.
 - Feature recipes are deterministic and leakage-safe; fold-learned transforms still belong in preprocessing, not in the recipe layer.
 - Submission uses `candidate.json` as the schema/task source of truth.
-- Submission defaults to `config.candidate_id`; `submit --candidate-id <candidate_id>` overrides that selection explicitly.
-- Submission metadata includes the selected `model_id`; current candidate artifacts contain exactly one `model_id`.
+- Submission defaults to `config.experiment.candidate.candidate_id`; `submit --candidate-id <candidate_id>` overrides that selection explicitly.
+- Submission messages lead with `candidate_id`; internal `model_registry_key` remains provenance only.
 - Submission validation requires the selected candidate artifact `test_predictions.csv[id_column]` to match `sample_submission.csv[id_column]` exactly in both values and row order.
 - Submission requires the current candidate artifact layout under `artifacts/<competition_slug>/candidates/<candidate_id>/`.
 - Binary classification supports any two-class labels accepted by scikit-learn.

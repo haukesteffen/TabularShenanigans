@@ -40,15 +40,16 @@ experiment:
 
   candidate:
     candidate_type: model
-    candidate_id: baseline_logreg_v1
-    feature_recipe_id: identity
+    candidate_id: fr0--num_standardize__cat_onehot--logreg--v1
+    feature_recipe_id: fr0
     model_family: logistic_regression
     numeric_preprocessor: standardize
     categorical_preprocessor: onehot
     model_params: {}
 
-    # Keep identity for new competitions, then switch to a tracked code recipe
-    # such as s6e3_v1 only when you need competition-specific features.
+    # Candidate ids follow:
+    # <feature_recipe_id>--<preprocessing_scheme_id>--<variant_token>--vN
+    # Example competition-specific recipe token: fr1
 
     # Alternative binary model candidates:
     # numeric_preprocessor: kbins
@@ -63,7 +64,7 @@ experiment:
 
     # Alternative blend candidate shape:
     # candidate_type: blend
-    # candidate_id: binary_blend_v1
+    # candidate_id: blend__v1
     # base_candidate_ids:
     #   - existing_candidate_a
     #   - existing_candidate_b

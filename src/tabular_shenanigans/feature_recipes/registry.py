@@ -3,6 +3,8 @@ import pandas as pd
 from tabular_shenanigans.feature_recipes.base import FeatureRecipeDefinition
 from tabular_shenanigans.feature_recipes.playground_series_s6e3 import S6E3_V1_FEATURE_RECIPE
 
+IDENTITY_FEATURE_RECIPE_ID = "fr0"
+
 
 def _identity_recipe(
     x_train_raw: pd.DataFrame,
@@ -12,9 +14,10 @@ def _identity_recipe(
 
 
 FEATURE_RECIPE_REGISTRY = {
-    "identity": FeatureRecipeDefinition(
-        recipe_id="identity",
+    IDENTITY_FEATURE_RECIPE_ID: FeatureRecipeDefinition(
+        recipe_id=IDENTITY_FEATURE_RECIPE_ID,
         recipe_name="Identity",
+        recipe_description="No engineered feature changes; pass raw modeled features through unchanged.",
         transform=_identity_recipe,
     ),
     S6E3_V1_FEATURE_RECIPE.recipe_id: S6E3_V1_FEATURE_RECIPE,

@@ -22,8 +22,8 @@ from tabular_shenanigans.cv import is_higher_better, resolve_positive_label, sco
 from tabular_shenanigans.data import CompetitionDatasetContext, get_binary_prediction_kind
 from tabular_shenanigans.preprocess import prepare_feature_frames
 
-BLEND_MODEL_ID = "blend_weighted_average"
-BLEND_MODEL_NAME = "WeightedAverageBlend"
+BLEND_REGISTRY_KEY = "blend_weighted_average"
+BLEND_ESTIMATOR_NAME = "WeightedAverageBlend"
 BLEND_PREPROCESSING_SCHEME_ID = "blend"
 
 
@@ -32,8 +32,8 @@ class BlendComponent:
     candidate_id: str
     candidate_type: str
     config_fingerprint: str | None
-    model_id: str
-    model_name: str
+    model_registry_key: str
+    estimator_name: str
     feature_recipe_id: str | None
     cv_metric_mean: float
     cv_metric_std: float
@@ -384,8 +384,8 @@ def _load_blend_component(
         candidate_id=candidate_id,
         candidate_type=str(manifest.get("candidate_type") or "model"),
         config_fingerprint=manifest.get("config_fingerprint"),
-        model_id=str(manifest.get("model_id") or "candidate"),
-        model_name=str(manifest.get("model_name") or "Candidate"),
+        model_registry_key=str(manifest.get("model_registry_key") or "candidate"),
+        estimator_name=str(manifest.get("estimator_name") or "Candidate"),
         feature_recipe_id=manifest.get("feature_recipe_id"),
         cv_metric_mean=float(cv_summary["metric_mean"]),
         cv_metric_std=float(cv_summary["metric_std"]),
@@ -450,15 +450,15 @@ def _build_blend_summary(
         rows.append(
             {
                 "blend_candidate_id": candidate_id,
-                "blend_model_id": BLEND_MODEL_ID,
+                "blend_registry_key": BLEND_REGISTRY_KEY,
                 "blend_metric_name": metric_name,
                 "blend_metric_mean": metric_mean,
                 "blend_metric_std": metric_std,
                 "component_rank": component_index + 1,
                 "component_candidate_id": component.candidate_id,
                 "component_candidate_type": component.candidate_type,
-                "component_model_id": component.model_id,
-                "component_model_name": component.model_name,
+                "component_model_registry_key": component.model_registry_key,
+                "component_estimator_name": component.estimator_name,
                 "component_feature_recipe_id": component.feature_recipe_id,
                 "component_config_fingerprint": component.config_fingerprint,
                 "component_weight": normalized_weights[component_index],
@@ -518,7 +518,7 @@ def _build_config_fingerprint(
                 }
                 for component, weight in zip(components, normalized_weights, strict=True)
             ],
-            "model_id": BLEND_MODEL_ID,
+            "model_registry_key": BLEND_REGISTRY_KEY,
         }
     )
 
@@ -553,8 +553,8 @@ def _build_candidate_manifest(
         "primary_metric": competition.primary_metric,
         "config_fingerprint": config_fingerprint,
         "config_snapshot": config_snapshot,
-        "model_id": BLEND_MODEL_ID,
-        "model_name": BLEND_MODEL_NAME,
+        "model_registry_key": BLEND_REGISTRY_KEY,
+        "estimator_name": BLEND_ESTIMATOR_NAME,
         "preprocessing_scheme_id": BLEND_PREPROCESSING_SCHEME_ID,
         "cv_summary": {
             "metric_name": competition.primary_metric,
@@ -567,8 +567,8 @@ def _build_candidate_manifest(
                 "candidate_id": component.candidate_id,
                 "candidate_type": component.candidate_type,
                 "config_fingerprint": component.config_fingerprint,
-                "model_id": component.model_id,
-                "model_name": component.model_name,
+                "model_registry_key": component.model_registry_key,
+                "estimator_name": component.estimator_name,
                 "feature_recipe_id": component.feature_recipe_id,
                 "weight": weight,
                 "cv_summary": {

@@ -43,7 +43,7 @@ def _build_optimization_config_snapshot(
         id_column=training_context.id_column,
         label_column=training_context.label_column,
     )
-    config_snapshot["resolved_model_id"] = tuning_model_spec.model_id
+    config_snapshot["resolved_model_registry_key"] = tuning_model_spec.model_registry_key
     config_snapshot["resolved_numeric_preprocessor"] = training_context.numeric_preprocessor
     config_snapshot["resolved_categorical_preprocessor"] = training_context.categorical_preprocessor
     config_snapshot["resolved_preprocessing_scheme_id"] = training_context.preprocessing_scheme_id
@@ -78,7 +78,7 @@ def _build_optimization_summary(
     study_id: str,
     optimization_config_snapshot: dict[str, object],
     tuning_model_spec: TrainingModelSpec,
-    model_name: str,
+    estimator_name: str,
     preprocessing_scheme_id: str,
     target_summary: dict[str, object],
     best_parameter_overrides: dict[str, object],
@@ -97,8 +97,8 @@ def _build_optimization_summary(
         "optimization_method": candidate.optimization.method,
         "optimization_direction": study.direction.name.lower(),
         "config_snapshot": optimization_config_snapshot,
-        "model_id": tuning_model_spec.model_id,
-        "model_name": model_name,
+        "model_registry_key": tuning_model_spec.model_registry_key,
+        "estimator_name": estimator_name,
         "preprocessing_scheme_id": preprocessing_scheme_id,
         "trial_count": len(study.trials),
         "completed_trial_count": len(
@@ -128,8 +128,8 @@ def run_optimization(
 
     task_type = competition.task_type
     primary_metric = competition.primary_metric
-    tuning_model_spec = TrainingModelSpec(model_id=config.resolved_model_id)
-    model_definition = get_model_definition(task_type, tuning_model_spec.model_id)
+    tuning_model_spec = TrainingModelSpec(model_registry_key=config.resolved_model_registry_key)
+    model_definition = get_model_definition(task_type, tuning_model_spec.model_registry_key)
 
     training_context = prepared_training_context
     if training_context is None:
@@ -151,12 +151,12 @@ def run_optimization(
     study = optuna.create_study(direction=direction, sampler=sampler, study_name=study_id)
 
     def objective(trial: optuna.Trial) -> float:
-        parameter_overrides = build_tuning_space(task_type, tuning_model_spec.model_id, trial)
+        parameter_overrides = build_tuning_space(task_type, tuning_model_spec.model_registry_key, trial)
         cv_evaluation = score_model_spec(
             task_type=task_type,
             primary_metric=primary_metric,
             model_spec=TrainingModelSpec(
-                model_id=tuning_model_spec.model_id,
+                model_registry_key=tuning_model_spec.model_registry_key,
                 parameter_overrides=parameter_overrides,
             ),
             training_context=training_context,
@@ -188,7 +188,7 @@ def run_optimization(
         "study_id": study_id,
         "optimization_method": optimization.method,
         "trial_number": study.best_trial.number,
-        "base_model_id": tuning_model_spec.model_id,
+        "base_model_registry_key": tuning_model_spec.model_registry_key,
         "parameter_overrides": best_parameter_overrides,
         "best_value": study.best_trial.value,
     }
@@ -198,14 +198,14 @@ def run_optimization(
         study_id=study_id,
         optimization_config_snapshot=optimization_config_snapshot,
         tuning_model_spec=tuning_model_spec,
-        model_name=model_definition.model_name,
+        estimator_name=model_definition.model_name,
         preprocessing_scheme_id=training_context.preprocessing_scheme_id,
         target_summary=training_context.target_summary,
         best_parameter_overrides=best_parameter_overrides,
     )
     return OptimizationResult(
         best_model_spec=TrainingModelSpec(
-            model_id=tuning_model_spec.model_id,
+            model_registry_key=tuning_model_spec.model_registry_key,
             parameter_overrides=best_parameter_overrides,
         ),
         tuning_provenance=tuning_provenance,

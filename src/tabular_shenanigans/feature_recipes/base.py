@@ -10,4 +10,5 @@ FeatureRecipeTransform = Callable[[pd.DataFrame, pd.DataFrame], tuple[pd.DataFra
 class FeatureRecipeDefinition:
     recipe_id: str
     recipe_name: str
+    recipe_description: str
     transform: FeatureRecipeTransform

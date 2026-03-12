@@ -67,8 +67,7 @@ def _print_resolved_setup(config: AppConfig) -> None:
         f"candidate_id={candidate.candidate_id}, candidate_type=model, "
         f"feature_recipe={candidate.feature_recipe_id}, model_family={candidate.model_family}, "
         f"numeric_preprocessor={candidate.numeric_preprocessor}, "
-        f"categorical_preprocessor={candidate.categorical_preprocessor}, "
-        f"model_id={config.resolved_model_id}"
+        f"categorical_preprocessor={candidate.categorical_preprocessor}"
     )
 
 
@@ -104,7 +103,8 @@ def _build_train_tracking_tags(config: AppConfig) -> dict[str, object]:
         "candidate_type": candidate.candidate_type,
     }
     if config.is_model_candidate:
-        tags["model_id"] = config.resolved_model_id
+        tags["model_registry_key"] = config.resolved_model_registry_key
+        tags["model_family"] = candidate.model_family
         tags["feature_recipe_id"] = candidate.feature_recipe_id
         tags["numeric_preprocessor"] = candidate.numeric_preprocessor
         tags["categorical_preprocessor"] = candidate.categorical_preprocessor
