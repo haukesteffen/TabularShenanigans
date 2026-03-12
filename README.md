@@ -80,7 +80,7 @@ Stage behavior:
 - `submit`: downloads one candidate from MLflow, validates `test_predictions.csv` against `sample_submission.csv`, and when `experiment.submit.enabled=true` submits to Kaggle and records the submission event under that same candidate run.
 - `refresh-submissions`: scans Kaggle submission history, matches `submit=<submission_event_id>` descriptions, and appends new score observations back onto the matching candidate runs.
 
-`submit` defaults to `config.experiment.candidate.candidate_id`. Use `--candidate-id` when you want to submit another existing candidate for the same competition experiment.
+`submit` defaults to the derived `candidate_id` for the current config. Use `--candidate-id` when you want to submit another existing candidate for the same competition experiment.
 
 ## Config Overview
 Tracked example configs:
@@ -109,8 +109,6 @@ Required top-level sections:
   - `low_cardinality_int_threshold`
 
 `experiment` keys:
-- `name`
-- optional `notes`
 - required `tracking`
 - required `candidate`
 - optional `submit`
@@ -121,10 +119,6 @@ Required top-level sections:
 `experiment.candidate` keys:
 - shared:
   - `candidate_type`: `model` or `blend`
-  - `candidate_id`
-    - model candidates must follow `<feature_recipe_id>--<preprocessing_scheme_id>--<variant_token>--vN`
-    - blend candidates must follow `blend__vN`
-    - `candidate_id` must not repeat `competition.slug`
 - model candidate:
   - `feature_recipe_id`: built-in values are `fr0`, `fr1`, and `fr2`
   - `model_family`
@@ -132,11 +126,16 @@ Required top-level sections:
     - binary: `logistic_regression`, `random_forest`, `extra_trees`, `hist_gradient_boosting`, `lightgbm`, `catboost`, `xgboost`
   - `numeric_preprocessor`: `median`, `standardize`, or `kbins`
   - `categorical_preprocessor`: `onehot`, `ordinal`, `frequency`, or `native`
-  - optional `model_params`
+  - optional `model_params`: manual estimator overrides; when omitted, the runtime uses repo defaults plus the estimator library defaults
   - optional `optimization`
 - blend candidate:
   - `base_candidate_ids`: at least two existing compatible candidate IDs from the same competition experiment
   - optional `weights`
+
+`candidate_id` is derived automatically and is not configured directly:
+- model candidates derive `<feature_recipe_id>--<preprocessing_scheme_id>--<model_registry_key>--<hash8>`
+- blend candidates derive `blend__<hash8>`
+- rerunning the exact same candidate spec derives the same `candidate_id` and hard-fails if that run already exists in MLflow
 
 Hard-invalid preprocessing combination:
 - `categorical_preprocessor: native` with any `model_family` other than `catboost`
@@ -208,8 +207,8 @@ Preferred targets:
 Suggested checks:
 - run `uv run python main.py train` and confirm one MLflow candidate run appears under the competition experiment
 - inspect the candidate run and confirm `candidate/`, `config/`, and `context/` artifacts exist
-- train a second compatible candidate and confirm `uv run python main.py train` fails if you reuse the same `candidate_id`
-- train a `blend__vN` candidate and confirm it downloads base candidates from MLflow instead of reading local artifact directories
+- rerun the exact same candidate config and confirm `uv run python main.py train` fails because it derives the same `candidate_id`
+- train one blend candidate and confirm it downloads base candidates from MLflow instead of reading local artifact directories
 - run `uv run python main.py submit` with `experiment.submit.enabled: false` and confirm dry-run validation succeeds without creating local candidate artifacts or submission ledgers
 - run `uv run python main.py refresh-submissions` after at least one real Kaggle submission and confirm candidate-run submission metrics update in MLflow
 
@@ -218,4 +217,4 @@ Suggested checks:
 - Competition downloads still live under `data/<competition_slug>/`.
 - EDA reports still live under `reports/<competition_slug>/`.
 - Local temp directories are used during a running command, but candidate state is not kept there after the command finishes.
-- Candidate lookup is keyed by `candidate_id` inside the competition MLflow experiment. Reusing a `candidate_id` without deleting the existing run is a hard error.
+- Candidate lookup is keyed by derived `candidate_id` inside the competition MLflow experiment. Reusing the same candidate spec without deleting the existing run is a hard error.

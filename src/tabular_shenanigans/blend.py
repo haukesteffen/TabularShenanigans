@@ -29,6 +29,7 @@ from tabular_shenanigans.mlflow_store import (
     log_candidate_run,
     terminate_run,
 )
+from tabular_shenanigans.naming import normalize_blend_weights
 from tabular_shenanigans.preprocess import prepare_feature_frames
 
 BLEND_REGISTRY_KEY = "blend_weighted_average"
@@ -140,23 +141,6 @@ def _load_binary_accuracy_test_probabilities(
             f"Expected columns {expected_columns}, got {probability_df.columns.tolist()} in {probability_path}"
         )
     return probability_df
-
-
-def _resolve_blend_weights(
-    base_candidate_ids: list[str],
-    configured_weights: list[float] | None,
-) -> list[float]:
-    if configured_weights is None:
-        equal_weight = 1.0 / len(base_candidate_ids)
-        return [equal_weight] * len(base_candidate_ids)
-
-    if not np.isfinite(np.asarray(configured_weights, dtype=float)).all():
-        raise ValueError("Blend candidate weights must be finite.")
-
-    weight_sum = float(sum(configured_weights))
-    if not np.isfinite(weight_sum) or weight_sum <= 0:
-        raise ValueError("Blend candidate weights must sum to a positive value.")
-    return [float(weight / weight_sum) for weight in configured_weights]
 
 
 def _validate_binary_test_labels(
@@ -561,11 +545,10 @@ def _build_candidate_manifest(
     mlflow_run_id: str,
 ) -> dict[str, object]:
     competition = config.competition
-    candidate = config.experiment.candidate
     manifest = {
         "artifact_type": "candidate",
-        "candidate_id": candidate.candidate_id,
-        "candidate_type": candidate.candidate_type,
+        "candidate_id": config.resolved_candidate_id,
+        "candidate_type": config.experiment.candidate.candidate_type,
         "generated_at_utc": generated_at_utc,
         "competition_slug": competition.slug,
         "task_type": competition.task_type,
@@ -680,6 +663,7 @@ def run_blend_training(
     competition = config.competition
     features = competition.features
     candidate = config.experiment.candidate
+    candidate_id = config.resolved_candidate_id
     train_df = dataset_context.train_df
     test_df = dataset_context.test_df
     id_column = dataset_context.id_column
@@ -711,10 +695,7 @@ def run_blend_training(
             configured_positive_label=positive_label,
         )
 
-    normalized_weights = _resolve_blend_weights(
-        base_candidate_ids=candidate.base_candidate_ids,
-        configured_weights=candidate.weights,
-    )
+    normalized_weights = config.resolved_blend_weights
     fit_started = time.perf_counter()
     with tempfile.TemporaryDirectory(prefix="tabular-shenanigans-blend-components-") as component_dir:
         components = [
@@ -771,7 +752,7 @@ def run_blend_training(
     metric_mean = float(fold_metrics_df["metric_value"].mean())
     metric_std = float(fold_metrics_df["metric_value"].std(ddof=0))
     blend_summary_df = _build_blend_summary(
-        candidate_id=candidate.candidate_id,
+        candidate_id=candidate_id,
         metric_name=competition.primary_metric,
         metric_mean=metric_mean,
         metric_std=metric_std,
@@ -779,7 +760,7 @@ def run_blend_training(
         normalized_weights=normalized_weights,
     )
     print(
-        f"Blend candidate: {candidate.candidate_id} | "
+        f"Blend candidate: {candidate_id} | "
         f"components={candidate.base_candidate_ids} | "
         f"weights={normalized_weights} | "
         f"CV {competition.primary_metric}: mean={metric_mean:.6f}, std={metric_std:.6f}"
@@ -806,7 +787,7 @@ def run_blend_training(
     )
     candidate_run = create_candidate_run(
         config=config,
-        candidate_id=candidate.candidate_id,
+        candidate_id=candidate_id,
         candidate_type=candidate.candidate_type,
     )
     candidate_manifest = _build_candidate_manifest(

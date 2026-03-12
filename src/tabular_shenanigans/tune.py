@@ -91,7 +91,7 @@ def _build_optimization_summary(
         "study_id": study_id,
         "generated_at_utc": datetime.now(timezone.utc).isoformat(),
         "competition_slug": competition.slug,
-        "candidate_id": candidate.candidate_id,
+        "candidate_id": config.resolved_candidate_id,
         "task_type": competition.task_type,
         "primary_metric": competition.primary_metric,
         "optimization_method": candidate.optimization.method,

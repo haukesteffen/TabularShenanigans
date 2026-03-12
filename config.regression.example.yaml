@@ -25,24 +25,16 @@ competition:
   #   low_cardinality_int_threshold: 20
 
 experiment:
-  name: baseline-elasticnet
-  notes: onehot elastic-net baseline for the default regression smoke test
-
   tracking:
     tracking_uri: http://localhost:5000
 
   candidate:
     candidate_type: model
-    candidate_id: fr0--num_standardize__cat_onehot--elasticnet--v1
     feature_recipe_id: fr0
     model_family: elasticnet
     numeric_preprocessor: standardize
     categorical_preprocessor: onehot
     model_params: {}
-
-    # Candidate ids follow:
-    # <feature_recipe_id>--<preprocessing_scheme_id>--<variant_token>--vN
-    # Example competition-specific recipe token: fr1
 
     # Alternative regression model candidates:
     # numeric_preprocessor: kbins
@@ -57,7 +49,6 @@ experiment:
 
     # Alternative blend candidate shape:
     # candidate_type: blend
-    # candidate_id: blend__v1
     # base_candidate_ids:
     #   - existing_candidate_a
     #   - existing_candidate_b

@@ -104,8 +104,8 @@ def _build_candidate_manifest(
     candidate = config.experiment.candidate
     manifest = {
         "artifact_type": "candidate",
-        "candidate_id": candidate.candidate_id,
-        "candidate_type": candidate.candidate_type,
+        "candidate_id": config.resolved_candidate_id,
+        "candidate_type": config.experiment.candidate.candidate_type,
         "generated_at_utc": generated_at_utc,
         "competition_slug": competition.slug,
         "task_type": competition.task_type,
@@ -224,6 +224,7 @@ def run_training(
 
     competition = config.competition
     candidate = config.experiment.candidate
+    candidate_id = config.resolved_candidate_id
     resolved_model_spec = _resolve_training_model_spec(config=config, model_spec=model_spec)
 
     training_context = prepared_training_context
@@ -244,7 +245,7 @@ def run_training(
     fit_wall_seconds = time.perf_counter() - fit_started
     model_result = evaluation_artifacts.model_result
     print(
-        f"Training candidate: {candidate.candidate_id} | "
+        f"Training candidate: {candidate_id} | "
         f"feature_recipe={candidate.feature_recipe_id} | "
         f"estimator={model_result.estimator_name} | "
         f"preprocessing={model_result.preprocessing_scheme_id} | "
@@ -267,7 +268,7 @@ def run_training(
     )
     candidate_run = create_candidate_run(
         config=config,
-        candidate_id=candidate.candidate_id,
+        candidate_id=candidate_id,
         candidate_type=candidate.candidate_type,
     )
     candidate_manifest = _build_candidate_manifest(

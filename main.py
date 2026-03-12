@@ -35,7 +35,7 @@ def build_parser() -> argparse.ArgumentParser:
         "--candidate-id",
         help=(
             "Optional candidate_id resolved in the current competition MLflow experiment. "
-            "Defaults to config.experiment.candidate.candidate_id."
+            "Defaults to the derived candidate_id for the current config."
         ),
     )
 
@@ -53,7 +53,7 @@ def _print_resolved_setup(config: AppConfig) -> None:
         print(
             "Resolved competition setup: "
             f"task_type={competition.task_type}, primary_metric={competition.primary_metric}, "
-            f"candidate_id={candidate.candidate_id}, candidate_type=blend, "
+            f"candidate_id={config.resolved_candidate_id}, candidate_type=blend, "
             f"base_candidates={candidate.base_candidate_ids}, weights={weight_summary}"
         )
         return
@@ -61,7 +61,7 @@ def _print_resolved_setup(config: AppConfig) -> None:
     print(
         "Resolved competition setup: "
         f"task_type={competition.task_type}, primary_metric={competition.primary_metric}, "
-        f"candidate_id={candidate.candidate_id}, candidate_type=model, "
+        f"candidate_id={config.resolved_candidate_id}, candidate_type=model, "
         f"feature_recipe={candidate.feature_recipe_id}, model_family={candidate.model_family}, "
         f"numeric_preprocessor={candidate.numeric_preprocessor}, "
         f"categorical_preprocessor={candidate.categorical_preprocessor}"
@@ -128,7 +128,7 @@ def _run_submit_stage(
     config: AppConfig,
     candidate_id: str | None = None,
 ):
-    resolved_candidate_id = candidate_id or config.experiment.candidate.candidate_id
+    resolved_candidate_id = candidate_id or config.resolved_candidate_id
     print(f"Using candidate_id: {resolved_candidate_id}")
     submission_result = run_submission(
         config=config,
@@ -209,7 +209,7 @@ def main(argv: list[str] | None = None) -> None:
     if args.stage == "submit":
         _run_submit_stage(
             config=config,
-            candidate_id=args.candidate_id or config.experiment.candidate.candidate_id,
+            candidate_id=args.candidate_id or config.resolved_candidate_id,
         )
         return
 
