@@ -26,8 +26,9 @@ The intended operating scope is Kaggle Playground Series tabular competitions. C
 10. For blend candidates, load compatible base candidate artifacts from `artifacts/<competition_slug>/candidates/<base_candidate_id>/`, validate shared schema plus frozen-fold alignment, validate the binary probability label contract when `primary_metric` is `roc_auc` or `log_loss`, and materialize blended OOF plus test predictions without retraining the base candidates.
 11. When `experiment.candidate.optimization.enabled=true` for a model candidate, `train` builds one prepared training context, runs an Optuna study on the frozen fold assignments through the shared evaluation core, reuses that prepared context for the final best-trial retrain, and writes optimization metadata inside the candidate directory.
 12. Write one candidate artifact directory under `artifacts/<competition_slug>/candidates/<candidate_id>/` with `candidate.json`, `fold_metrics.csv`, `oof_predictions.csv`, `test_predictions.csv`, and optional candidate-type-specific files such as `blend_summary.csv` or optimization metadata.
-13. Validate predictions against `sample_submission.csv`, including exact ID content and order, using `candidate.json` as the submission metadata contract, apply metric-aware binary prediction validation, write `submission.csv` in the selected candidate directory, and optionally submit to Kaggle.
-14. When `experiment.tracking.enabled=true`, publish stage-local artifacts and metadata for `prepare`, `train`, and `submit` to the configured MLflow server after the stage succeeds.
+13. Validate predictions against `sample_submission.csv`, including exact ID content and order, using `candidate.json` as the submission metadata contract, apply metric-aware binary prediction validation, write `submission.csv` in the selected candidate directory, and optionally submit to Kaggle with a generated `submission_event_id`.
+14. For real Kaggle submissions only, append one local submission event row to `artifacts/<competition_slug>/submissions.csv`, then attempt an immediate refresh of matching remote submission outcomes into `artifacts/<competition_slug>/submission_scores.csv`.
+15. When `experiment.tracking.enabled=true`, publish stage-local artifacts and metadata for `prepare`, `train`, `submit`, and `refresh-submissions` to the configured MLflow server after the stage succeeds.
 
 ## CLI Stages
 - `uv run python main.py`: default full pipeline (`fetch` -> `prepare` -> `train` -> `submit`)
@@ -37,11 +38,12 @@ The intended operating scope is Kaggle Playground Series tabular competitions. C
 - `uv run python main.py train`: fetch if needed, load the shared dataset context, auto-run `prepare` when needed, then either train one model candidate or materialize one blend candidate on the frozen folds; when optimization is enabled for a model candidate, run Optuna plus candidate-local optimization artifact writing before the final retrain
 - `uv run python main.py submit`: prepare or submit the configured `candidate_id`
 - `uv run python main.py submit --candidate-id <candidate_id>`: prepare or submit another existing candidate for the configured competition
+- `uv run python main.py refresh-submissions`: fetch remote Kaggle submission outcomes for locally tracked submission events
 
 The default `submit` path supports current candidate artifacts only. Unsupported or missing candidate artifacts fail directly.
 
 ## Module Responsibilities
-- `main.py`: orchestration entrypoint for config loading plus stage-specific CLI dispatch across fetch, prepare, EDA, training, and submission.
+- `main.py`: orchestration entrypoint for config loading plus stage-specific CLI dispatch across fetch, prepare, EDA, training, submission, and submission refresh.
 - `src/tabular_shenanigans/competition.py`: competition-level preparation, `competition.json` persistence, `folds.csv` persistence, prepared-context validation, and split reconstruction from frozen folds.
 - `src/tabular_shenanigans/config.py`: Pydantic-backed nested config schema for `competition` plus `experiment`, metric normalization, candidate-to-model resolution, runtime contract validation, and a small set of derived helpers on `AppConfig`.
 - `src/tabular_shenanigans/candidate_artifacts.py`: shared candidate artifact path resolution, manifest loading, config fingerprint helpers, target-summary generation, and common candidate file writing.
@@ -55,8 +57,9 @@ The default `submit` path supports current candidate artifacts only. Unsupported
 - `src/tabular_shenanigans/blend.py`: blend-candidate validation, base-candidate artifact compatibility checks, weighted prediction combination, blend-specific manifest fields, and `blend_summary.csv` writing on top of the shared candidate-artifact layer.
 - `src/tabular_shenanigans/train.py`: config-selected model training orchestration, candidate artifact writing, model-specific manifest fields, and optimization-aware workflow control on top of the shared candidate-artifact and model-evaluation layers.
 - `src/tabular_shenanigans/tune.py`: internal Optuna orchestration used by `train` when candidate optimization is enabled, consuming the shared prepared training context and shared evaluation functions.
-- `src/tabular_shenanigans/submit.py`: submission schema validation, candidate selection by `candidate_id`, submission message creation, Kaggle submission, and submission ledger updates using the shared candidate manifest loader.
-- `src/tabular_shenanigans/tracking.py`: optional MLflow run creation, tag/metric logging, config snapshot logging, and post-stage artifact publishing using the shared candidate manifest loader.
+- `src/tabular_shenanigans/submit.py`: submission schema validation, candidate selection by `candidate_id`, submission message creation, Kaggle submission, and stage-level submission orchestration.
+- `src/tabular_shenanigans/submission_history.py`: append-only submission event and outcome ledger helpers, `submission_event_id` generation, Kaggle submission-history refresh, and duplicate-observation suppression.
+- `src/tabular_shenanigans/tracking.py`: optional MLflow run creation, tag/metric logging, config snapshot logging, and post-stage artifact publishing using the shared candidate manifest and submission-history contracts.
 
 ## Configuration Contract
 Input:
@@ -116,6 +119,7 @@ Input:
 - Current `experiment.submit` keys:
   - `enabled` (boolean, default false)
   - `message_prefix` (string, optional)
+- Real Kaggle submissions use auto-generated messages shaped like `candidate=<candidate_id> | submit=<submission_event_id> | <metric>=<value>`, optionally prefixed by `message_prefix`
 - Current `experiment.tracking` keys:
   - `enabled` (boolean, default false)
   - `tracking_uri` (string, required when enabled)
@@ -160,6 +164,10 @@ Manual verification steps for each target:
 - for binary `accuracy` candidates, confirm `candidate.json` records `binary_accuracy_blend_rule` plus `binary_accuracy_test_probability_path`, and `test_prediction_probabilities.csv` is also generated in the candidate directory
 - run `uv run python main.py submit`
 - confirm `submission.csv` validates against `sample_submission.csv`, including exact ID values and order, for the selected candidate directory
+- with `experiment.submit.enabled: false`, confirm `submissions.csv` and `submission_scores.csv` are unchanged
+- with `experiment.submit.enabled: true`, confirm `submissions.csv` appends one row with `submission_event_id`
+- run `uv run python main.py refresh-submissions`
+- confirm `submission_scores.csv` appends only new remote status/score observations for locally tracked `submission_event_id` values
 - confirm binary outputs match the configured metric contract: probabilities for `roc_auc`/`log_loss`, labels for `accuracy`
 - when optimization is enabled, run `uv run python main.py train` and confirm `optimization_summary.json`, `optimization_trials.csv`, and `optimization_best_params.json` are generated in the candidate directory
 - when optimization is enabled, confirm the best-trial retrain writes a standard candidate artifact and records `tuning_provenance` in `candidate.json`
@@ -193,11 +201,13 @@ Manual verification steps for each target:
   - `optimization_summary.json`
   - `optimization_trials.csv`
   - `optimization_best_params.json`
-- Append-only submission ledger at `artifacts/<competition_slug>/submissions.csv` keyed by `candidate_id`
+- Append-only submission event ledger at `artifacts/<competition_slug>/submissions.csv`
+- Append-only submission outcome ledger at `artifacts/<competition_slug>/submission_scores.csv`
 - Optional MLflow-published stage artifacts:
   - `prepare`: config snapshot, `competition.json`, `folds.csv`, and reports
   - `train`: config snapshot and the full candidate artifact directory
-  - `submit`: config snapshot, `submission.csv`, and submission metadata JSON
+  - `submit`: config snapshot, `submission.csv`, submission metadata JSON, and submission ledgers when present
+  - `refresh-submissions`: config snapshot, submission outcome ledger, and refresh summary JSON
 
 ## Runtime Invariants And Failure Behavior
 - One runtime config source only: local repository-root `config.yaml`
@@ -224,6 +234,8 @@ Manual verification steps for each target:
 - enabled optimization is part of `train`, applies to model candidates only, reuses one prepared training context for scoring and retraining, and retrains exactly one tuned candidate into the normal candidate artifact layout
 - enabled optimization must have at least one stopping condition: `experiment.candidate.optimization.n_trials` or `experiment.candidate.optimization.timeout_seconds`
 - `submit` must resolve one candidate by `candidate_id`, defaulting to `config.experiment.candidate.candidate_id`
+- `submit` must write `submission.csv` for both dry-run and real-submit paths, but only real Kaggle submissions may append `submissions.csv`
+- `refresh-submissions` must scan Kaggle submission history and append only new remote observations for locally tracked `submission_event_id` values
 - `categorical_preprocessor: native` must preserve categorical feature positions through preprocessing so CatBoost can receive `cat_features`
 - Kaggle CLI and authentication are expected to be preconfigured
 - Competition zip contents are expected to include `train.csv`, `test.csv`, and `sample_submission.csv`
@@ -240,6 +252,7 @@ Manual verification steps for each target:
 - `sample_submission.csv` must match the resolved schema exactly as `[id_column, label_column]`
 - The selected candidate artifact `test_predictions.csv[id_column]` must match `sample_submission.csv[id_column]` exactly in both values and row order
 - Submission requires the current candidate prediction layout at `artifacts/<competition_slug>/candidates/<candidate_id>/test_predictions.csv`
+- Dry-run submission preparation must not append either submission ledger
 - Feature override columns must exist and cannot overlap between forced numeric and forced categorical sets
 - Configured metric must normalize to a supported metric compatible with the configured task type
 - CV splitter construction must support both `cv_shuffle=true` and `cv_shuffle=false`
@@ -288,6 +301,7 @@ Hard-error cases include:
 - Binary probability artifact outside `[0, 1]` for `roc_auc` or `log_loss` -> hard error
 - Binary label artifact containing values outside the observed label pair for `accuracy` -> hard error
 - Kaggle submission command failure when `experiment.submit.enabled=true` -> hard error
+- Kaggle submission-history refresh failure during explicit `refresh-submissions` -> hard error
 
 ## Design Guardrails
 - Keep implementation simple and avoid speculative abstractions.

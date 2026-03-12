@@ -9,10 +9,11 @@ from tabular_shenanigans.competition import prepare_competition
 from tabular_shenanigans.config import AppConfig, load_config
 from tabular_shenanigans.data import fetch_competition_data, load_competition_dataset_context
 from tabular_shenanigans.eda import run_eda
-from tabular_shenanigans.submit import build_submission_message, run_submission
+from tabular_shenanigans.submit import run_submission, run_submission_refresh
 from tabular_shenanigans.tracking import (
     is_tracking_enabled,
     log_prepare_outputs,
+    log_submission_refresh_outputs,
     log_runtime_config,
     log_submit_outputs,
     log_train_outputs,
@@ -32,6 +33,10 @@ def build_parser() -> argparse.ArgumentParser:
     subparsers.add_parser("prepare", help="Persist EDA reports, competition metadata, and frozen folds.")
     subparsers.add_parser("eda", help="Run EDA reports only.")
     subparsers.add_parser("train", help="Train the current candidate, with optional optimization.")
+    subparsers.add_parser(
+        "refresh-submissions",
+        help="Fetch Kaggle submission outcomes for locally tracked submission events.",
+    )
 
     submit_parser = subparsers.add_parser("submit", help="Prepare or submit from a candidate artifact.")
     submit_parser.add_argument(
@@ -181,22 +186,33 @@ def _run_train_stage_with_tracking(
 def _run_submit_stage(
     config: AppConfig,
     candidate_id: str | None = None,
-) -> tuple[Path, str]:
+):
     resolved_candidate_id = candidate_id or config.experiment.candidate.candidate_id
     print(f"Using candidate_id: {resolved_candidate_id}")
-    submission_path, submission_status = run_submission(
+    submission_result = run_submission(
         config=config,
         candidate_id=resolved_candidate_id,
     )
-    print(f"Submission file ready: {submission_path} ({submission_status})")
-    return submission_path, submission_status
+    print(f"Submission file ready: {submission_result.submission_path} ({submission_result.submission_status})")
+    if submission_result.submission_event is not None:
+        print(
+            "Submission event recorded: "
+            f"{submission_result.submission_event.submission_event_id}"
+        )
+    if submission_result.submission_refresh_result is not None:
+        print(
+            "Submission score refresh: "
+            f"matched_events={submission_result.submission_refresh_result.matched_submission_event_count}, "
+            f"appended_observations={submission_result.submission_refresh_result.appended_observation_count}"
+        )
+    return submission_result
 
 
 def _run_submit_stage_with_tracking(
     config: AppConfig,
     pipeline_invocation_id: str,
     candidate_id: str | None = None,
-) -> tuple[Path, str]:
+):
     resolved_candidate_id = candidate_id or config.experiment.candidate.candidate_id
     tracking_context = nullcontext()
     if is_tracking_enabled(config):
@@ -210,27 +226,46 @@ def _run_submit_stage_with_tracking(
     with tracking_context:
         if is_tracking_enabled(config):
             log_runtime_config(config)
-            submission_message = build_submission_message(
-                competition_slug=config.competition.slug,
-                candidate_id=resolved_candidate_id,
-                submit_message_prefix=config.experiment.submit.message_prefix,
-            )
-        else:
-            submission_message = ""
-        submission_path, submission_status = _run_submit_stage(
+        submission_result = _run_submit_stage(
             config=config,
             candidate_id=resolved_candidate_id,
         )
         if is_tracking_enabled(config):
-            log_submit_outputs(
-                competition_slug=config.competition.slug,
-                candidate_id=resolved_candidate_id,
-                submission_path=submission_path,
-                submission_status=submission_status,
-                message=submission_message,
-                submit_enabled=config.experiment.submit.enabled,
-            )
-        return submission_path, submission_status
+            log_submit_outputs(submission_result=submission_result)
+        return submission_result
+
+
+def _run_submission_refresh_stage(config: AppConfig):
+    refresh_result = run_submission_refresh(config)
+    print(
+        "Submission scores refreshed: "
+        f"tracked_events={refresh_result.tracked_submission_event_count}, "
+        f"matched_events={refresh_result.matched_submission_event_count}, "
+        f"appended_observations={refresh_result.appended_observation_count}, "
+        f"scanned_remote_submissions={refresh_result.scanned_remote_submission_count}"
+    )
+    return refresh_result
+
+
+def _run_submission_refresh_stage_with_tracking(
+    config: AppConfig,
+    pipeline_invocation_id: str,
+):
+    tracking_context = nullcontext()
+    if is_tracking_enabled(config):
+        tracking_context = start_stage_run(
+            config=config,
+            stage="refresh-submissions",
+            pipeline_invocation_id=pipeline_invocation_id,
+        )
+
+    with tracking_context:
+        if is_tracking_enabled(config):
+            log_runtime_config(config)
+        refresh_result = _run_submission_refresh_stage(config)
+        if is_tracking_enabled(config):
+            log_submission_refresh_outputs(refresh_result)
+        return refresh_result
 
 
 def _run_full_pipeline(
@@ -280,6 +315,13 @@ def main(argv: list[str] | None = None) -> None:
 
     if args.stage == "train":
         _run_train_stage_with_tracking(
+            config=config,
+            pipeline_invocation_id=pipeline_invocation_id,
+        )
+        return
+
+    if args.stage == "refresh-submissions":
+        _run_submission_refresh_stage_with_tracking(
             config=config,
             pipeline_invocation_id=pipeline_invocation_id,
         )
