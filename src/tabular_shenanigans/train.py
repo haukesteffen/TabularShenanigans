@@ -15,6 +15,9 @@ from tabular_shenanigans.feature_recipes import apply_feature_recipe
 from tabular_shenanigans.models import build_model, build_model_fit_kwargs
 from tabular_shenanigans.preprocess import build_preprocessor, prepare_feature_frames
 
+BINARY_ACCURACY_TEST_PROBABILITIES_FILENAME = "test_prediction_probabilities.csv"
+BINARY_ACCURACY_BLEND_RULE = "average_positive_class_probability_then_threshold_0.5"
+
 
 @dataclass(frozen=True)
 class CvSummary:
@@ -68,6 +71,7 @@ class ModelEvaluationArtifacts:
     fold_metrics_df: pd.DataFrame
     oof_predictions: np.ndarray
     final_test_predictions: np.ndarray
+    test_prediction_probabilities: np.ndarray | None = None
 
 
 @dataclass(frozen=True)
@@ -155,7 +159,7 @@ def _run_cv_evaluation(
     positive_label: object | None,
     negative_label: object | None,
     collect_prediction_artifacts: bool,
-) -> tuple[ModelCvEvaluation, np.ndarray | None, np.ndarray | None]:
+) -> tuple[ModelCvEvaluation, np.ndarray | None, np.ndarray | None, np.ndarray | None]:
     model_definition, _, model_params = build_model(
         task_type,
         model_spec.model_id,
@@ -271,22 +275,29 @@ def _run_cv_evaluation(
     )
 
     if not collect_prediction_artifacts:
-        return cv_evaluation, None, None
+        return cv_evaluation, None, None, None
 
     if oof_predictions is None or test_predictions_per_fold is None:
         raise RuntimeError("Prediction artifacts were requested but not collected.")
 
     mean_test_predictions = np.mean(np.vstack(test_predictions_per_fold), axis=0)
+    test_prediction_probabilities = None
     if task_type == "regression" and primary_metric == "rmsle":
         mean_test_predictions = np.clip(mean_test_predictions, a_min=0.0, a_max=None)
     if task_type == "binary" and binary_prediction_kind == "label":
         if positive_label is None or negative_label is None:
             raise ValueError("Binary label exports require resolved class metadata.")
+        test_prediction_probabilities = np.asarray(mean_test_predictions, dtype=float)
         final_test_predictions = np.where(mean_test_predictions >= 0.5, positive_label, negative_label)
     else:
         final_test_predictions = mean_test_predictions
 
-    return cv_evaluation, oof_predictions, np.asarray(final_test_predictions)
+    return (
+        cv_evaluation,
+        oof_predictions,
+        np.asarray(final_test_predictions),
+        test_prediction_probabilities,
+    )
 
 
 def _score_model_spec(
@@ -303,7 +314,7 @@ def _score_model_spec(
     positive_label: object | None,
     negative_label: object | None,
 ) -> ModelCvEvaluation:
-    cv_evaluation, _, _ = _run_cv_evaluation(
+    cv_evaluation, _, _, _ = _run_cv_evaluation(
         task_type=task_type,
         primary_metric=primary_metric,
         model_spec=model_spec,
@@ -337,7 +348,7 @@ def _evaluate_model_spec(
     positive_label: object | None,
     negative_label: object | None,
 ) -> ModelEvaluationArtifacts:
-    cv_evaluation, oof_predictions, final_test_predictions = _run_cv_evaluation(
+    cv_evaluation, oof_predictions, final_test_predictions, test_prediction_probabilities = _run_cv_evaluation(
         task_type=task_type,
         primary_metric=primary_metric,
         model_spec=model_spec,
@@ -361,6 +372,7 @@ def _evaluate_model_spec(
         fold_metrics_df=cv_evaluation.fold_metrics_df,
         oof_predictions=oof_predictions,
         final_test_predictions=final_test_predictions,
+        test_prediction_probabilities=test_prediction_probabilities,
     )
 
 
@@ -426,7 +438,7 @@ def _build_candidate_manifest(
     test_cols: int,
     tuning_provenance: dict[str, object] | None,
 ) -> dict[str, object]:
-    return {
+    manifest = {
         "artifact_type": "candidate",
         "candidate_id": config.candidate_id,
         "candidate_type": config.candidate_type,
@@ -457,6 +469,10 @@ def _build_candidate_manifest(
         "test_cols": test_cols,
         "tuning_provenance": tuning_provenance,
     }
+    if config.task_type == "binary" and config.primary_metric == "accuracy":
+        manifest["binary_accuracy_blend_rule"] = BINARY_ACCURACY_BLEND_RULE
+        manifest["binary_accuracy_test_probability_path"] = BINARY_ACCURACY_TEST_PROBABILITIES_FILENAME
+    return manifest
 
 
 def _write_candidate_artifacts(
@@ -492,6 +508,17 @@ def _write_candidate_artifacts(
         }
     )
     test_predictions_df.to_csv(candidate_dir / "test_predictions.csv", index=False)
+    if evaluation_artifacts.test_prediction_probabilities is not None:
+        test_probability_df = pd.DataFrame(
+            {
+                id_column: test_ids.to_numpy(),
+                label_column: evaluation_artifacts.test_prediction_probabilities,
+            }
+        )
+        test_probability_df.to_csv(
+            candidate_dir / BINARY_ACCURACY_TEST_PROBABILITIES_FILENAME,
+            index=False,
+        )
 
 
 def _write_optimization_artifacts(

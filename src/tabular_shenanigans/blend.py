@@ -16,6 +16,8 @@ from tabular_shenanigans.preprocess import prepare_feature_frames
 BLEND_MODEL_ID = "blend_weighted_average"
 BLEND_MODEL_NAME = "WeightedAverageBlend"
 BLEND_PREPROCESSING_SCHEME_ID = "blend"
+BINARY_ACCURACY_TEST_PROBABILITIES_FILENAME = "test_prediction_probabilities.csv"
+BINARY_ACCURACY_BLEND_RULE = "average_positive_class_probability_then_threshold_0.5"
 
 
 @dataclass(frozen=True)
@@ -111,6 +113,44 @@ def _load_test_predictions(candidate_dir: Path, id_column: str, label_column: st
     return prediction_df
 
 
+def _load_binary_accuracy_test_probabilities(
+    manifest: dict[str, object],
+    candidate_dir: Path,
+    candidate_id: str,
+    id_column: str,
+    label_column: str,
+) -> pd.DataFrame:
+    blend_rule = manifest.get("binary_accuracy_blend_rule")
+    if blend_rule != BINARY_ACCURACY_BLEND_RULE:
+        raise ValueError(
+            "Binary accuracy blends require base candidates written with the current probability-based "
+            f"aggregation contract. Candidate {candidate_id} had binary_accuracy_blend_rule={blend_rule!r}."
+        )
+
+    probability_path_name = manifest.get("binary_accuracy_test_probability_path")
+    if not isinstance(probability_path_name, str) or not probability_path_name:
+        raise ValueError(
+            "Binary accuracy blends require base candidates with test probability artifacts from the current "
+            f"runtime. Candidate {candidate_id} is missing binary_accuracy_test_probability_path; retrain it."
+        )
+
+    probability_path = candidate_dir / probability_path_name
+    if not probability_path.exists():
+        raise ValueError(
+            "Binary accuracy blends require the configured test probability artifact to exist. "
+            f"Candidate {candidate_id} is missing {probability_path}."
+        )
+
+    probability_df = pd.read_csv(probability_path)
+    expected_columns = [id_column, label_column]
+    if probability_df.columns.tolist() != expected_columns:
+        raise ValueError(
+            "Binary accuracy blend probability artifacts must match the resolved schema. "
+            f"Expected columns {expected_columns}, got {probability_df.columns.tolist()} in {probability_path}"
+        )
+    return probability_df
+
+
 def _resolve_blend_weights(
     base_candidate_ids: list[str],
     configured_weights: list[float] | None,
@@ -162,12 +202,12 @@ def _build_target_summary(
     raise ValueError(f"Unsupported task_type for target summary: {task_type}")
 
 
-def _encode_binary_test_labels(
+def _validate_binary_test_labels(
     prediction_values: pd.Series,
     positive_label: object,
     negative_label: object,
     candidate_id: str,
-) -> np.ndarray:
+) -> None:
     normalized_positive_label = _normalize_binary_label(positive_label)
     normalized_negative_label = _normalize_binary_label(negative_label)
     normalized_predictions = prediction_values.map(_normalize_binary_label)
@@ -179,12 +219,33 @@ def _encode_binary_test_labels(
             "Binary accuracy blends require base candidate test predictions to contain only the observed "
             f"class labels. Candidate {candidate_id} had invalid labels: {invalid_labels[:10]}"
         )
-    return normalized_predictions.map(
-        {
-            normalized_negative_label: 0.0,
-            normalized_positive_label: 1.0,
-        }
-    ).to_numpy(dtype=float)
+
+
+def _validate_binary_probability_values(
+    prediction_values: pd.Series,
+    candidate_id: str,
+    artifact_name: str,
+) -> np.ndarray:
+    if not pd.api.types.is_numeric_dtype(prediction_values):
+        raise ValueError(
+            f"Binary probability artifacts must be numeric. Candidate {candidate_id}: {artifact_name}"
+        )
+    if not prediction_values.map(pd.notna).all():
+        raise ValueError(
+            f"Binary probability artifacts cannot contain missing values. Candidate {candidate_id}: {artifact_name}"
+        )
+
+    prediction_array = prediction_values.to_numpy(dtype=float)
+    if not np.isfinite(prediction_array).all():
+        raise ValueError(
+            f"Binary probability artifacts must be finite. Candidate {candidate_id}: {artifact_name}"
+        )
+    if ((prediction_array < 0.0) | (prediction_array > 1.0)).any():
+        raise ValueError(
+            "Binary probability artifacts must stay within [0, 1]. "
+            f"Candidate {candidate_id}: {artifact_name}"
+        )
+    return prediction_array
 
 
 def _validate_binary_probability_label_contract(
@@ -304,7 +365,11 @@ def _load_blend_component(
             f"Candidate {candidate_id} is not compatible."
         )
 
-    if task_type == "binary" and get_binary_prediction_kind(primary_metric) == "probability":
+    binary_prediction_kind = None
+    if task_type == "binary":
+        binary_prediction_kind = get_binary_prediction_kind(primary_metric)
+
+    if binary_prediction_kind == "probability":
         _validate_binary_probability_label_contract(
             manifest=manifest,
             candidate_id=candidate_id,
@@ -313,14 +378,38 @@ def _load_blend_component(
             expected_observed_label_pair=observed_label_pair,
         )
 
-    if task_type == "binary" and get_binary_prediction_kind(primary_metric) == "label":
+    if binary_prediction_kind == "label":
         if positive_label is None or negative_label is None:
             raise ValueError("Binary accuracy blending requires resolved class metadata.")
-        test_predictions = _encode_binary_test_labels(
+        _validate_binary_test_labels(
             prediction_values=prediction_df[label_column],
             positive_label=positive_label,
             negative_label=negative_label,
             candidate_id=candidate_id,
+        )
+        _validate_binary_probability_label_contract(
+            manifest=manifest,
+            candidate_id=candidate_id,
+            positive_label=positive_label,
+            negative_label=negative_label,
+            expected_observed_label_pair=observed_label_pair,
+        )
+        probability_df = _load_binary_accuracy_test_probabilities(
+            manifest=manifest,
+            candidate_dir=candidate_dir,
+            candidate_id=candidate_id,
+            id_column=id_column,
+            label_column=label_column,
+        )
+        if not _series_matches_expected(probability_df[id_column], expected_test_ids):
+            raise ValueError(
+                "Binary accuracy blend probability artifact IDs do not match the configured competition test set. "
+                f"Candidate {candidate_id} is not compatible."
+            )
+        test_predictions = _validate_binary_probability_values(
+            prediction_values=probability_df[label_column],
+            candidate_id=candidate_id,
+            artifact_name="test_prediction_probabilities.csv",
         )
     else:
         if not pd.api.types.is_numeric_dtype(prediction_df[label_column]):
@@ -330,9 +419,7 @@ def _load_blend_component(
             )
         test_predictions = prediction_df[label_column].to_numpy(dtype=float)
 
-    if task_type == "regression" or (
-        task_type == "binary" and get_binary_prediction_kind(primary_metric) == "probability"
-    ):
+    if task_type == "regression" or binary_prediction_kind == "probability":
         if not np.isfinite(test_predictions).all():
             raise ValueError(
                 "Blend base candidate test predictions must be finite. "
@@ -506,7 +593,7 @@ def _build_candidate_manifest(
     components: list[BlendComponent],
     normalized_weights: list[float],
 ) -> dict[str, object]:
-    return {
+    manifest = {
         "artifact_type": "candidate",
         "candidate_id": config.candidate_id,
         "candidate_type": config.candidate_type,
@@ -554,6 +641,10 @@ def _build_candidate_manifest(
         "test_rows": test_rows,
         "test_cols": None,
     }
+    if config.task_type == "binary" and config.primary_metric == "accuracy":
+        manifest["binary_accuracy_blend_rule"] = BINARY_ACCURACY_BLEND_RULE
+        manifest["binary_accuracy_test_probability_path"] = BINARY_ACCURACY_TEST_PROBABILITIES_FILENAME
+    return manifest
 
 
 def _write_candidate_artifacts(
@@ -565,6 +656,7 @@ def _write_candidate_artifacts(
     fold_assignments: np.ndarray,
     test_ids: pd.Series,
     test_predictions: np.ndarray,
+    test_prediction_probabilities: np.ndarray | None,
     id_column: str,
     label_column: str,
     blend_summary_df: pd.DataFrame,
@@ -592,6 +684,17 @@ def _write_candidate_artifacts(
         }
     )
     test_predictions_df.to_csv(candidate_dir / "test_predictions.csv", index=False)
+    if test_prediction_probabilities is not None:
+        test_probability_df = pd.DataFrame(
+            {
+                id_column: test_ids.to_numpy(),
+                label_column: test_prediction_probabilities,
+            }
+        )
+        test_probability_df.to_csv(
+            candidate_dir / BINARY_ACCURACY_TEST_PROBABILITIES_FILENAME,
+            index=False,
+        )
     blend_summary_df.to_csv(candidate_dir / "blend_summary.csv", index=False)
 
 
@@ -667,6 +770,7 @@ def run_blend_training(
     weight_array = np.asarray(normalized_weights, dtype=float)
     blended_oof_predictions = np.average(component_oof_predictions, axis=0, weights=weight_array)
     blended_test_predictions = np.average(component_test_predictions, axis=0, weights=weight_array)
+    test_prediction_probabilities = None
 
     if config.task_type == "regression":
         final_test_predictions: np.ndarray | list[object] = blended_test_predictions
@@ -675,6 +779,7 @@ def run_blend_training(
     elif get_binary_prediction_kind(config.primary_metric) == "label":
         if positive_label is None or negative_label is None:
             raise ValueError("Binary label blends require resolved class metadata.")
+        test_prediction_probabilities = np.asarray(blended_test_predictions, dtype=float)
         final_test_predictions = np.where(
             blended_test_predictions >= 0.5,
             positive_label,
@@ -752,6 +857,7 @@ def run_blend_training(
         fold_assignments=fold_assignments,
         test_ids=test_df[id_column],
         test_predictions=np.asarray(final_test_predictions),
+        test_prediction_probabilities=test_prediction_probabilities,
         id_column=id_column,
         label_column=label_column,
         blend_summary_df=blend_summary_df,

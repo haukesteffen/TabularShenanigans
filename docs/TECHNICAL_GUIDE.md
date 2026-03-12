@@ -115,6 +115,8 @@ Input:
 Binary prediction artifact contract:
 - `roc_auc` and `log_loss` write positive-class probabilities to `test_predictions.csv` and `submission.csv`
 - `accuracy` writes predicted class labels to `test_predictions.csv` and `submission.csv`
+- `accuracy` also writes `test_prediction_probabilities.csv` with positive-class probabilities for consistent blend reuse
+- binary `accuracy` blends use one aggregation rule for both CV scoring and test export: weighted average of positive-class probabilities, then `0.5` thresholding for `test_predictions.csv`
 
 The config is validated by Pydantic with `extra="forbid"`. Unknown keys, schema mismatches, and missing required fields are hard errors.
 Configured metrics are normalized to the internal metric names during config validation.
@@ -142,6 +144,7 @@ Manual verification steps for each target:
 - confirm inferred `id_column` and `label_column`
 - confirm `candidate.json` is generated in the candidate directory
 - confirm `test_predictions.csv` is generated in the candidate directory
+- for binary `accuracy` candidates, confirm `candidate.json` records `binary_accuracy_blend_rule` plus `binary_accuracy_test_probability_path`, and `test_prediction_probabilities.csv` is also generated in the candidate directory
 - run `uv run python main.py submit`
 - confirm `submission.csv` validates against `sample_submission.csv`, including exact ID values and order, for the selected candidate directory
 - confirm binary outputs match the configured metric contract: probabilities for `roc_auc`/`log_loss`, labels for `accuracy`
@@ -169,6 +172,7 @@ Manual verification steps for each target:
   - `oof_predictions.csv`
   - `test_predictions.csv`
   - `submission.csv` when prepared or submitted
+- binary `accuracy` candidates and blends also include `test_prediction_probabilities.csv`, and `candidate.json` records `binary_accuracy_blend_rule` plus `binary_accuracy_test_probability_path`
 - model candidates also record `feature_recipe_id` plus the engineered `feature_columns`
 - blend candidates also include `blend_summary.csv` and record component candidate provenance plus normalized weights in `candidate.json`
 - optimized model candidates record `tuning_provenance` in `candidate.json`
@@ -197,6 +201,7 @@ Manual verification steps for each target:
 - model candidates: `experiment.candidate.model_family + experiment.candidate.preprocessor` must resolve to one supported canonical recipe for the configured task
 - blend candidates: `experiment.candidate.base_candidate_ids` must resolve to existing compatible candidate artifacts for the same competition context
 - binary probability blend candidates: all base candidates must share the same saved `positive_label`, `negative_label`, and `observed_label_pair` contract
+- binary accuracy blend candidates: all base candidates must share the same saved label contract and must include the probability-sidecar artifact plus the current probability-average blend rule metadata
 - feature recipes are experiment-scoped, deterministic, leakage-safe transforms applied after raw feature extraction and before preprocessing
 - feature recipes must preserve row counts and row order and must produce identical train/test feature columns
 - training must write exactly one candidate artifact directory keyed by `candidate_id`
@@ -211,6 +216,7 @@ Manual verification steps for each target:
 - The positive class is resolved from the training target and used consistently for diagnostics and scoring
 - Binary `roc_auc` and `log_loss` artifacts use positive-class probabilities
 - Binary `accuracy` artifacts use class labels from the observed binary label pair
+- Binary `accuracy` candidates also persist positive-class test probabilities for consistent blend reuse
 - Binary classification must have an explicit positive-class contract; when `positive_label` is omitted, the workflow only auto-resolves the positive class for `[0, 1]`, `[False, True]`, or `["No", "Yes"]`
 - `id_column` inference must resolve to exactly one column present in `train.csv`, `test.csv`, and `sample_submission.csv`
 - The resolved `id_column` is identifier metadata and must be excluded from preprocessing and model fitting by default
@@ -255,7 +261,8 @@ Hard-error cases include:
 - Unsupported metric for chosen task -> hard error
 - Any CV/training fit or scoring failure -> hard error
 - Blend base candidate artifact missing `candidate.json`, `oof_predictions.csv`, or `test_predictions.csv` -> hard error
-- Blend base candidate mismatch in competition slug, task type, primary metric, schema, binary probability label contract, OOF row order, fold assignments, or test ID order -> hard error
+- Binary accuracy blend base candidate missing `test_prediction_probabilities.csv` or current probability-average blend metadata -> hard error
+- Blend base candidate mismatch in competition slug, task type, primary metric, schema, binary label contract, OOF row order, fold assignments, or test ID order -> hard error
 - Fold assignment gaps in OOF generation -> hard error
 - Candidate artifact directory already exists for the configured `candidate_id` -> hard error
 - Missing configured candidate artifacts at submit time -> hard error
