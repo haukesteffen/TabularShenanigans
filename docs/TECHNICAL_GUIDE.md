@@ -253,6 +253,7 @@ Manual verification steps for each target:
 - The selected candidate artifact `test_predictions.csv[id_column]` must match `sample_submission.csv[id_column]` exactly in both values and row order
 - Submission requires the current candidate prediction layout at `artifacts/<competition_slug>/candidates/<candidate_id>/test_predictions.csv`
 - Dry-run submission preparation must not append either submission ledger
+- Regression submission artifacts must be numeric, non-missing, and finite before `submission.csv` is written
 - Feature override columns must exist and cannot overlap between forced numeric and forced categorical sets
 - Configured metric must normalize to a supported metric compatible with the configured task type
 - CV splitter construction must support both `cv_shuffle=true` and `cv_shuffle=false`
@@ -298,6 +299,7 @@ Hard-error cases include:
 - Missing configured candidate artifacts at submit time -> hard error
 - Requested `candidate_id` with no matching candidate artifact directory -> hard error
 - Submission schema or ID mismatch against `sample_submission.csv` -> hard error
+- Regression submission artifact with non-numeric, missing, `inf`, or `-inf` values -> hard error
 - Binary probability artifact outside `[0, 1]` for `roc_auc` or `log_loss` -> hard error
 - Binary label artifact containing values outside the observed label pair for `accuracy` -> hard error
 - Kaggle submission command failure when `experiment.submit.enabled=true` -> hard error

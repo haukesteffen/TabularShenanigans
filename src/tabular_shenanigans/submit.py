@@ -211,6 +211,15 @@ def _validate_binary_label_predictions(
         )
 
 
+def _validate_regression_predictions(prediction_values: pd.Series) -> None:
+    if not pd.api.types.is_numeric_dtype(prediction_values):
+        raise ValueError("Regression submissions must be numeric.")
+    if not prediction_values.map(pd.notna).all():
+        raise ValueError("Regression submissions contain missing values.")
+    if not np.isfinite(prediction_values.to_numpy(dtype=float)).all():
+        raise ValueError("Regression submissions must be finite.")
+
+
 def _prepare_submission_file_from_context(submission_context: SubmissionContext) -> Path:
     prediction_df = pd.read_csv(submission_context.prediction_path)
     sample_submission_df = load_sample_submission_template(submission_context.competition_slug)
@@ -233,8 +242,10 @@ def _prepare_submission_file_from_context(submission_context: SubmissionContext)
             f"Expected {sample_submission_df.shape[0]}, got {prediction_df.shape[0]}"
         )
 
-    if submission_context.task_type == "binary":
-        prediction_values = prediction_df[submission_context.label_column]
+    prediction_values = prediction_df[submission_context.label_column]
+    if submission_context.task_type == "regression":
+        _validate_regression_predictions(prediction_values)
+    elif submission_context.task_type == "binary":
         binary_prediction_kind = get_binary_prediction_kind(submission_context.primary_metric)
         if binary_prediction_kind == "probability":
             _validate_binary_probability_predictions(prediction_values)
