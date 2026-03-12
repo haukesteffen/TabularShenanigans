@@ -3,7 +3,7 @@ import pandas as pd
 
 from tabular_shenanigans.feature_recipes.base import FeatureRecipeDefinition
 
-REQUIRED_COLUMNS = [
+FR1_REQUIRED_COLUMNS = [
     "SeniorCitizen",
     "Partner",
     "Dependents",
@@ -23,6 +23,8 @@ REQUIRED_COLUMNS = [
     "TotalCharges",
 ]
 
+FR2_REQUIRED_COLUMNS = FR1_REQUIRED_COLUMNS + ["PhoneService"]
+
 SERVICE_ADDON_COLUMNS = [
     "OnlineSecurity",
     "OnlineBackup",
@@ -34,13 +36,19 @@ SERVICE_ADDON_COLUMNS = [
 
 STREAMING_COLUMNS = ["StreamingTV", "StreamingMovies"]
 SUPPORT_COLUMNS = ["OnlineSecurity", "OnlineBackup", "DeviceProtection", "TechSupport"]
+SERVICE_COLUMNS = ["PhoneService", "MultipleLines", *SERVICE_ADDON_COLUMNS]
 
 
-def _require_columns(frame: pd.DataFrame, dataset_name: str) -> None:
-    missing_columns = [column for column in REQUIRED_COLUMNS if column not in frame.columns]
+def _require_columns(
+    frame: pd.DataFrame,
+    dataset_name: str,
+    recipe_id: str,
+    required_columns: list[str],
+) -> None:
+    missing_columns = [column for column in required_columns if column not in frame.columns]
     if missing_columns:
         raise ValueError(
-            "Feature recipe 'fr1' requires the Telco churn columns used by "
+            f"Feature recipe '{recipe_id}' requires the Telco churn columns used by "
             f"playground-series-s6e3. Missing columns in {dataset_name}: {missing_columns}"
         )
 
@@ -63,7 +71,11 @@ def _build_tenure_bucket(series: pd.Series) -> pd.Series:
     return buckets.astype(str)
 
 
-def _transform_frame(frame: pd.DataFrame) -> pd.DataFrame:
+def _automatic_payment_flag(series: pd.Series) -> pd.Series:
+    return series.astype(str).str.contains("automatic", case=False, regex=False).astype(int)
+
+
+def _transform_v1_frame(frame: pd.DataFrame) -> pd.DataFrame:
     transformed = frame.copy()
 
     tenure = transformed["tenure"].astype(float)
@@ -93,13 +105,59 @@ def _transform_frame(frame: pd.DataFrame) -> pd.DataFrame:
     return transformed
 
 
+def _transform_v2_frame(frame: pd.DataFrame) -> pd.DataFrame:
+    transformed = _transform_v1_frame(frame)
+
+    tenure = transformed["tenure"].astype(float)
+    monthly_charges = transformed["MonthlyCharges"].astype(float)
+    total_charges = transformed["TotalCharges"].astype(float)
+    service_count = _build_service_count(transformed, SERVICE_COLUMNS).astype(float)
+
+    transformed["service_count"] = service_count
+    transformed["is_monthly_contract"] = transformed["Contract"].astype(str).eq("Month-to-month").astype(int)
+    transformed["is_autopay"] = _automatic_payment_flag(transformed["PaymentMethod"])
+    transformed["charges_per_tenure"] = monthly_charges / (tenure + 1.0)
+    transformed["total_vs_expected"] = total_charges / ((tenure * monthly_charges) + 1.0)
+    transformed["tenure_service_interaction"] = tenure * service_count
+    return transformed
+
+
 def build_s6e3_v1_features(
     x_train_raw: pd.DataFrame,
     x_test_raw: pd.DataFrame,
 ) -> tuple[pd.DataFrame, pd.DataFrame]:
-    _require_columns(x_train_raw, dataset_name="train features")
-    _require_columns(x_test_raw, dataset_name="test features")
-    return _transform_frame(x_train_raw), _transform_frame(x_test_raw)
+    _require_columns(
+        x_train_raw,
+        dataset_name="train features",
+        recipe_id="fr1",
+        required_columns=FR1_REQUIRED_COLUMNS,
+    )
+    _require_columns(
+        x_test_raw,
+        dataset_name="test features",
+        recipe_id="fr1",
+        required_columns=FR1_REQUIRED_COLUMNS,
+    )
+    return _transform_v1_frame(x_train_raw), _transform_v1_frame(x_test_raw)
+
+
+def build_s6e3_v2_features(
+    x_train_raw: pd.DataFrame,
+    x_test_raw: pd.DataFrame,
+) -> tuple[pd.DataFrame, pd.DataFrame]:
+    _require_columns(
+        x_train_raw,
+        dataset_name="train features",
+        recipe_id="fr2",
+        required_columns=FR2_REQUIRED_COLUMNS,
+    )
+    _require_columns(
+        x_test_raw,
+        dataset_name="test features",
+        recipe_id="fr2",
+        required_columns=FR2_REQUIRED_COLUMNS,
+    )
+    return _transform_v2_frame(x_train_raw), _transform_v2_frame(x_test_raw)
 
 
 S6E3_V1_FEATURE_RECIPE = FeatureRecipeDefinition(
@@ -107,4 +165,14 @@ S6E3_V1_FEATURE_RECIPE = FeatureRecipeDefinition(
     recipe_name="TelcoChurnFeatureSetV1",
     recipe_description="Playground Series S6E3 engineered feature set for the Telco churn schema.",
     transform=build_s6e3_v1_features,
+)
+
+S6E3_V2_FEATURE_RECIPE = FeatureRecipeDefinition(
+    recipe_id="fr2",
+    recipe_name="TelcoChurnFeatureSetV2",
+    recipe_description=(
+        "Expanded Playground Series S6E3 engineered feature set with contract, payment, "
+        "service-count, and charge-consistency features."
+    ),
+    transform=build_s6e3_v2_features,
 )
