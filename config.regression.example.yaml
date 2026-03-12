@@ -28,11 +28,8 @@ experiment:
   name: baseline-elasticnet
   notes: onehot elastic-net baseline for the default regression smoke test
 
-  # Optional remote MLflow tracking for prepare/train/submit runs.
-  # tracking:
-  #   enabled: true
-  #   tracking_uri: https://mlflow.example.com
-  #   experiment_name: tabular-shenanigans/playground-series-s5e10
+  tracking:
+    tracking_uri: http://localhost:5000
 
   candidate:
     candidate_type: model

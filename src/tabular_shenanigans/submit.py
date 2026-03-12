@@ -1,28 +1,41 @@
 import subprocess
+import tempfile
 from dataclasses import dataclass
 from pathlib import Path
 
 import numpy as np
 import pandas as pd
 
-from tabular_shenanigans.candidate_artifacts import (
-    candidate_dir as resolve_candidate_dir,
-    load_candidate_manifest,
-)
 from tabular_shenanigans.config import AppConfig
-from tabular_shenanigans.data import get_binary_prediction_kind, load_sample_submission_template, validate_sample_submission_schema
+from tabular_shenanigans.data import (
+    get_binary_prediction_kind,
+    load_sample_submission_template,
+    validate_sample_submission_schema,
+)
+from tabular_shenanigans.mlflow_store import (
+    CandidateRunRef,
+    download_candidate_bundle,
+    download_submission_history,
+    search_candidate_runs,
+    update_submission_metrics,
+    upload_submission_history,
+)
 from tabular_shenanigans.submission_history import (
+    CandidateSubmissionHistory,
     SubmissionEvent,
     SubmissionRefreshResult,
-    append_submission_event,
+    SubmissionScoreObservation,
+    build_submission_score_metrics,
+    extract_submission_event_id,
+    iter_kaggle_submissions,
     make_submission_event_id,
-    refresh_submission_scores,
     utc_now_iso,
 )
 
 
 @dataclass(frozen=True)
 class SubmissionContext:
+    candidate_run: CandidateRunRef
     candidate_id: str
     candidate_type: str
     competition_slug: str
@@ -44,11 +57,12 @@ class SubmissionContext:
 
 @dataclass(frozen=True)
 class SubmissionRunResult:
-    submission_path: Path
+    candidate_id: str
+    candidate_run_id: str
     submission_status: str
     submission_message: str
-    submission_event: SubmissionEvent | None
-    submission_event_ledger_path: Path | None
+    submission_event_id: str | None
+    submission_artifact_path: str | None
     submission_refresh_result: SubmissionRefreshResult | None
     immediate_refresh_error: str | None = None
 
@@ -69,8 +83,8 @@ def _parse_observed_label_pair(manifest: dict[str, object]) -> tuple[object, obj
     return (observed_label_pair_raw[0], observed_label_pair_raw[1])
 
 
-def _resolve_prediction_path(candidate_dir: Path) -> Path:
-    prediction_path = candidate_dir / "test_predictions.csv"
+def _resolve_prediction_path(candidate_artifact_dir: Path) -> Path:
+    prediction_path = candidate_artifact_dir / "test_predictions.csv"
     if prediction_path.exists():
         return prediction_path
     raise ValueError(
@@ -80,22 +94,26 @@ def _resolve_prediction_path(candidate_dir: Path) -> Path:
 
 
 def _load_submission_context(
-    competition_slug: str,
+    config: AppConfig,
     candidate_id: str,
+    destination_dir: Path,
 ) -> SubmissionContext:
-    candidate_dir = resolve_candidate_dir(competition_slug=competition_slug, candidate_id=candidate_id)
-    candidate_manifest = load_candidate_manifest(
-        candidate_dir_path=candidate_dir,
-        missing_message=(
-            f"Missing candidate manifest: {candidate_dir / 'candidate.json'}. "
-            "Submission requires current candidate artifacts."
-        ),
+    downloaded_bundle = download_candidate_bundle(
+        config=config,
+        candidate_id=candidate_id,
+        destination_dir=destination_dir,
     )
+    candidate_manifest = downloaded_bundle.manifest
     cv_summary = candidate_manifest.get("cv_summary")
     if not isinstance(cv_summary, dict):
         raise ValueError("Candidate manifest cv_summary must be a mapping.")
 
     return SubmissionContext(
+        candidate_run=CandidateRunRef(
+            run_id=downloaded_bundle.run_id,
+            experiment_id=downloaded_bundle.experiment_id,
+            candidate_id=candidate_id,
+        ),
         candidate_id=str(_require_manifest_value(candidate_manifest, "candidate_id")),
         candidate_type=str(_require_manifest_value(candidate_manifest, "candidate_type")),
         competition_slug=str(_require_manifest_value(candidate_manifest, "competition_slug")),
@@ -120,7 +138,7 @@ def _load_submission_context(
         label_column=str(_require_manifest_value(candidate_manifest, "label_column")),
         observed_label_pair=_parse_observed_label_pair(candidate_manifest),
         config_fingerprint=candidate_manifest.get("config_fingerprint"),
-        prediction_path=_resolve_prediction_path(candidate_dir),
+        prediction_path=_resolve_prediction_path(downloaded_bundle.candidate_artifact_dir),
     )
 
 
@@ -220,7 +238,10 @@ def _validate_regression_predictions(prediction_values: pd.Series) -> None:
         raise ValueError("Regression submissions must be finite.")
 
 
-def _prepare_submission_file_from_context(submission_context: SubmissionContext) -> Path:
+def _prepare_submission_file_from_context(
+    submission_context: SubmissionContext,
+    output_dir: Path,
+) -> Path:
     prediction_df = pd.read_csv(submission_context.prediction_path)
     sample_submission_df = load_sample_submission_template(submission_context.competition_slug)
     validate_sample_submission_schema(
@@ -261,20 +282,9 @@ def _prepare_submission_file_from_context(submission_context: SubmissionContext)
         id_column=submission_context.id_column,
     )
 
-    submission_path = submission_context.prediction_path.parent / "submission.csv"
+    submission_path = output_dir / "submission.csv"
     prediction_df.to_csv(submission_path, index=False)
     return submission_path
-
-
-def prepare_submission_file(
-    competition_slug: str,
-    candidate_id: str,
-) -> Path:
-    submission_context = _load_submission_context(
-        competition_slug=competition_slug,
-        candidate_id=candidate_id,
-    )
-    return _prepare_submission_file_from_context(submission_context)
 
 
 def _build_submission_message_from_context(
@@ -300,107 +310,271 @@ def _collect_submit_response_message(completed: subprocess.CompletedProcess[str]
     return "\n".join(response_parts)
 
 
+def _build_submission_event(
+    submission_context: SubmissionContext,
+    submission_event_id: str,
+    submission_file_name: str,
+    submit_message: str,
+    submit_response_message: str,
+) -> SubmissionEvent:
+    return SubmissionEvent(
+        submission_event_id=submission_event_id,
+        submitted_at_utc=utc_now_iso(),
+        competition_slug=submission_context.competition_slug,
+        candidate_id=submission_context.candidate_id,
+        candidate_type=submission_context.candidate_type,
+        config_fingerprint=submission_context.config_fingerprint,
+        feature_recipe_id=submission_context.feature_recipe_id,
+        preprocessing_scheme_id=submission_context.preprocessing_scheme_id,
+        model_registry_key=submission_context.model_registry_key,
+        estimator_name=submission_context.estimator_name,
+        cv_metric_name=submission_context.cv_metric_name,
+        cv_metric_mean=submission_context.cv_metric_mean,
+        cv_metric_std=submission_context.cv_metric_std,
+        submission_file_name=submission_file_name,
+        submit_message=submit_message,
+        submit_response_message=submit_response_message,
+    )
+
+
 def run_submission(
     config: AppConfig,
     candidate_id: str | None = None,
 ) -> SubmissionRunResult:
-    competition = config.competition
-    candidate = config.experiment.candidate
     submit_config = config.experiment.submit
-    resolved_candidate_id = candidate_id or candidate.candidate_id
-    submission_context = _load_submission_context(
-        competition_slug=competition.slug,
-        candidate_id=resolved_candidate_id,
-    )
-    submission_path = _prepare_submission_file_from_context(submission_context)
+    resolved_candidate_id = candidate_id or config.experiment.candidate.candidate_id
 
-    if submit_config.enabled:
-        submission_event_id = make_submission_event_id()
-        submission_message = _build_submission_message_from_context(
-            submission_context,
-            submission_event_id=submission_event_id,
-            submit_message_prefix=submit_config.message_prefix,
+    with tempfile.TemporaryDirectory(prefix="tabular-shenanigans-submit-") as temp_dir:
+        temp_root = Path(temp_dir)
+        submission_context = _load_submission_context(
+            config=config,
+            candidate_id=resolved_candidate_id,
+            destination_dir=temp_root / "candidate",
         )
-        completed = subprocess.run(
-            [
-                "kaggle",
-                "competitions",
-                "submit",
-                "-c",
-                submission_context.competition_slug,
-                "-f",
-                str(submission_path),
-                "-m",
-                submission_message,
-            ],
-            check=True,
-            capture_output=True,
-            text=True,
+        submission_path = _prepare_submission_file_from_context(
+            submission_context=submission_context,
+            output_dir=temp_root,
         )
-        if completed.stdout.strip():
-            print(completed.stdout.strip())
-        if completed.stderr.strip():
-            print(completed.stderr.strip())
-        submit_response_message = _collect_submit_response_message(completed)
-        submission_event = SubmissionEvent(
-            submission_event_id=submission_event_id,
-            submitted_at_utc=utc_now_iso(),
-            competition_slug=submission_context.competition_slug,
-            candidate_id=submission_context.candidate_id,
-            candidate_type=submission_context.candidate_type,
-            config_fingerprint=submission_context.config_fingerprint,
-            feature_recipe_id=submission_context.feature_recipe_id,
-            preprocessing_scheme_id=submission_context.preprocessing_scheme_id,
-            model_registry_key=submission_context.model_registry_key,
-            estimator_name=submission_context.estimator_name,
-            cv_metric_name=submission_context.cv_metric_name,
-            cv_metric_mean=submission_context.cv_metric_mean,
-            cv_metric_std=submission_context.cv_metric_std,
-            submission_path=str(submission_path),
-            submit_message=submission_message,
-            submit_response_message=submit_response_message,
-        )
-        submission_event_ledger_path = append_submission_event(submission_event)
-        immediate_refresh_error = None
-        try:
-            # The Kaggle submit already succeeded; avoid turning a refresh problem into a
-            # misleading stage failure that encourages a duplicate external submission.
-            submission_refresh_result = refresh_submission_scores(
-                competition_slug=submission_context.competition_slug,
-                target_submission_event_ids={submission_event_id},
-                observation_source="submit_immediate_refresh",
+
+        if submit_config.enabled:
+            submission_event_id = make_submission_event_id()
+            submission_message = _build_submission_message_from_context(
+                submission_context,
+                submission_event_id=submission_event_id,
+                submit_message_prefix=submit_config.message_prefix,
             )
-        except Exception as exc:
-            immediate_refresh_error = str(exc)
-            submission_refresh_result = None
-            print(
-                "Immediate submission score refresh failed after a successful Kaggle submission. "
-                "Run `uv run python main.py refresh-submissions` later. "
-                f"Original error: {exc}"
+            completed = subprocess.run(
+                [
+                    "kaggle",
+                    "competitions",
+                    "submit",
+                    "-c",
+                    submission_context.competition_slug,
+                    "-f",
+                    str(submission_path),
+                    "-m",
+                    submission_message,
+                ],
+                check=True,
+                capture_output=True,
+                text=True,
             )
+            if completed.stdout.strip():
+                print(completed.stdout.strip())
+            if completed.stderr.strip():
+                print(completed.stderr.strip())
+            submit_response_message = _collect_submit_response_message(completed)
+
+            history = download_submission_history(
+                config=config,
+                run_id=submission_context.candidate_run.run_id,
+                destination_dir=temp_root / "history",
+            )
+            submission_event = _build_submission_event(
+                submission_context=submission_context,
+                submission_event_id=submission_event_id,
+                submission_file_name=submission_path.name,
+                submit_message=submission_message,
+                submit_response_message=submit_response_message,
+            )
+            history = history.with_submission_event(submission_event)
+            upload_submission_history(
+                config=config,
+                run_id=submission_context.candidate_run.run_id,
+                history=history,
+                updated_submission_event_ids=[submission_event_id],
+                submission_csv_paths={submission_event_id: submission_path},
+            )
+            update_submission_metrics(
+                config=config,
+                run_id=submission_context.candidate_run.run_id,
+                score_metrics=build_submission_score_metrics(
+                    primary_metric=submission_context.primary_metric,
+                    history=history,
+                ),
+            )
+
+            immediate_refresh_error = None
+            try:
+                submission_refresh_result = run_submission_refresh(
+                    config=config,
+                    target_candidate_ids={submission_context.candidate_id},
+                    target_submission_event_ids={submission_event_id},
+                    observation_source="submit_immediate_refresh",
+                )
+            except Exception as exc:
+                immediate_refresh_error = str(exc)
+                submission_refresh_result = None
+                print(
+                    "Immediate submission score refresh failed after a successful Kaggle submission. "
+                    "Run `uv run python main.py refresh-submissions` later. "
+                    f"Original error: {exc}"
+                )
+
+            return SubmissionRunResult(
+                candidate_id=submission_context.candidate_id,
+                candidate_run_id=submission_context.candidate_run.run_id,
+                submission_status="submitted",
+                submission_message=submission_message,
+                submission_event_id=submission_event_id,
+                submission_artifact_path=f"submissions/{submission_event_id}/submission.csv",
+                submission_refresh_result=submission_refresh_result,
+                immediate_refresh_error=immediate_refresh_error,
+            )
+
+        print("Submission dry-run mode: validation complete, Kaggle submit skipped.")
         return SubmissionRunResult(
-            submission_path=submission_path,
-            submission_status="submitted",
-            submission_message=submission_message,
-            submission_event=submission_event,
-            submission_event_ledger_path=submission_event_ledger_path,
-            submission_refresh_result=submission_refresh_result,
-            immediate_refresh_error=immediate_refresh_error,
+            candidate_id=submission_context.candidate_id,
+            candidate_run_id=submission_context.candidate_run.run_id,
+            submission_status="prepared",
+            submission_message="",
+            submission_event_id=None,
+            submission_artifact_path=None,
+            submission_refresh_result=None,
         )
 
-    print("Submission dry-run mode: validation complete, Kaggle submit skipped.")
-    return SubmissionRunResult(
-        submission_path=submission_path,
-        submission_status="prepared",
-        submission_message="",
-        submission_event=None,
-        submission_event_ledger_path=None,
-        submission_refresh_result=None,
-    )
 
+def run_submission_refresh(
+    config: AppConfig,
+    target_candidate_ids: set[str] | None = None,
+    target_submission_event_ids: set[str] | None = None,
+    observation_source: str = "manual_refresh",
+) -> SubmissionRefreshResult:
+    candidate_runs = search_candidate_runs(config)
+    tracked_candidate_count = 0
+    tracked_submission_event_count = 0
+    matched_submission_event_ids: set[str] = set()
+    updated_candidate_count = 0
+    appended_observation_count = 0
+    scanned_remote_submission_count = 0
 
-def run_submission_refresh(config: AppConfig) -> SubmissionRefreshResult:
-    return refresh_submission_scores(
+    histories_by_run_id: dict[str, CandidateSubmissionHistory] = {}
+    event_to_candidate_run: dict[str, CandidateRunRef] = {}
+
+    with tempfile.TemporaryDirectory(prefix="tabular-shenanigans-refresh-submissions-") as temp_dir:
+        temp_root = Path(temp_dir)
+        for candidate_run in candidate_runs:
+            if target_candidate_ids is not None and candidate_run.candidate_id not in target_candidate_ids:
+                continue
+            history = download_submission_history(
+                config=config,
+                run_id=candidate_run.run_id,
+                destination_dir=temp_root / candidate_run.candidate_id,
+            )
+            if not history.events:
+                continue
+
+            relevant_event_ids = {
+                event.submission_event_id
+                for event in history.events
+                if target_submission_event_ids is None or event.submission_event_id in target_submission_event_ids
+            }
+            if not relevant_event_ids:
+                continue
+
+            tracked_candidate_count += 1
+            tracked_submission_event_count += len(relevant_event_ids)
+            histories_by_run_id[candidate_run.run_id] = history
+            for submission_event_id in relevant_event_ids:
+                if submission_event_id in event_to_candidate_run:
+                    existing_candidate_id = event_to_candidate_run[submission_event_id].candidate_id
+                    raise ValueError(
+                        "Submission event ids must be unique across candidate runs. "
+                        f"Event '{submission_event_id}' was found under candidates "
+                        f"'{existing_candidate_id}' and '{candidate_run.candidate_id}'."
+                    )
+                event_to_candidate_run[submission_event_id] = candidate_run
+
+        if not event_to_candidate_run:
+            return SubmissionRefreshResult(
+                competition_slug=config.competition.slug,
+                tracked_candidate_count=tracked_candidate_count,
+                tracked_submission_event_count=tracked_submission_event_count,
+                matched_submission_event_count=0,
+                updated_candidate_count=0,
+                appended_observation_count=0,
+                scanned_remote_submission_count=0,
+                observation_source=observation_source,
+            )
+
+        observations_by_run_id: dict[str, list[SubmissionScoreObservation]] = {}
+        for remote_submission in iter_kaggle_submissions(config.competition.slug):
+            scanned_remote_submission_count += 1
+            submission_event_id = extract_submission_event_id(remote_submission.kaggle_description)
+            if submission_event_id is None:
+                continue
+            candidate_run = event_to_candidate_run.get(submission_event_id)
+            if candidate_run is None:
+                continue
+
+            matched_submission_event_ids.add(submission_event_id)
+            observations_by_run_id.setdefault(candidate_run.run_id, []).append(
+                SubmissionScoreObservation(
+                    observed_at_utc=utc_now_iso(),
+                    submission_event_id=submission_event_id,
+                    kaggle_submitted_at=remote_submission.kaggle_submitted_at,
+                    kaggle_file_name=remote_submission.kaggle_file_name,
+                    kaggle_description=remote_submission.kaggle_description,
+                    kaggle_status=remote_submission.kaggle_status,
+                    public_score=remote_submission.public_score,
+                    private_score=remote_submission.private_score,
+                    observation_source=observation_source,
+                )
+            )
+
+        for run_id, observations in observations_by_run_id.items():
+            history = histories_by_run_id[run_id]
+            updated_history, appended_count = history.with_submission_observations(observations)
+            if appended_count == 0:
+                continue
+
+            upload_submission_history(
+                config=config,
+                run_id=run_id,
+                history=updated_history,
+                updated_submission_event_ids=sorted(
+                    {observation.submission_event_id for observation in observations}
+                ),
+            )
+            update_submission_metrics(
+                config=config,
+                run_id=run_id,
+                score_metrics=build_submission_score_metrics(
+                    primary_metric=config.competition.primary_metric,
+                    history=updated_history,
+                ),
+            )
+            histories_by_run_id[run_id] = updated_history
+            updated_candidate_count += 1
+            appended_observation_count += appended_count
+
+    return SubmissionRefreshResult(
         competition_slug=config.competition.slug,
-        observation_source="manual_refresh",
+        tracked_candidate_count=tracked_candidate_count,
+        tracked_submission_event_count=tracked_submission_event_count,
+        matched_submission_event_count=len(matched_submission_event_ids),
+        updated_candidate_count=updated_candidate_count,
+        appended_observation_count=appended_observation_count,
+        scanned_remote_submission_count=scanned_remote_submission_count,
+        observation_source=observation_source,
     )

@@ -1,52 +1,11 @@
+import json
 import re
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
 from uuid import uuid4
 
-import pandas as pd
-
-SUBMISSION_EVENT_COLUMNS = [
-    "submission_event_id",
-    "submitted_at_utc",
-    "competition_slug",
-    "candidate_id",
-    "candidate_type",
-    "config_fingerprint",
-    "feature_recipe_id",
-    "preprocessing_scheme_id",
-    "model_registry_key",
-    "estimator_name",
-    "cv_metric_name",
-    "cv_metric_mean",
-    "cv_metric_std",
-    "submission_path",
-    "submit_message",
-    "submit_response_message",
-]
-
-SUBMISSION_SCORE_COLUMNS = [
-    "observed_at_utc",
-    "submission_event_id",
-    "competition_slug",
-    "candidate_id",
-    "kaggle_submitted_at",
-    "kaggle_file_name",
-    "kaggle_description",
-    "kaggle_status",
-    "public_score",
-    "private_score",
-    "observation_source",
-]
-
-SUBMISSION_SCORE_DEDUP_COLUMNS = [
-    "submission_event_id",
-    "kaggle_submitted_at",
-    "kaggle_file_name",
-    "kaggle_status",
-    "public_score",
-    "private_score",
-]
+from tabular_shenanigans.cv import is_higher_better
 
 SUBMISSION_EVENT_ID_PATTERN = re.compile(r"(?:^|\s\|\s)submit=(?P<submission_event_id>[a-z0-9_-]+)(?:\s\|\s|$)")
 
@@ -66,11 +25,11 @@ class SubmissionEvent:
     cv_metric_name: str
     cv_metric_mean: float
     cv_metric_std: float
-    submission_path: str
+    submission_file_name: str
     submit_message: str
     submit_response_message: str
 
-    def to_row(self) -> dict[str, object]:
+    def to_dict(self) -> dict[str, object]:
         return {
             "submission_event_id": self.submission_event_id,
             "submitted_at_utc": self.submitted_at_utc,
@@ -85,18 +44,39 @@ class SubmissionEvent:
             "cv_metric_name": self.cv_metric_name,
             "cv_metric_mean": self.cv_metric_mean,
             "cv_metric_std": self.cv_metric_std,
-            "submission_path": self.submission_path,
+            "submission_file_name": self.submission_file_name,
             "submit_message": self.submit_message,
             "submit_response_message": self.submit_response_message,
         }
+
+    @classmethod
+    def from_dict(cls, value: dict[str, object]) -> "SubmissionEvent":
+        return cls(
+            submission_event_id=str(value["submission_event_id"]),
+            submitted_at_utc=str(value["submitted_at_utc"]),
+            competition_slug=str(value["competition_slug"]),
+            candidate_id=str(value["candidate_id"]),
+            candidate_type=str(value["candidate_type"]),
+            config_fingerprint=str(value["config_fingerprint"]) if value.get("config_fingerprint") is not None else None,
+            feature_recipe_id=str(value["feature_recipe_id"]) if value.get("feature_recipe_id") is not None else None,
+            preprocessing_scheme_id=(
+                str(value["preprocessing_scheme_id"]) if value.get("preprocessing_scheme_id") is not None else None
+            ),
+            model_registry_key=str(value["model_registry_key"]),
+            estimator_name=str(value["estimator_name"]),
+            cv_metric_name=str(value["cv_metric_name"]),
+            cv_metric_mean=float(value["cv_metric_mean"]),
+            cv_metric_std=float(value["cv_metric_std"]),
+            submission_file_name=str(value["submission_file_name"]),
+            submit_message=str(value["submit_message"]),
+            submit_response_message=str(value["submit_response_message"]),
+        )
 
 
 @dataclass(frozen=True)
 class SubmissionScoreObservation:
     observed_at_utc: str
     submission_event_id: str
-    competition_slug: str
-    candidate_id: str
     kaggle_submitted_at: str
     kaggle_file_name: str
     kaggle_description: str
@@ -105,12 +85,10 @@ class SubmissionScoreObservation:
     private_score: float | None
     observation_source: str
 
-    def to_row(self) -> dict[str, object]:
+    def to_dict(self) -> dict[str, object]:
         return {
             "observed_at_utc": self.observed_at_utc,
             "submission_event_id": self.submission_event_id,
-            "competition_slug": self.competition_slug,
-            "candidate_id": self.candidate_id,
             "kaggle_submitted_at": self.kaggle_submitted_at,
             "kaggle_file_name": self.kaggle_file_name,
             "kaggle_description": self.kaggle_description,
@@ -120,13 +98,28 @@ class SubmissionScoreObservation:
             "observation_source": self.observation_source,
         }
 
+    @classmethod
+    def from_dict(cls, value: dict[str, object]) -> "SubmissionScoreObservation":
+        return cls(
+            observed_at_utc=str(value["observed_at_utc"]),
+            submission_event_id=str(value["submission_event_id"]),
+            kaggle_submitted_at=str(value["kaggle_submitted_at"]),
+            kaggle_file_name=str(value["kaggle_file_name"]),
+            kaggle_description=str(value["kaggle_description"]),
+            kaggle_status=str(value["kaggle_status"]),
+            public_score=float(value["public_score"]) if value.get("public_score") is not None else None,
+            private_score=float(value["private_score"]) if value.get("private_score") is not None else None,
+            observation_source=str(value["observation_source"]),
+        )
+
 
 @dataclass(frozen=True)
 class SubmissionRefreshResult:
     competition_slug: str
-    submission_score_ledger_path: Path
+    tracked_candidate_count: int
     tracked_submission_event_count: int
     matched_submission_event_count: int
+    updated_candidate_count: int
     appended_observation_count: int
     scanned_remote_submission_count: int
     observation_source: str
@@ -142,6 +135,107 @@ class KaggleSubmissionRecord:
     private_score: float | None
 
 
+@dataclass(frozen=True)
+class CandidateSubmissionHistory:
+    events: list[SubmissionEvent]
+    observations: list[SubmissionScoreObservation]
+
+    @classmethod
+    def empty(cls) -> "CandidateSubmissionHistory":
+        return cls(events=[], observations=[])
+
+    @classmethod
+    def from_path(cls, history_path: Path) -> "CandidateSubmissionHistory":
+        payload = json.loads(history_path.read_text(encoding="utf-8"))
+        if not isinstance(payload, dict):
+            raise ValueError(f"Submission history must be a JSON object: {history_path}")
+        raw_events = payload.get("events", [])
+        raw_observations = payload.get("observations", [])
+        if not isinstance(raw_events, list) or not isinstance(raw_observations, list):
+            raise ValueError(f"Submission history must contain list fields 'events' and 'observations': {history_path}")
+        return cls(
+            events=[SubmissionEvent.from_dict(event) for event in raw_events],
+            observations=[SubmissionScoreObservation.from_dict(observation) for observation in raw_observations],
+        )
+
+    def write(self, history_path: Path) -> None:
+        history_path.write_text(
+            json.dumps(
+                {
+                    "events": [event.to_dict() for event in self.events],
+                    "observations": [observation.to_dict() for observation in self.observations],
+                },
+                indent=2,
+                sort_keys=True,
+            ),
+            encoding="utf-8",
+        )
+
+    def with_submission_event(self, submission_event: SubmissionEvent) -> "CandidateSubmissionHistory":
+        existing_event_ids = {event.submission_event_id for event in self.events}
+        if submission_event.submission_event_id in existing_event_ids:
+            raise ValueError(
+                "Submission history already contains submission_event_id "
+                f"'{submission_event.submission_event_id}'."
+            )
+        return CandidateSubmissionHistory(
+            events=[*self.events, submission_event],
+            observations=self.observations,
+        )
+
+    def with_submission_observations(
+        self,
+        observations: list[SubmissionScoreObservation],
+    ) -> tuple["CandidateSubmissionHistory", int]:
+        existing_signatures = {
+            (
+                observation.submission_event_id,
+                observation.kaggle_submitted_at,
+                observation.kaggle_file_name,
+                observation.kaggle_status,
+                observation.public_score,
+                observation.private_score,
+            )
+            for observation in self.observations
+        }
+        appended_observations: list[SubmissionScoreObservation] = []
+        for observation in observations:
+            signature = (
+                observation.submission_event_id,
+                observation.kaggle_submitted_at,
+                observation.kaggle_file_name,
+                observation.kaggle_status,
+                observation.public_score,
+                observation.private_score,
+            )
+            if signature in existing_signatures:
+                continue
+            existing_signatures.add(signature)
+            appended_observations.append(observation)
+        if not appended_observations:
+            return self, 0
+        return (
+            CandidateSubmissionHistory(
+                events=self.events,
+                observations=[*self.observations, *appended_observations],
+            ),
+            len(appended_observations),
+        )
+
+    def get_event(self, submission_event_id: str) -> SubmissionEvent | None:
+        for event in self.events:
+            if event.submission_event_id == submission_event_id:
+                return event
+        return None
+
+    def get_observations(self, submission_event_id: str) -> list[SubmissionScoreObservation]:
+        return [
+            observation
+            for observation in self.observations
+            if observation.submission_event_id == submission_event_id
+        ]
+
+
 def utc_now_iso() -> str:
     return datetime.now(timezone.utc).isoformat()
 
@@ -151,127 +245,11 @@ def make_submission_event_id() -> str:
     return f"sub_{timestamp}_{uuid4().hex[:6]}"
 
 
-def submission_event_ledger_path(competition_slug: str) -> Path:
-    return Path("artifacts") / competition_slug / "submissions.csv"
-
-
-def submission_score_ledger_path(competition_slug: str) -> Path:
-    return Path("artifacts") / competition_slug / "submission_scores.csv"
-
-
 def extract_submission_event_id(kaggle_description: str) -> str | None:
     match = SUBMISSION_EVENT_ID_PATTERN.search(kaggle_description)
     if match is None:
         return None
     return match.group("submission_event_id")
-
-
-def _read_ledger(ledger_path: Path, required_columns: list[str]) -> pd.DataFrame:
-    ledger_df = pd.read_csv(ledger_path)
-    missing_columns = [column for column in required_columns if column not in ledger_df.columns]
-    if missing_columns:
-        raise ValueError(
-            f"Ledger {ledger_path} is missing required columns {missing_columns}. "
-            f"Present columns: {ledger_df.columns.tolist()}"
-        )
-    return ledger_df
-
-
-def _merged_columns(*column_groups: list[str]) -> list[str]:
-    merged_columns: list[str] = []
-    for group in column_groups:
-        for column in group:
-            if column not in merged_columns:
-                merged_columns.append(column)
-    return merged_columns
-
-
-def _write_ledger_rows(
-    ledger_path: Path,
-    required_columns: list[str],
-    row_dicts: list[dict[str, object]],
-) -> None:
-    row_df = pd.DataFrame(row_dicts)
-    if ledger_path.exists():
-        existing_df = _read_ledger(ledger_path=ledger_path, required_columns=required_columns)
-        merged_columns = _merged_columns(existing_df.columns.tolist(), required_columns, row_df.columns.tolist())
-        combined_df = pd.concat(
-            [
-                existing_df.reindex(columns=merged_columns),
-                row_df.reindex(columns=merged_columns),
-            ],
-            ignore_index=True,
-            sort=False,
-        )
-        combined_df.to_csv(ledger_path, index=False)
-        return
-
-    ledger_path.parent.mkdir(parents=True, exist_ok=True)
-    merged_columns = _merged_columns(required_columns, row_df.columns.tolist())
-    row_df.reindex(columns=merged_columns).to_csv(ledger_path, index=False)
-
-
-def append_submission_event(submission_event: SubmissionEvent) -> Path:
-    ledger_path = submission_event_ledger_path(submission_event.competition_slug)
-    if ledger_path.exists():
-        existing_df = _read_ledger(ledger_path=ledger_path, required_columns=SUBMISSION_EVENT_COLUMNS)
-        existing_event_ids = set(existing_df["submission_event_id"].astype(str))
-        if submission_event.submission_event_id in existing_event_ids:
-            raise ValueError(
-                "Submission ledger already contains submission_event_id "
-                f"'{submission_event.submission_event_id}'."
-            )
-    _write_ledger_rows(
-        ledger_path=ledger_path,
-        required_columns=SUBMISSION_EVENT_COLUMNS,
-        row_dicts=[submission_event.to_row()],
-    )
-    return ledger_path
-
-
-def _row_signature(row: dict[str, object], signature_columns: list[str]) -> tuple[object, ...]:
-    normalized_values: list[object] = []
-    for column in signature_columns:
-        value = row.get(column)
-        if pd.isna(value):
-            normalized_values.append(None)
-            continue
-        normalized_values.append(value)
-    return tuple(normalized_values)
-
-
-def append_submission_score_observations(
-    competition_slug: str,
-    observations: list[SubmissionScoreObservation],
-) -> tuple[Path, int]:
-    ledger_path = submission_score_ledger_path(competition_slug)
-    if not observations:
-        return ledger_path, 0
-
-    existing_signatures: set[tuple[object, ...]] = set()
-    if ledger_path.exists():
-        existing_df = _read_ledger(ledger_path=ledger_path, required_columns=SUBMISSION_SCORE_COLUMNS)
-        for row in existing_df[SUBMISSION_SCORE_DEDUP_COLUMNS].to_dict(orient="records"):
-            existing_signatures.add(_row_signature(row, SUBMISSION_SCORE_DEDUP_COLUMNS))
-
-    new_rows: list[dict[str, object]] = []
-    for observation in observations:
-        row = observation.to_row()
-        row_signature = _row_signature(row, SUBMISSION_SCORE_DEDUP_COLUMNS)
-        if row_signature in existing_signatures:
-            continue
-        existing_signatures.add(row_signature)
-        new_rows.append(row)
-
-    if not new_rows:
-        return ledger_path, 0
-
-    _write_ledger_rows(
-        ledger_path=ledger_path,
-        required_columns=SUBMISSION_SCORE_COLUMNS,
-        row_dicts=new_rows,
-    )
-    return ledger_path, len(new_rows)
 
 
 def _parse_optional_float(raw_value: object) -> float | None:
@@ -285,7 +263,7 @@ def _parse_optional_float(raw_value: object) -> float | None:
     return float(raw_value)
 
 
-def _iter_kaggle_submissions(competition_slug: str, page_size: int = 100):
+def iter_kaggle_submissions(competition_slug: str, page_size: int = 100):
     try:
         from kaggle.api.kaggle_api_extended import KaggleApi
         from kagglesdk.competitions.types.competition_api_service import ApiListSubmissionsRequest
@@ -327,94 +305,29 @@ def _iter_kaggle_submissions(competition_slug: str, page_size: int = 100):
             page_token = next_page_token
 
 
-def refresh_submission_scores(
-    competition_slug: str,
-    target_submission_event_ids: set[str] | None = None,
-    observation_source: str = "refresh_submissions",
-) -> SubmissionRefreshResult:
-    event_ledger_path = submission_event_ledger_path(competition_slug)
-    score_ledger_path = submission_score_ledger_path(competition_slug)
-    if not event_ledger_path.exists():
-        return SubmissionRefreshResult(
-            competition_slug=competition_slug,
-            submission_score_ledger_path=score_ledger_path,
-            tracked_submission_event_count=0,
-            matched_submission_event_count=0,
-            appended_observation_count=0,
-            scanned_remote_submission_count=0,
-            observation_source=observation_source,
-        )
+def build_submission_score_metrics(
+    primary_metric: str,
+    history: CandidateSubmissionHistory,
+) -> dict[str, float | int | None]:
+    public_observations = [observation for observation in history.observations if observation.public_score is not None]
+    private_observations = [observation for observation in history.observations if observation.private_score is not None]
+    higher_is_better = is_higher_better(primary_metric)
 
-    submission_event_df = _read_ledger(
-        ledger_path=event_ledger_path,
-        required_columns=SUBMISSION_EVENT_COLUMNS,
-    )
-    submission_events_by_id = {
-        str(row["submission_event_id"]): row
-        for row in submission_event_df.to_dict(orient="records")
+    latest_public = public_observations[-1].public_score if public_observations else None
+    latest_private = private_observations[-1].private_score if private_observations else None
+    best_public = None
+    best_private = None
+    if public_observations:
+        public_scores = [observation.public_score for observation in public_observations if observation.public_score is not None]
+        best_public = max(public_scores) if higher_is_better else min(public_scores)
+    if private_observations:
+        private_scores = [observation.private_score for observation in private_observations if observation.private_score is not None]
+        best_private = max(private_scores) if higher_is_better else min(private_scores)
+
+    return {
+        "submit_count": len(history.events),
+        "latest_public_score": latest_public,
+        "best_public_score": best_public,
+        "latest_private_score": latest_private,
+        "best_private_score": best_private,
     }
-    tracked_submission_event_ids = set(submission_events_by_id)
-    if target_submission_event_ids is not None:
-        unknown_submission_event_ids = sorted(target_submission_event_ids - tracked_submission_event_ids)
-        if unknown_submission_event_ids:
-            raise ValueError(
-                "Submission refresh got unknown submission_event_id values. "
-                f"Unknown IDs: {unknown_submission_event_ids}"
-            )
-        tracked_submission_event_ids = set(target_submission_event_ids)
-
-    if not tracked_submission_event_ids:
-        return SubmissionRefreshResult(
-            competition_slug=competition_slug,
-            submission_score_ledger_path=score_ledger_path,
-            tracked_submission_event_count=0,
-            matched_submission_event_count=0,
-            appended_observation_count=0,
-            scanned_remote_submission_count=0,
-            observation_source=observation_source,
-        )
-
-    observed_at_utc = utc_now_iso()
-    matched_submission_event_ids: set[str] = set()
-    scanned_remote_submission_count = 0
-    observations: list[SubmissionScoreObservation] = []
-
-    for kaggle_submission in _iter_kaggle_submissions(competition_slug=competition_slug):
-        scanned_remote_submission_count += 1
-        submission_event_id = extract_submission_event_id(kaggle_submission.kaggle_description)
-        if submission_event_id is None or submission_event_id not in tracked_submission_event_ids:
-            continue
-
-        event_row = submission_events_by_id[submission_event_id]
-        matched_submission_event_ids.add(submission_event_id)
-        observations.append(
-            SubmissionScoreObservation(
-                observed_at_utc=observed_at_utc,
-                submission_event_id=submission_event_id,
-                competition_slug=competition_slug,
-                candidate_id=str(event_row["candidate_id"]),
-                kaggle_submitted_at=kaggle_submission.kaggle_submitted_at,
-                kaggle_file_name=kaggle_submission.kaggle_file_name,
-                kaggle_description=kaggle_submission.kaggle_description,
-                kaggle_status=kaggle_submission.kaggle_status,
-                public_score=kaggle_submission.public_score,
-                private_score=kaggle_submission.private_score,
-                observation_source=observation_source,
-            )
-        )
-        if target_submission_event_ids is not None and matched_submission_event_ids == tracked_submission_event_ids:
-            break
-
-    _, appended_observation_count = append_submission_score_observations(
-        competition_slug=competition_slug,
-        observations=observations,
-    )
-    return SubmissionRefreshResult(
-        competition_slug=competition_slug,
-        submission_score_ledger_path=score_ledger_path,
-        tracked_submission_event_count=len(tracked_submission_event_ids),
-        matched_submission_event_count=len(matched_submission_event_ids),
-        appended_observation_count=appended_observation_count,
-        scanned_remote_submission_count=scanned_remote_submission_count,
-        observation_source=observation_source,
-    )
