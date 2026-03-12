@@ -1,5 +1,3 @@
-import hashlib
-import json
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
@@ -7,6 +5,17 @@ from pathlib import Path
 import numpy as np
 import pandas as pd
 
+from tabular_shenanigans.candidate_artifacts import (
+    BINARY_ACCURACY_BLEND_RULE,
+    BINARY_ACCURACY_TEST_PROBABILITIES_FILENAME,
+    build_base_config_snapshot,
+    build_binary_accuracy_artifact_metadata,
+    build_config_fingerprint as make_candidate_config_fingerprint,
+    build_target_summary,
+    candidate_dir as resolve_candidate_dir,
+    load_candidate_manifest,
+    write_candidate_artifacts as write_common_candidate_artifacts,
+)
 from tabular_shenanigans.competition import ensure_prepared_competition_context
 from tabular_shenanigans.config import AppConfig
 from tabular_shenanigans.cv import is_higher_better, resolve_positive_label, score_predictions
@@ -16,8 +25,6 @@ from tabular_shenanigans.preprocess import prepare_feature_frames
 BLEND_MODEL_ID = "blend_weighted_average"
 BLEND_MODEL_NAME = "WeightedAverageBlend"
 BLEND_PREPROCESSING_SCHEME_ID = "blend"
-BINARY_ACCURACY_TEST_PROBABILITIES_FILENAME = "test_prediction_probabilities.csv"
-BINARY_ACCURACY_BLEND_RULE = "average_positive_class_probability_then_threshold_0.5"
 
 
 @dataclass(frozen=True)
@@ -32,22 +39,6 @@ class BlendComponent:
     cv_metric_std: float
     oof_predictions: np.ndarray
     test_predictions: np.ndarray
-
-
-def _json_ready(value: object) -> object:
-    if isinstance(value, dict):
-        return {str(key): _json_ready(nested_value) for key, nested_value in value.items()}
-    if isinstance(value, list):
-        return [_json_ready(item) for item in value]
-    if isinstance(value, tuple):
-        return [_json_ready(item) for item in value]
-    if isinstance(value, np.generic):
-        return value.item()
-    return value
-
-
-def _candidate_dir(competition_slug: str, candidate_id: str) -> Path:
-    return Path("artifacts") / competition_slug / "candidates" / candidate_id
 
 
 def _normalize_binary_label(value: object) -> str:
@@ -74,16 +65,6 @@ def _series_matches_expected(observed: pd.Series, expected: pd.Series) -> bool:
     observed_values = observed_reset.map(_normalize_binary_label)
     expected_values = expected_reset.map(_normalize_binary_label)
     return observed_values.equals(expected_values)
-
-
-def _load_candidate_manifest(candidate_dir: Path) -> dict[str, object]:
-    manifest_path = candidate_dir / "candidate.json"
-    if not manifest_path.exists():
-        raise ValueError(f"Missing candidate manifest required for blending: {manifest_path}")
-    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
-    if not isinstance(manifest, dict):
-        raise ValueError(f"Candidate manifest must be a JSON object: {manifest_path}")
-    return manifest
 
 
 def _load_oof_predictions(candidate_dir: Path) -> pd.DataFrame:
@@ -166,40 +147,6 @@ def _resolve_blend_weights(
     if not np.isfinite(weight_sum) or weight_sum <= 0:
         raise ValueError("Blend candidate weights must sum to a positive value.")
     return [float(weight / weight_sum) for weight in configured_weights]
-
-
-def _build_target_summary(
-    task_type: str,
-    y_train: pd.Series,
-    positive_label: object | None = None,
-    negative_label: object | None = None,
-    observed_label_pair: tuple[object, object] | None = None,
-) -> dict[str, object]:
-    if task_type == "regression":
-        return {
-            "target_mean": float(y_train.mean()),
-            "target_std": float(y_train.std(ddof=0)),
-            "target_min": float(y_train.min()),
-            "target_max": float(y_train.max()),
-        }
-
-    if task_type == "binary":
-        if positive_label is None or negative_label is None or observed_label_pair is None:
-            raise ValueError("Binary target summary requires resolved label metadata.")
-        positive_count = int((y_train == positive_label).sum())
-        row_count = int(y_train.shape[0])
-        negative_count = row_count - positive_count
-        return {
-            "observed_label_1": str(observed_label_pair[0]),
-            "observed_label_2": str(observed_label_pair[1]),
-            "negative_label": str(negative_label),
-            "positive_label": str(positive_label),
-            "positive_count": positive_count,
-            "negative_count": negative_count,
-            "target_prevalence": float(positive_count / row_count),
-        }
-
-    raise ValueError(f"Unsupported task_type for target summary: {task_type}")
 
 
 def _validate_binary_test_labels(
@@ -305,8 +252,11 @@ def _load_blend_component(
     negative_label: object | None,
     observed_label_pair: tuple[object, object] | None,
 ) -> BlendComponent:
-    candidate_dir = _candidate_dir(competition_slug=competition_slug, candidate_id=candidate_id)
-    manifest = _load_candidate_manifest(candidate_dir=candidate_dir)
+    candidate_dir = resolve_candidate_dir(competition_slug=competition_slug, candidate_id=candidate_id)
+    manifest = load_candidate_manifest(
+        candidate_dir_path=candidate_dir,
+        missing_message=f"Missing candidate manifest required for blending: {candidate_dir / 'candidate.json'}",
+    )
 
     manifest_competition_slug = manifest.get("competition_slug")
     manifest_task_type = manifest.get("task_type")
@@ -535,23 +485,20 @@ def _build_config_snapshot(
     label_column: str,
     normalized_weights: list[float],
 ) -> dict[str, object]:
-    return {
-        "competition": {
-            **config.competition.model_dump(mode="python"),
-            "primary_metric": config.primary_metric,
-            "positive_label": positive_label,
-            "id_column": id_column,
-            "label_column": label_column,
-        },
-        "experiment": config.experiment.model_dump(mode="python"),
-        "resolved_blend_components": [
-            {
-                "candidate_id": candidate_id,
-                "weight": weight,
-            }
-            for candidate_id, weight in zip(config.base_candidate_ids, normalized_weights, strict=True)
-        ],
-    }
+    config_snapshot = build_base_config_snapshot(
+        config=config,
+        positive_label=positive_label,
+        id_column=id_column,
+        label_column=label_column,
+    )
+    config_snapshot["resolved_blend_components"] = [
+        {
+            "candidate_id": candidate_id,
+            "weight": weight,
+        }
+        for candidate_id, weight in zip(config.base_candidate_ids, normalized_weights, strict=True)
+    ]
+    return config_snapshot
 
 
 def _build_config_fingerprint(
@@ -559,20 +506,20 @@ def _build_config_fingerprint(
     components: list[BlendComponent],
     normalized_weights: list[float],
 ) -> str:
-    fingerprint_payload = {
-        "config_snapshot": config_snapshot,
-        "blend_components": [
-            {
-                "candidate_id": component.candidate_id,
-                "config_fingerprint": component.config_fingerprint,
-                "weight": weight,
-            }
-            for component, weight in zip(components, normalized_weights, strict=True)
-        ],
-        "model_id": BLEND_MODEL_ID,
-    }
-    fingerprint_payload_json = json.dumps(_json_ready(fingerprint_payload), sort_keys=True)
-    return hashlib.sha256(fingerprint_payload_json.encode("utf-8")).hexdigest()[:12]
+    return make_candidate_config_fingerprint(
+        {
+            "config_snapshot": config_snapshot,
+            "blend_components": [
+                {
+                    "candidate_id": component.candidate_id,
+                    "config_fingerprint": component.config_fingerprint,
+                    "weight": weight,
+                }
+                for component, weight in zip(components, normalized_weights, strict=True)
+            ],
+            "model_id": BLEND_MODEL_ID,
+        }
+    )
 
 
 def _build_candidate_manifest(
@@ -641,9 +588,12 @@ def _build_candidate_manifest(
         "test_rows": test_rows,
         "test_cols": None,
     }
-    if config.task_type == "binary" and config.primary_metric == "accuracy":
-        manifest["binary_accuracy_blend_rule"] = BINARY_ACCURACY_BLEND_RULE
-        manifest["binary_accuracy_test_probability_path"] = BINARY_ACCURACY_TEST_PROBABILITIES_FILENAME
+    manifest.update(
+        build_binary_accuracy_artifact_metadata(
+            task_type=config.task_type,
+            primary_metric=config.primary_metric,
+        )
+    )
     return manifest
 
 
@@ -661,40 +611,19 @@ def _write_candidate_artifacts(
     label_column: str,
     blend_summary_df: pd.DataFrame,
 ) -> None:
-    (candidate_dir / "candidate.json").write_text(
-        json.dumps(_json_ready(manifest), indent=2, sort_keys=True),
-        encoding="utf-8",
+    write_common_candidate_artifacts(
+        candidate_dir_path=candidate_dir,
+        manifest=manifest,
+        fold_metrics_df=fold_metrics_df,
+        y_train=y_train,
+        oof_predictions=oof_predictions,
+        fold_assignments=fold_assignments,
+        test_ids=test_ids,
+        test_predictions=test_predictions,
+        id_column=id_column,
+        label_column=label_column,
+        test_prediction_probabilities=test_prediction_probabilities,
     )
-    fold_metrics_df.to_csv(candidate_dir / "fold_metrics.csv", index=False)
-
-    oof_df = pd.DataFrame(
-        {
-            "row_idx": np.arange(y_train.shape[0], dtype=int),
-            "y_true": y_train.to_numpy(),
-            "y_pred": oof_predictions,
-            "fold": fold_assignments,
-        }
-    )
-    oof_df.to_csv(candidate_dir / "oof_predictions.csv", index=False)
-
-    test_predictions_df = pd.DataFrame(
-        {
-            id_column: test_ids.to_numpy(),
-            label_column: test_predictions,
-        }
-    )
-    test_predictions_df.to_csv(candidate_dir / "test_predictions.csv", index=False)
-    if test_prediction_probabilities is not None:
-        test_probability_df = pd.DataFrame(
-            {
-                id_column: test_ids.to_numpy(),
-                label_column: test_prediction_probabilities,
-            }
-        )
-        test_probability_df.to_csv(
-            candidate_dir / BINARY_ACCURACY_TEST_PROBABILITIES_FILENAME,
-            index=False,
-        )
     blend_summary_df.to_csv(candidate_dir / "blend_summary.csv", index=False)
 
 
@@ -705,7 +634,7 @@ def run_blend_training(
     if not config.is_blend_candidate:
         raise ValueError("Blend training requires experiment.candidate.candidate_type=blend.")
 
-    candidate_dir = _candidate_dir(config.competition_slug, config.candidate_id)
+    candidate_dir = resolve_candidate_dir(config.competition_slug, config.candidate_id)
     if candidate_dir.exists():
         raise ValueError(
             "Candidate artifacts already exist for this candidate_id. "
@@ -807,7 +736,7 @@ def run_blend_training(
         normalized_weights=normalized_weights,
     )
 
-    target_summary = _build_target_summary(
+    target_summary = build_target_summary(
         task_type=config.task_type,
         y_train=y_train,
         positive_label=positive_label,

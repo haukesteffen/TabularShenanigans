@@ -1,4 +1,3 @@
-import hashlib
 import json
 from dataclasses import dataclass
 from datetime import datetime, timezone
@@ -7,6 +6,15 @@ from pathlib import Path
 import numpy as np
 import pandas as pd
 
+from tabular_shenanigans.candidate_artifacts import (
+    build_base_config_snapshot,
+    build_binary_accuracy_artifact_metadata,
+    build_config_fingerprint,
+    build_target_summary,
+    candidate_dir as resolve_candidate_dir,
+    json_ready,
+    write_candidate_artifacts,
+)
 from tabular_shenanigans.competition import ensure_prepared_competition_context
 from tabular_shenanigans.config import AppConfig
 from tabular_shenanigans.cv import is_higher_better, resolve_positive_label, score_predictions
@@ -14,9 +22,6 @@ from tabular_shenanigans.data import CompetitionDatasetContext, get_binary_predi
 from tabular_shenanigans.feature_recipes import apply_feature_recipe
 from tabular_shenanigans.models import build_model, build_model_fit_kwargs
 from tabular_shenanigans.preprocess import build_preprocessor, prepare_feature_frames
-
-BINARY_ACCURACY_TEST_PROBABILITIES_FILENAME = "test_prediction_probabilities.csv"
-BINARY_ACCURACY_BLEND_RULE = "average_positive_class_probability_then_threshold_0.5"
 
 
 @dataclass(frozen=True)
@@ -86,18 +91,6 @@ class OptimizationArtifacts:
     trials_df: pd.DataFrame
 
 
-def _json_ready(value: object) -> object:
-    if isinstance(value, dict):
-        return {str(key): _json_ready(nested_value) for key, nested_value in value.items()}
-    if isinstance(value, list):
-        return [_json_ready(item) for item in value]
-    if isinstance(value, tuple):
-        return [_json_ready(item) for item in value]
-    if isinstance(value, np.generic):
-        return value.item()
-    return value
-
-
 def _resolve_training_model_spec(
     config: AppConfig,
     model_spec: TrainingModelSpec | None = None,
@@ -108,40 +101,6 @@ def _resolve_training_model_spec(
         model_id=config.resolved_model_id,
         parameter_overrides=config.model_parameter_overrides,
     )
-
-
-def _build_target_summary(
-    task_type: str,
-    y_train: pd.Series,
-    positive_label: object | None = None,
-    negative_label: object | None = None,
-    observed_label_pair: tuple[object, object] | None = None,
-) -> dict[str, object]:
-    if task_type == "regression":
-        return {
-            "target_mean": float(y_train.mean()),
-            "target_std": float(y_train.std(ddof=0)),
-            "target_min": float(y_train.min()),
-            "target_max": float(y_train.max()),
-        }
-
-    if task_type == "binary":
-        if positive_label is None or negative_label is None or observed_label_pair is None:
-            raise ValueError("Binary target summary requires resolved label metadata.")
-        positive_count = int((y_train == positive_label).sum())
-        row_count = int(y_train.shape[0])
-        negative_count = row_count - positive_count
-        return {
-            "observed_label_1": str(observed_label_pair[0]),
-            "observed_label_2": str(observed_label_pair[1]),
-            "negative_label": str(negative_label),
-            "positive_label": str(positive_label),
-            "positive_count": positive_count,
-            "negative_count": negative_count,
-            "target_prevalence": float(positive_count / row_count),
-        }
-
-    raise ValueError(f"Unsupported task_type for target summary: {task_type}")
 
 
 def _run_cv_evaluation(
@@ -376,10 +335,6 @@ def _evaluate_model_spec(
     )
 
 
-def _candidate_dir(competition_slug: str, candidate_id: str) -> Path:
-    return Path("artifacts") / competition_slug / "candidates" / candidate_id
-
-
 def _build_config_snapshot(
     config: AppConfig,
     model_spec: TrainingModelSpec,
@@ -388,17 +343,13 @@ def _build_config_snapshot(
     label_column: str,
     tuning_provenance: dict[str, object] | None = None,
 ) -> dict[str, object]:
-    config_snapshot = {
-        "competition": {
-            **config.competition.model_dump(mode="python"),
-            "primary_metric": config.primary_metric,
-            "positive_label": positive_label,
-            "id_column": id_column,
-            "label_column": label_column,
-        },
-        "experiment": config.experiment.model_dump(mode="python"),
-        "resolved_model_id": model_spec.model_id,
-    }
+    config_snapshot = build_base_config_snapshot(
+        config=config,
+        positive_label=positive_label,
+        id_column=id_column,
+        label_column=label_column,
+    )
+    config_snapshot["resolved_model_id"] = model_spec.model_id
     if model_spec.parameter_overrides:
         config_snapshot["resolved_model_parameter_overrides"] = model_spec.parameter_overrides
     if tuning_provenance is not None:
@@ -410,12 +361,12 @@ def _build_config_fingerprint(
     config_snapshot: dict[str, object],
     model_result: ModelRunResult,
 ) -> str:
-    fingerprint_payload = {
-        "config_snapshot": config_snapshot,
-        "model": model_result.to_fingerprint_entry(),
-    }
-    fingerprint_payload_json = json.dumps(_json_ready(fingerprint_payload), sort_keys=True)
-    return hashlib.sha256(fingerprint_payload_json.encode("utf-8")).hexdigest()[:12]
+    return build_config_fingerprint(
+        {
+            "config_snapshot": config_snapshot,
+            "model": model_result.to_fingerprint_entry(),
+        }
+    )
 
 
 def _build_candidate_manifest(
@@ -469,56 +420,13 @@ def _build_candidate_manifest(
         "test_cols": test_cols,
         "tuning_provenance": tuning_provenance,
     }
-    if config.task_type == "binary" and config.primary_metric == "accuracy":
-        manifest["binary_accuracy_blend_rule"] = BINARY_ACCURACY_BLEND_RULE
-        manifest["binary_accuracy_test_probability_path"] = BINARY_ACCURACY_TEST_PROBABILITIES_FILENAME
+    manifest.update(
+        build_binary_accuracy_artifact_metadata(
+            task_type=config.task_type,
+            primary_metric=config.primary_metric,
+        )
+    )
     return manifest
-
-
-def _write_candidate_artifacts(
-    candidate_dir: Path,
-    manifest: dict[str, object],
-    evaluation_artifacts: ModelEvaluationArtifacts,
-    y_train: pd.Series,
-    fold_assignments: np.ndarray,
-    test_ids: pd.Series,
-    id_column: str,
-    label_column: str,
-) -> None:
-    (candidate_dir / "candidate.json").write_text(
-        json.dumps(_json_ready(manifest), indent=2, sort_keys=True),
-        encoding="utf-8",
-    )
-    evaluation_artifacts.fold_metrics_df.to_csv(candidate_dir / "fold_metrics.csv", index=False)
-
-    oof_df = pd.DataFrame(
-        {
-            "row_idx": np.arange(y_train.shape[0], dtype=int),
-            "y_true": y_train.to_numpy(),
-            "y_pred": evaluation_artifacts.oof_predictions,
-            "fold": fold_assignments,
-        }
-    )
-    oof_df.to_csv(candidate_dir / "oof_predictions.csv", index=False)
-
-    test_predictions_df = pd.DataFrame(
-        {
-            id_column: test_ids.to_numpy(),
-            label_column: evaluation_artifacts.final_test_predictions,
-        }
-    )
-    test_predictions_df.to_csv(candidate_dir / "test_predictions.csv", index=False)
-    if evaluation_artifacts.test_prediction_probabilities is not None:
-        test_probability_df = pd.DataFrame(
-            {
-                id_column: test_ids.to_numpy(),
-                label_column: evaluation_artifacts.test_prediction_probabilities,
-            }
-        )
-        test_probability_df.to_csv(
-            candidate_dir / BINARY_ACCURACY_TEST_PROBABILITIES_FILENAME,
-            index=False,
-        )
 
 
 def _write_optimization_artifacts(
@@ -526,7 +434,7 @@ def _write_optimization_artifacts(
     optimization_artifacts: OptimizationArtifacts,
 ) -> None:
     (candidate_dir / "optimization_summary.json").write_text(
-        json.dumps(_json_ready(optimization_artifacts.summary), indent=2, sort_keys=True),
+        json.dumps(json_ready(optimization_artifacts.summary), indent=2, sort_keys=True),
         encoding="utf-8",
     )
     optimization_artifacts.trials_df.to_csv(candidate_dir / "optimization_trials.csv", index=False)
@@ -534,7 +442,7 @@ def _write_optimization_artifacts(
     best_params = optimization_artifacts.summary.get("best_params")
     if isinstance(best_params, dict):
         (candidate_dir / "optimization_best_params.json").write_text(
-            json.dumps(_json_ready(best_params), indent=2, sort_keys=True),
+            json.dumps(json_ready(best_params), indent=2, sort_keys=True),
             encoding="utf-8",
         )
 
@@ -549,7 +457,7 @@ def run_training(
         raise ValueError("run_training only supports experiment.candidate.candidate_type=model.")
 
     resolved_model_spec = _resolve_training_model_spec(config=config, model_spec=model_spec)
-    candidate_dir = _candidate_dir(config.competition_slug, config.candidate_id)
+    candidate_dir = resolve_candidate_dir(config.competition_slug, config.candidate_id)
     if candidate_dir.exists():
         raise ValueError(
             "Candidate artifacts already exist for this candidate_id. "
@@ -595,7 +503,7 @@ def run_training(
         x_train_raw=x_train_raw,
         x_test_raw=x_test_raw,
     )
-    target_summary = _build_target_summary(
+    target_summary = build_target_summary(
         task_type=task_type,
         y_train=y_train,
         positive_label=positive_label,
@@ -665,15 +573,18 @@ def run_training(
 
     candidate_dir.parent.mkdir(parents=True, exist_ok=True)
     candidate_dir.mkdir(parents=False, exist_ok=False)
-    _write_candidate_artifacts(
-        candidate_dir=candidate_dir,
+    write_candidate_artifacts(
+        candidate_dir_path=candidate_dir,
         manifest=candidate_manifest,
-        evaluation_artifacts=evaluation_artifacts,
+        fold_metrics_df=evaluation_artifacts.fold_metrics_df,
         y_train=y_train,
+        oof_predictions=evaluation_artifacts.oof_predictions,
         fold_assignments=fold_assignments,
         test_ids=test_df[id_column],
+        test_predictions=evaluation_artifacts.final_test_predictions,
         id_column=id_column,
         label_column=label_column,
+        test_prediction_probabilities=evaluation_artifacts.test_prediction_probabilities,
     )
     return candidate_dir
 
@@ -682,7 +593,7 @@ def run_training_workflow(
     config: AppConfig,
     dataset_context: CompetitionDatasetContext,
 ) -> Path:
-    candidate_dir = _candidate_dir(config.competition_slug, config.candidate_id)
+    candidate_dir = resolve_candidate_dir(config.competition_slug, config.candidate_id)
     if candidate_dir.exists():
         raise ValueError(
             "Candidate artifacts already exist for this candidate_id. "
