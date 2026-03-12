@@ -18,6 +18,13 @@ class PreprocessingDefinition:
     builder: PreprocessorBuilder
 
 
+@dataclass(frozen=True)
+class ResolvedFeatureSchema:
+    feature_columns: list[str]
+    numeric_columns: list[str]
+    categorical_columns: list[str]
+
+
 def _validate_column_names(config_name: str, columns: list[str], available_columns: list[str]) -> None:
     missing_columns = [column for column in columns if column not in available_columns]
     if missing_columns:
@@ -70,6 +77,25 @@ def resolve_feature_types(
         force_categorical=force_categorical or [],
         force_numeric=force_numeric or [],
         low_cardinality_int_threshold=low_cardinality_int_threshold,
+    )
+
+
+def resolve_feature_schema(
+    x_train_raw: pd.DataFrame,
+    force_categorical: list[str] | None = None,
+    force_numeric: list[str] | None = None,
+    low_cardinality_int_threshold: int | None = None,
+) -> ResolvedFeatureSchema:
+    numeric_columns, categorical_columns = resolve_feature_types(
+        x_train_raw=x_train_raw,
+        force_categorical=force_categorical,
+        force_numeric=force_numeric,
+        low_cardinality_int_threshold=low_cardinality_int_threshold,
+    )
+    return ResolvedFeatureSchema(
+        feature_columns=x_train_raw.columns.tolist(),
+        numeric_columns=numeric_columns,
+        categorical_columns=categorical_columns,
     )
 
 
@@ -350,26 +376,36 @@ def build_preprocessor(
     force_numeric: list[str] | None = None,
     low_cardinality_int_threshold: int | None = None,
 ) -> tuple[object, list[str], list[str]]:
-    force_categorical = force_categorical or []
-    force_numeric = force_numeric or []
-
-    numeric_columns, categorical_columns = _resolve_feature_types(
+    feature_schema = resolve_feature_schema(
         x_train_raw=x_train_raw,
         force_categorical=force_categorical,
         force_numeric=force_numeric,
         low_cardinality_int_threshold=low_cardinality_int_threshold,
     )
+    preprocessor = build_preprocessor_from_schema(
+        scheme_id=scheme_id,
+        feature_schema=feature_schema,
+    )
+    return (
+        preprocessor,
+        feature_schema.numeric_columns,
+        feature_schema.categorical_columns,
+    )
 
-    if not numeric_columns and not categorical_columns:
+def build_preprocessor_from_schema(
+    scheme_id: str,
+    feature_schema: ResolvedFeatureSchema,
+) -> object:
+    if not feature_schema.numeric_columns and not feature_schema.categorical_columns:
         raise ValueError("No modeled features remain after excluding id_column and applying drop_columns.")
 
     preprocessing_definition = get_preprocessing_definition(scheme_id)
     preprocessor = preprocessing_definition.builder(
-        x_train_raw.columns.tolist(),
-        numeric_columns,
-        categorical_columns,
+        feature_schema.feature_columns,
+        feature_schema.numeric_columns,
+        feature_schema.categorical_columns,
     )
-    return preprocessor, numeric_columns, categorical_columns
+    return preprocessor
 
 
 def summarize_feature_types(

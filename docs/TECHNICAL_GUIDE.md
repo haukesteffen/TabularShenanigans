@@ -21,7 +21,7 @@ The intended operating scope is Kaggle Playground Series tabular competitions. C
   - regression: `ridge + onehot`, `elasticnet + onehot`, `random_forest + ordinal`, `extra_trees + ordinal`, `hist_gradient_boosting + ordinal`, `hist_gradient_boosting + frequency`, `lightgbm + ordinal`, `lightgbm + frequency`, `catboost + native`, `xgboost + ordinal`, `xgboost + frequency`
   - binary classification: `logistic_regression + onehot`, `random_forest + ordinal`, `extra_trees + ordinal`, `hist_gradient_boosting + ordinal`, `hist_gradient_boosting + frequency`, `lightgbm + ordinal`, `lightgbm + frequency`, `catboost + native`, `xgboost + ordinal`, `xgboost + frequency`
 10. For blend candidates, load compatible base candidate artifacts from `artifacts/<competition_slug>/candidates/<base_candidate_id>/`, validate shared schema plus frozen-fold alignment, validate the binary probability label contract when `primary_metric` is `roc_auc` or `log_loss`, and materialize blended OOF plus test predictions without retraining the base candidates.
-11. When `experiment.candidate.optimization.enabled=true` for a model candidate, `train` runs an Optuna study on the frozen fold assignments, retrains the best trial into the standard candidate artifact layout, and writes optimization metadata inside the candidate directory.
+11. When `experiment.candidate.optimization.enabled=true` for a model candidate, `train` builds one prepared training context, runs an Optuna study on the frozen fold assignments through the shared evaluation core, reuses that prepared context for the final best-trial retrain, and writes optimization metadata inside the candidate directory.
 12. Write one candidate artifact directory under `artifacts/<competition_slug>/candidates/<candidate_id>/` with `candidate.json`, `fold_metrics.csv`, `oof_predictions.csv`, `test_predictions.csv`, and optional candidate-type-specific files such as `blend_summary.csv` or optimization metadata.
 13. Validate predictions against `sample_submission.csv`, including exact ID content and order, using `candidate.json` as the submission metadata contract, apply metric-aware binary prediction validation, write `submission.csv` in the selected candidate directory, and optionally submit to Kaggle.
 14. When `experiment.tracking.enabled=true`, publish stage-local artifacts and metadata for `prepare`, `train`, and `submit` to the configured MLflow server after the stage succeeds.
@@ -45,12 +45,13 @@ The default `submit` path supports current candidate artifacts only. Unsupported
 - `src/tabular_shenanigans/data.py`: competition download, zip access, metric helpers, dataset schema resolution, and sample-submission template loading.
 - `src/tabular_shenanigans/eda.py`: competition-scan EDA summaries written to CSV from the shared dataset context, including missingness, categorical cardinality, target summary, and feature-type counts.
 - `src/tabular_shenanigans/feature_recipes/*`: deterministic experiment-scoped feature transforms, including the `identity` default and tracked competition-specific recipe modules.
+- `src/tabular_shenanigans/model_evaluation.py`: shared prepared training-context construction, reusable CV scoring and prediction generation, resolved feature-schema reuse, and model evaluation contracts consumed by both `train` and `tune`.
 - `src/tabular_shenanigans/models.py`: model-recipe registry, candidate `model_family + preprocessor` resolution, tunable-model search spaces, optional booster loading, and estimator construction for supported presets.
-- `src/tabular_shenanigans/preprocess.py`: feature frame preparation, column typing, scheme-specific preprocessing pipelines, and native-frame support for CatBoost.
+- `src/tabular_shenanigans/preprocess.py`: feature frame preparation, resolved feature-schema inference, scheme-specific preprocessing pipelines, and native-frame support for CatBoost.
 - `src/tabular_shenanigans/cv.py`: task-aware CV splitters and metric scoring helpers.
 - `src/tabular_shenanigans/blend.py`: blend-candidate validation, base-candidate artifact compatibility checks, weighted prediction combination, blend-specific manifest fields, and `blend_summary.csv` writing on top of the shared candidate-artifact layer.
-- `src/tabular_shenanigans/train.py`: config-selected training from the shared dataset context, frozen-fold loading, model-specific manifest fields, and optimization-aware training orchestration on top of the shared candidate-artifact layer.
-- `src/tabular_shenanigans/tune.py`: internal Optuna helper used by `train` when candidate optimization is enabled.
+- `src/tabular_shenanigans/train.py`: config-selected model training orchestration, candidate artifact writing, model-specific manifest fields, and optimization-aware workflow control on top of the shared candidate-artifact and model-evaluation layers.
+- `src/tabular_shenanigans/tune.py`: internal Optuna orchestration used by `train` when candidate optimization is enabled, consuming the shared prepared training context and shared evaluation functions.
 - `src/tabular_shenanigans/submit.py`: submission schema validation, candidate selection by `candidate_id`, submission message creation, Kaggle submission, and submission ledger updates using the shared candidate manifest loader.
 - `src/tabular_shenanigans/tracking.py`: optional MLflow run creation, tag/metric logging, config snapshot logging, and post-stage artifact publishing using the shared candidate manifest loader.
 
@@ -126,7 +127,7 @@ The current runtime resolves `experiment.candidate.feature_recipe_id` to one tra
 The current runtime resolves `experiment.candidate.model_family + experiment.candidate.preprocessor` to one internal canonical `model_id` for model candidates.
 Blend candidates consume compatible existing candidate artifacts and materialize a synthetic `blend_weighted_average` artifact model ID.
 optimization requires at least one stopping condition: `experiment.candidate.optimization.n_trials` or `experiment.candidate.optimization.timeout_seconds`.
-enabled optimization is consumed by `train` and applies to model candidates only.
+enabled optimization is consumed by `train`, applies to model candidates only, and reuses one prepared training context for Optuna scoring plus the final best-trial retrain within the same invocation.
 Frequency encoding is fold-local and maps unseen categorical values to `0.0`.
 LightGBM, CatBoost, and XGBoost require the optional booster dependencies installed via `uv sync --extra boosters`.
 MLflow tracking requires the optional tracking dependencies installed via `uv sync --extra tracking`.
@@ -207,7 +208,7 @@ Manual verification steps for each target:
 - feature recipes must preserve row counts and row order and must produce identical train/test feature columns
 - training must write exactly one candidate artifact directory keyed by `candidate_id`
 - rerunning an existing `candidate_id` must fail instead of mutating an existing artifact directory
-- enabled optimization is part of `train`, applies to model candidates only, and retrains exactly one tuned candidate into the normal candidate artifact layout
+- enabled optimization is part of `train`, applies to model candidates only, reuses one prepared training context for scoring and retraining, and retrains exactly one tuned candidate into the normal candidate artifact layout
 - enabled optimization must have at least one stopping condition: `experiment.candidate.optimization.n_trials` or `experiment.candidate.optimization.timeout_seconds`
 - `submit` must resolve one candidate by `candidate_id`, defaulting to `config.candidate_id`
 - `native_catboost` must preserve categorical feature positions through preprocessing so CatBoost can receive `cat_features`
