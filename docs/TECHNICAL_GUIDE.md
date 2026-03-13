@@ -3,24 +3,25 @@
 Technical reference for the current repository design. Use GitHub issues and pull requests for active implementation tracking; this document describes the runtime contracts as they exist now.
 
 ## System Flow
-1. Load and validate the repository-root `config.yaml`.
-2. Normalize and validate `competition.task_type`, `competition.primary_metric`, and the candidate contract.
-3. Resolve the MLflow tracking URI from `experiment.tracking.tracking_uri`.
-4. Download the competition zip into `data/<competition_slug>/` when it is missing.
-5. Load one shared dataset context from `train.csv`, `test.csv`, and `sample_submission.csv`.
-6. Resolve `id_column` and `label_column`, then prepare raw feature frames with the resolved ID column excluded from modeled features.
-7. For model candidates, apply the selected deterministic feature recipe.
-8. Build the competition fold assignments in memory from the configured CV settings.
-9. For model candidates, fit the selected preprocessing + model combination fold-locally and produce OOF/test predictions.
-10. For blend candidates, download compatible base candidates from the competition MLflow experiment, validate compatibility, and combine their saved predictions without retraining the base candidates.
-11. Stage the candidate bundle into a temp directory:
+1. Enter the bootstrap entrypoint before importing runtime modules that depend on `pandas` or `sklearn`.
+2. Load and validate the repository-root `config.yaml`.
+3. Normalize and validate `competition.task_type`, `competition.primary_metric`, and the candidate contract.
+4. Resolve the MLflow tracking URI from `experiment.tracking.tracking_uri`.
+5. Download the competition zip into `data/<competition_slug>/` when it is missing.
+6. Load one shared dataset context from `train.csv`, `test.csv`, and `sample_submission.csv`.
+7. Resolve `id_column` and `label_column`, then prepare raw feature frames with the resolved ID column excluded from modeled features.
+8. For model candidates, apply the selected deterministic feature recipe.
+9. Build the competition fold assignments in memory from the configured CV settings.
+10. For model candidates, fit the selected preprocessing + model combination fold-locally and produce OOF/test predictions.
+11. For blend candidates, download compatible base candidates from the competition MLflow experiment, validate compatibility, and combine their saved predictions without retraining the base candidates.
+12. Stage the candidate bundle into a temp directory:
     - `config/runtime_config.json`
     - `context/competition.json`
     - `context/folds.csv`
     - `candidate/*`
-12. Create one MLflow run for the candidate and upload the staged bundle.
-13. For real Kaggle submissions, download the candidate from MLflow, validate `test_predictions.csv` against `sample_submission.csv`, submit `submission.csv`, and append submission history artifacts back onto that same candidate run.
-14. For submission refresh, scan Kaggle submissions once, match `submit=<submission_event_id>` descriptions, and update candidate-run submission history plus scoreboard metrics in place.
+13. Create one MLflow run for the candidate and upload the staged bundle.
+14. For real Kaggle submissions, download the candidate from MLflow, validate `test_predictions.csv` against `sample_submission.csv`, submit `submission.csv`, and append submission history artifacts back onto that same candidate run.
+15. For submission refresh, scan Kaggle submissions once, match `submit=<submission_event_id>` descriptions, and update candidate-run submission history plus scoreboard metrics in place.
 
 ## Canonical Storage Model
 - MLflow is the canonical experiment store.
@@ -120,12 +121,15 @@ Submission artifacts on the same candidate run:
 - `uv run python main.py refresh-submissions`
 
 Stage notes:
+- `main.py` keeps the existing user-facing command but now delegates into a bootstrap module before the runtime imports `pandas`- or `sklearn`-dependent modules.
 - `prepare` no longer persists canonical competition metadata. It only prepares the context in memory and writes EDA reports.
 - `train` is the only stage that creates candidate runs.
 - `submit` and `refresh-submissions` mutate existing candidate runs by appending submission history and score metrics.
 
 ## Module Responsibilities
-- [main.py](/Users/hs/dev/TabularShenanigans/main.py): CLI entrypoint and linear stage dispatch.
+- [main.py](/Users/hs/dev/TabularShenanigans/main.py): thin repository-root wrapper that inserts `src/` on `sys.path` and forwards into the bootstrap entrypoint.
+- [bootstrap.py](/Users/hs/dev/TabularShenanigans/src/tabular_shenanigans/bootstrap.py): stdlib-only bootstrap hook point that runs before runtime modules import `pandas` or `sklearn`.
+- [cli.py](/Users/hs/dev/TabularShenanigans/src/tabular_shenanigans/cli.py): CLI parser and linear stage dispatch after bootstrap completes.
 - [competition.py](/Users/hs/dev/TabularShenanigans/src/tabular_shenanigans/competition.py): in-memory competition preparation, fold assignment materialization, and prepared-context construction.
 - [config.py](/Users/hs/dev/TabularShenanigans/src/tabular_shenanigans/config.py): nested config validation, metric normalization, candidate-id derivation, and resolved model lookup.
 - [candidate_artifacts.py](/Users/hs/dev/TabularShenanigans/src/tabular_shenanigans/candidate_artifacts.py): shared manifest/config helpers and temp-bundle file writers for candidate/context artifacts.
