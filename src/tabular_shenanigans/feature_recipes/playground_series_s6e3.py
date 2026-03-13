@@ -198,6 +198,18 @@ def build_s6e3_v2_features(
     return _transform_v2_frame(x_train_raw), _transform_v2_frame(x_test_raw)
 
 
+def build_s6e3_v3_features(
+    x_train_raw: pd.DataFrame,
+    x_test_raw: pd.DataFrame,
+) -> tuple[pd.DataFrame, pd.DataFrame]:
+    return _build_s6e3_v2_ablation_features(
+        recipe_id="fr3",
+        dropped_columns=FR2_CONTRACT_PROFILE_COLUMNS,
+        x_train_raw=x_train_raw,
+        x_test_raw=x_test_raw,
+    )
+
+
 def _build_s6e3_v2_ablation_features(
     recipe_id: str,
     dropped_columns: list[str],
@@ -262,6 +274,16 @@ S6E3_V2_FEATURE_RECIPE = FeatureRecipeDefinition(
         "service-count, and charge-consistency features."
     ),
     transform=build_s6e3_v2_features,
+)
+
+S6E3_V3_FEATURE_RECIPE = FeatureRecipeDefinition(
+    recipe_id="fr3",
+    recipe_name="TelcoChurnFeatureSetV3",
+    recipe_description=(
+        "Reduced Playground Series S6E3 engineered feature set that keeps the charge-consistency "
+        "and service-count features from fr2 while dropping the contract/payment and profile-cross features."
+    ),
+    transform=build_s6e3_v3_features,
 )
 
 S6E3_V2_ABLATE_CHARGE_CONSISTENCY_FEATURE_RECIPE = _make_s6e3_v2_ablation_recipe(
