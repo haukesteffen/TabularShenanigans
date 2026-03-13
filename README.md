@@ -48,9 +48,10 @@ Config-driven Python workflows for semi-automated participation in tabular Kaggl
 2. Ensure an MLflow tracking server is available and note its tracking URI.
 3. Install dependencies with `uv sync`.
 4. If you want LightGBM, CatBoost, or XGBoost model recipes, install the optional booster dependencies with `uv sync --extra boosters`.
-5. Copy a tracked example config to repository-root `config.yaml`.
-6. Set `experiment.tracking.tracking_uri` in `config.yaml`.
-7. Run `uv run python main.py`.
+5. If you want RAPIDS-backed GPU execution on a Linux `x86_64` CUDA 12 host, install the GPU extra with `uv sync --extra boosters --extra gpu`.
+6. Copy a tracked example config to repository-root `config.yaml`.
+7. Set `experiment.tracking.tracking_uri` in `config.yaml`.
+8. Run `uv run python main.py`.
 
 ```bash
 cp config.binary.example.yaml config.yaml
@@ -63,6 +64,12 @@ cp config.regression.example.yaml config.yaml
 `main.py` is a thin wrapper around a bootstrap module. The bootstrap runs before the
 runtime imports application modules that depend on `pandas` or `sklearn`, so GPU
 setups can install RAPIDS acceleration hooks before the training stack loads.
+
+Supported environment matrix:
+- CPU and local development: `uv sync` or `uv sync --extra boosters`
+- Linux GPU hosts: `uv sync --extra boosters --extra gpu`
+- RAPIDS GPU support currently targets Python 3.13 on Linux `x86_64` CUDA 12 hosts with NVIDIA-visible devices
+- The repository lockfile is now the source of truth for the RAPIDS-compatible `numpy` / `pandas` range, so `uv run python main.py ...` is safe after syncing the correct extras
 
 ## Stage Commands
 `uv run python main.py` runs the default pipeline: `fetch -> prepare -> train -> submit`.
@@ -127,6 +134,7 @@ Required top-level sections:
   - `cpu`: force CPU execution
   - `gpu`: require GPU execution and fail fast when no GPU runtime or RAPIDS hook path is available
   - when GPU execution is active, `xgboost`, `lightgbm`, and `catboost` also switch to their GPU-specific estimator params automatically
+  - the RAPIDS-backed GPU path currently expects the project environment to be installed with `uv sync --extra boosters --extra gpu` on a Python 3.13 Linux `x86_64` CUDA 12 host
 
 `experiment.candidate` keys:
 - shared:

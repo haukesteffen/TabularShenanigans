@@ -133,6 +133,7 @@ Submission artifacts on the same candidate run:
 Stage notes:
 - `main.py` keeps the existing user-facing command but now delegates into a bootstrap module before the runtime imports `pandas`- or `sklearn`-dependent modules.
 - bootstrap resolves `experiment.runtime.compute_target` for the current machine and installs RAPIDS hooks before the CLI imports the training stack when GPU execution is selected.
+- the GPU runtime contract assumes the environment was synced with `uv sync --extra boosters --extra gpu`; plain `uv run python main.py ...` is safe after that because the lockfile now pins the RAPIDS-compatible shared dependency range
 - `prepare` no longer persists canonical competition metadata. It only prepares the context in memory and writes EDA reports.
 - `train` is the only stage that creates candidate runs.
 - `submit` and `refresh-submissions` mutate existing candidate runs by appending submission history and score metrics.
@@ -195,6 +196,14 @@ Required top-level keys:
   - `auto`: use GPU only when the machine exposes NVIDIA devices and RAPIDS hooks are available
   - `cpu`: stay on CPU
   - `gpu`: require the GPU + RAPIDS path and fail fast otherwise
+
+GPU dependency contract:
+- base project dependencies pin `numpy` and `pandas` into the RAPIDS-compatible range used by both CPU and GPU installs
+- optional GPU dependencies live behind the `gpu` extra
+- the project currently supports Python `>=3.13,<3.14`
+- the `gpu` extra currently targets Python 3.13 Linux `x86_64` CUDA 12 hosts via NVIDIA's Python package index
+- expected install command on GPU hosts: `uv sync --extra boosters --extra gpu`
+- CPU and macOS installs should continue using `uv sync` or `uv sync --extra boosters`
 
 Model candidate contract:
 - `candidate_type: model`
