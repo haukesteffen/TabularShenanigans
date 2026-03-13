@@ -4,7 +4,7 @@ Technical reference for the current repository design. Use GitHub issues and pul
 
 ## System Flow
 1. Enter the bootstrap entrypoint before importing runtime modules that depend on `pandas` or `sklearn`.
-2. Read `experiment.runtime.compute_target` from repository-root `config.yaml`, resolve the requested execution mode for the current machine, and install RAPIDS hooks before the CLI imports the training stack when GPU execution is selected.
+2. Read `experiment.runtime.compute_target` from repository-root `config.yaml`, resolve the requested execution mode for the current machine, install RAPIDS hooks before the CLI imports the training stack when GPU execution is selected, and route GPU-capable booster families onto their GPU parameter paths.
 3. Load and validate the repository-root `config.yaml`.
 4. Normalize and validate `competition.task_type`, `competition.primary_metric`, and the candidate contract.
 5. Resolve the MLflow tracking URI from `experiment.tracking.tracking_uri`.
@@ -230,6 +230,12 @@ Sparse onehot runtime contract:
 - dense array output remains in place for `hist_gradient_boosting`
 - `numeric_preprocessor: kbins` follows the same sparse-versus-dense output contract when composed with `onehot`
 
+Booster GPU routing contract:
+- when runtime execution resolves to GPU, `xgboost` adds `device="cuda"`
+- when runtime execution resolves to GPU, `lightgbm` adds `device_type="cuda"`
+- when runtime execution resolves to GPU, `catboost` adds `task_type="GPU"`
+- user `model_params` still override repo defaults
+
 ## Candidate Manifest Contract
 Model candidate manifests currently record:
 - identity: `candidate_id`, `candidate_type`, `competition_slug`, `task_type`, `primary_metric`
@@ -270,6 +276,7 @@ Validation rules:
 - RAPIDS acceleration is only expected on Linux GPU runtimes.
 - `auto` can fall back to CPU for either missing GPU hardware or unavailable RAPIDS hook modules.
 - once RAPIDS hook installation starts, rollback is not guaranteed; install failures are treated as hard errors.
+- LightGBM GPU routing still requires a CUDA-enabled LightGBM runtime build in the target environment.
 
 Real Kaggle submissions:
 - generate one `submission_event_id`

@@ -126,6 +126,7 @@ Required top-level sections:
   - `auto`: prefer GPU only when the runtime exposes visible NVIDIA devices and RAPIDS hooks are available, otherwise fall back to CPU
   - `cpu`: force CPU execution
   - `gpu`: require GPU execution and fail fast when no GPU runtime or RAPIDS hook path is available
+  - when GPU execution is active, `xgboost`, `lightgbm`, and `catboost` also switch to their GPU-specific estimator params automatically
 
 `experiment.candidate` keys:
 - shared:
@@ -239,6 +240,7 @@ Suggested checks:
 - Kaggle authentication is expected to be preconfigured.
 - Competition downloads still live under `data/<competition_slug>/`.
 - RAPIDS acceleration is a Linux GPU runtime concern. Native macOS runs stay on CPU.
+- LightGBM GPU routing still depends on a CUDA-enabled LightGBM runtime build in the target image or host environment.
 - EDA reports still live under `reports/<competition_slug>/`.
 - Local temp directories are used during a running command, but candidate state is not kept there after the command finishes.
 - Candidate lookup is keyed by derived `candidate_id` inside the competition MLflow experiment. Reusing the same candidate spec without deleting the existing run is a hard error.
