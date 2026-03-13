@@ -67,6 +67,44 @@ FR2_CONTRACT_PROFILE_COLUMNS = [
     *FR2_CONTRACT_PAYMENT_COLUMNS,
     *FR2_BUCKET_PROFILE_COLUMNS,
 ]
+FR3_DEMOGRAPHICS_COLUMNS = [
+    "SeniorCitizen",
+    "Partner",
+    "Dependents",
+]
+FR3_TENURE_CHARGES_COLUMNS = [
+    "tenure",
+    "MonthlyCharges",
+    "TotalCharges",
+    "charges_per_month",
+    "charges_gap",
+    "charges_per_tenure",
+    "total_vs_expected",
+    "tenure_monthlycharges_interaction",
+    "tenure_service_interaction",
+]
+FR3_SERVICE_COLUMNS = [
+    "PhoneService",
+    "MultipleLines",
+    "InternetService",
+    "OnlineSecurity",
+    "OnlineBackup",
+    "DeviceProtection",
+    "TechSupport",
+    "StreamingTV",
+    "StreamingMovies",
+    "has_internet_service",
+    "service_addon_count",
+    "streaming_count",
+    "support_count",
+    "service_count",
+    "tenure_service_interaction",
+]
+FR3_BILLING_CONTRACT_COLUMNS = [
+    "Contract",
+    "PaperlessBilling",
+    "PaymentMethod",
+]
 
 
 def _require_columns(
@@ -160,6 +198,18 @@ def _transform_v2_ablation_frame(
     return transformed.drop(columns=dropped_columns)
 
 
+def _transform_v3_frame(frame: pd.DataFrame) -> pd.DataFrame:
+    return _transform_v2_ablation_frame(frame, dropped_columns=FR2_CONTRACT_PROFILE_COLUMNS)
+
+
+def _transform_v3_ablation_frame(
+    frame: pd.DataFrame,
+    dropped_columns: list[str],
+) -> pd.DataFrame:
+    transformed = _transform_v3_frame(frame)
+    return transformed.drop(columns=dropped_columns)
+
+
 def build_s6e3_v1_features(
     x_train_raw: pd.DataFrame,
     x_test_raw: pd.DataFrame,
@@ -202,12 +252,19 @@ def build_s6e3_v3_features(
     x_train_raw: pd.DataFrame,
     x_test_raw: pd.DataFrame,
 ) -> tuple[pd.DataFrame, pd.DataFrame]:
-    return _build_s6e3_v2_ablation_features(
+    _require_columns(
+        x_train_raw,
+        dataset_name="train features",
         recipe_id="fr3",
-        dropped_columns=FR2_CONTRACT_PROFILE_COLUMNS,
-        x_train_raw=x_train_raw,
-        x_test_raw=x_test_raw,
+        required_columns=FR2_REQUIRED_COLUMNS,
     )
+    _require_columns(
+        x_test_raw,
+        dataset_name="test features",
+        recipe_id="fr3",
+        required_columns=FR2_REQUIRED_COLUMNS,
+    )
+    return _transform_v3_frame(x_train_raw), _transform_v3_frame(x_test_raw)
 
 
 def _build_s6e3_v2_ablation_features(
@@ -259,6 +316,41 @@ def _make_s6e3_v2_ablation_recipe(
     )
 
 
+def _make_s6e3_v3_ablation_recipe(
+    recipe_id: str,
+    recipe_name: str,
+    recipe_description: str,
+    dropped_columns: list[str],
+) -> FeatureRecipeDefinition:
+    def _transform(
+        x_train_raw: pd.DataFrame,
+        x_test_raw: pd.DataFrame,
+    ) -> tuple[pd.DataFrame, pd.DataFrame]:
+        _require_columns(
+            x_train_raw,
+            dataset_name="train features",
+            recipe_id=recipe_id,
+            required_columns=FR2_REQUIRED_COLUMNS,
+        )
+        _require_columns(
+            x_test_raw,
+            dataset_name="test features",
+            recipe_id=recipe_id,
+            required_columns=FR2_REQUIRED_COLUMNS,
+        )
+        return (
+            _transform_v3_ablation_frame(x_train_raw, dropped_columns=dropped_columns),
+            _transform_v3_ablation_frame(x_test_raw, dropped_columns=dropped_columns),
+        )
+
+    return FeatureRecipeDefinition(
+        recipe_id=recipe_id,
+        recipe_name=recipe_name,
+        recipe_description=recipe_description,
+        transform=_transform,
+    )
+
+
 S6E3_V1_FEATURE_RECIPE = FeatureRecipeDefinition(
     recipe_id="fr1",
     recipe_name="TelcoChurnFeatureSetV1",
@@ -284,6 +376,34 @@ S6E3_V3_FEATURE_RECIPE = FeatureRecipeDefinition(
         "and service-count features from fr2 while dropping the contract/payment and profile-cross features."
     ),
     transform=build_s6e3_v3_features,
+)
+
+S6E3_V3_ABLATE_DEMOGRAPHICS_FEATURE_RECIPE = _make_s6e3_v3_ablation_recipe(
+    recipe_id="fr3_ablate_demographics",
+    recipe_name="TelcoChurnFeatureSetV3AblateDemographics",
+    recipe_description="fr3 ablation variant with the demographics signal family removed.",
+    dropped_columns=FR3_DEMOGRAPHICS_COLUMNS,
+)
+
+S6E3_V3_ABLATE_TENURE_CHARGES_FEATURE_RECIPE = _make_s6e3_v3_ablation_recipe(
+    recipe_id="fr3_ablate_tenure_charges",
+    recipe_name="TelcoChurnFeatureSetV3AblateTenureCharges",
+    recipe_description="fr3 ablation variant with the tenure and charges signal family removed.",
+    dropped_columns=FR3_TENURE_CHARGES_COLUMNS,
+)
+
+S6E3_V3_ABLATE_SERVICES_FEATURE_RECIPE = _make_s6e3_v3_ablation_recipe(
+    recipe_id="fr3_ablate_services",
+    recipe_name="TelcoChurnFeatureSetV3AblateServices",
+    recipe_description="fr3 ablation variant with the services signal family removed.",
+    dropped_columns=FR3_SERVICE_COLUMNS,
+)
+
+S6E3_V3_ABLATE_BILLING_CONTRACT_FEATURE_RECIPE = _make_s6e3_v3_ablation_recipe(
+    recipe_id="fr3_ablate_billing_contract",
+    recipe_name="TelcoChurnFeatureSetV3AblateBillingContract",
+    recipe_description="fr3 ablation variant with the billing/contract raw signal family removed.",
+    dropped_columns=FR3_BILLING_CONTRACT_COLUMNS,
 )
 
 S6E3_V2_ABLATE_CHARGE_CONSISTENCY_FEATURE_RECIPE = _make_s6e3_v2_ablation_recipe(
@@ -327,4 +447,8 @@ S6E3_ABLATION_FEATURE_RECIPES = [
     S6E3_V2_ABLATE_CONTRACT_PAYMENT_FEATURE_RECIPE,
     S6E3_V2_ABLATE_BUCKET_PROFILE_FEATURE_RECIPE,
     S6E3_V2_ABLATE_CONTRACT_PROFILE_FEATURE_RECIPE,
+    S6E3_V3_ABLATE_DEMOGRAPHICS_FEATURE_RECIPE,
+    S6E3_V3_ABLATE_TENURE_CHARGES_FEATURE_RECIPE,
+    S6E3_V3_ABLATE_SERVICES_FEATURE_RECIPE,
+    S6E3_V3_ABLATE_BILLING_CONTRACT_FEATURE_RECIPE,
 ]
