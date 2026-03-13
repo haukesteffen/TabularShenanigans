@@ -243,6 +243,7 @@ Booster GPU routing contract:
 - when runtime execution resolves to GPU, `xgboost` adds `device="cuda"`
 - when runtime execution resolves to GPU, `lightgbm` adds `device_type="cuda"`
 - when runtime execution resolves to GPU, `catboost` adds `task_type="GPU"`
+- when runtime execution resolves to GPU, `logistic_regression` continues to use the sklearn estimator surface but runs through the RAPIDS `cuml.accel` hook path
 - user `model_params` still override repo defaults
 
 XGBoost GPU-native input contract:
@@ -254,6 +255,14 @@ XGBoost GPU-native input contract:
 - sparse CSR preprocessing output is rejected before training for the XGBoost GPU-native path
   - this currently covers `categorical_preprocessor: onehot` and related sparse `kbins` compositions
   - rationale: XGBoost does not support `cupyx` CSR inputs in this runtime
+
+GPU logistic regression contract:
+- when runtime execution resolves to GPU for `logistic_regression`, the builder wraps the sklearn estimator in the existing binary-label encoding adapter before fit
+- this keeps original competition labels in `model.classes_` while ensuring cuML sees numeric binary targets during fit
+- `categorical_preprocessor: frequency` is currently the only supported GPU logistic categorical path
+- unsupported preprocessing combinations are rejected before training for the GPU logistic path
+  - this currently covers `categorical_preprocessor: ordinal`, `categorical_preprocessor: onehot`, and related sparse `kbins` compositions
+  - rationale: the RAPIDS-hooked sklearn preprocessing stack is not stable yet for these branches in the current runtime
 
 ## Candidate Manifest Contract
 Model candidate manifests currently record:

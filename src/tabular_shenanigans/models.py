@@ -139,11 +139,14 @@ def _build_hist_gradient_boosting_regressor(
 def _build_logreg(
     random_state: int,
     parameter_overrides: dict[str, object] | None = None,
-) -> tuple[LogisticRegression, dict[str, object]]:
+) -> tuple[object, dict[str, object]]:
     del random_state
     _validate_logreg_parameter_overrides(parameter_overrides)
     params = _merge_model_params({"solver": "saga", "max_iter": 1000}, parameter_overrides)
-    return LogisticRegression(**params), params
+    estimator = LogisticRegression(**params)
+    if get_runtime_execution_context().resolved_compute_target == "gpu":
+        return BinaryLabelEncodingClassifier(estimator), params
+    return estimator, params
 
 
 def _build_random_forest_classifier(
