@@ -21,8 +21,6 @@ from tabular_shenanigans.preprocess import (
     prepare_feature_frames,
     resolve_feature_schema,
 )
-
-
 @dataclass(frozen=True)
 class CvSummary:
     metric_name: str
@@ -95,6 +93,23 @@ class PreparedTrainingContext:
     categorical_preprocessor: str
     preprocessing_scheme_id: str
     matrix_output_kind: str
+    uses_xgboost_gpu_native_inputs: bool
+
+
+def _validate_gpu_native_matrix_output(
+    uses_xgboost_gpu_native_inputs: bool,
+    matrix_output_kind: str,
+) -> None:
+    if not uses_xgboost_gpu_native_inputs:
+        return
+    if matrix_output_kind != "sparse_csr":
+        return
+    raise ValueError(
+        "XGBoost GPU execution currently requires dense fold-local preprocessing output in this runtime. "
+        "The sparse CSR path produced by categorical_preprocessor='onehot' and related kbins compositions "
+        "cannot be promoted to a supported GPU-native XGBoost input because cupyx CSR is not supported yet. "
+        "Use categorical_preprocessor='ordinal' or 'frequency', or force CPU execution."
+    )
 
 
 def build_prepared_training_context(
@@ -159,6 +174,14 @@ def build_prepared_training_context(
         model_id=config.resolved_model_registry_key,
         categorical_preprocessor_id=candidate.categorical_preprocessor,
     )
+    uses_xgboost_gpu_native_inputs = (
+        config.resolved_model_registry_key == "xgboost"
+        and config.runtime_execution_context.resolved_compute_target == "gpu"
+    )
+    _validate_gpu_native_matrix_output(
+        uses_xgboost_gpu_native_inputs=uses_xgboost_gpu_native_inputs,
+        matrix_output_kind=matrix_output_kind,
+    )
     return PreparedTrainingContext(
         id_column=id_column,
         label_column=label_column,
@@ -177,6 +200,7 @@ def build_prepared_training_context(
         categorical_preprocessor=candidate.categorical_preprocessor,
         preprocessing_scheme_id=candidate.preprocessing_scheme_id,
         matrix_output_kind=matrix_output_kind,
+        uses_xgboost_gpu_native_inputs=uses_xgboost_gpu_native_inputs,
     )
 
 
@@ -187,6 +211,58 @@ def _coerce_processed_matrix(values: object, matrix_output_kind: str) -> object:
         return values
     if matrix_output_kind == "sparse_csr":
         return sparse.csr_matrix(values)
+    return np.asarray(values)
+
+
+def _coerce_xgboost_gpu_input(values: object, matrix_output_kind: str) -> object:
+    try:
+        import cudf
+    except ImportError as exc:
+        raise RuntimeError(
+            "XGBoost GPU-native inputs require the optional GPU dependencies. "
+            "Install them with `uv sync --extra boosters --extra gpu`."
+        ) from exc
+
+    try:
+        import cupy as cp
+    except ImportError as exc:
+        raise RuntimeError(
+            "XGBoost GPU-native inputs require the optional GPU dependencies. "
+            "Install them with `uv sync --extra boosters --extra gpu`."
+        ) from exc
+
+    if matrix_output_kind == "sparse_csr":
+        raise ValueError(
+            "XGBoost GPU execution currently does not support sparse CSR preprocessing output in this runtime."
+        )
+
+    if type(values).__module__.startswith("cudf.") or type(values).__module__.startswith("cupy."):
+        return values
+
+    if isinstance(values, pd.DataFrame):
+        return cudf.from_pandas(values)
+
+    if hasattr(values, "to_pandas"):
+        return cudf.from_pandas(values.to_pandas())
+
+    return cp.asarray(values)
+
+
+def _coerce_prediction_values(values: object) -> np.ndarray:
+    if isinstance(values, np.ndarray):
+        return values
+
+    if type(values).__module__.startswith("cupy."):
+        import cupy as cp
+
+        return cp.asnumpy(values)
+
+    if hasattr(values, "to_pandas"):
+        return np.asarray(values.to_pandas())
+
+    if hasattr(values, "to_numpy"):
+        return np.asarray(values.to_numpy())
+
     return np.asarray(values)
 
 
@@ -208,6 +284,7 @@ def _run_cv_evaluation(
     estimator_name = model_definition.model_name
     preprocessing_scheme_id = training_context.preprocessing_scheme_id
     matrix_output_kind = training_context.matrix_output_kind
+    uses_xgboost_gpu_native_inputs = training_context.uses_xgboost_gpu_native_inputs
 
     oof_predictions = (
         np.zeros(training_context.x_train_features.shape[0], dtype=float)
@@ -243,6 +320,13 @@ def _run_cv_evaluation(
         if x_test_processed is not None:
             x_test_processed = _coerce_processed_matrix(x_test_processed, matrix_output_kind)
 
+        if uses_xgboost_gpu_native_inputs:
+            # Convert fold-local preprocessing outputs to GPU-native inputs before XGBoost fit/predict.
+            x_fold_train_processed = _coerce_xgboost_gpu_input(x_fold_train_processed, matrix_output_kind)
+            x_fold_valid_processed = _coerce_xgboost_gpu_input(x_fold_valid_processed, matrix_output_kind)
+            if x_test_processed is not None:
+                x_test_processed = _coerce_xgboost_gpu_input(x_test_processed, matrix_output_kind)
+
         _, model, _ = build_model(
             task_type,
             resolved_model_registry_key,
@@ -271,6 +355,10 @@ def _run_cv_evaluation(
             fold_test_predictions = None
             if x_test_processed is not None:
                 fold_test_predictions = model.predict(x_test_processed)
+
+        fold_valid_predictions = _coerce_prediction_values(fold_valid_predictions)
+        if fold_test_predictions is not None:
+            fold_test_predictions = _coerce_prediction_values(fold_test_predictions)
 
         fold_score = score_predictions(
             task_type=task_type,

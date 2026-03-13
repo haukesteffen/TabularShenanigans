@@ -135,6 +135,9 @@ Required top-level sections:
   - `gpu`: require GPU execution and fail fast when no GPU runtime or RAPIDS hook path is available
   - when GPU execution is active, `xgboost`, `lightgbm`, and `catboost` also switch to their GPU-specific estimator params automatically
   - the RAPIDS-backed GPU path currently expects the project environment to be installed with `uv sync --extra boosters --extra gpu` on a Python 3.13 Linux `x86_64` CUDA 12 host
+  - when GPU execution is active for `xgboost`, the runtime keeps fold-local preprocessing semantics but converts dense fold outputs to `cupy` / `cudf` before XGBoost fit and predict
+  - the XGBoost GPU-native input path currently supports dense preprocessing outputs such as `categorical_preprocessor: ordinal` and `categorical_preprocessor: frequency`
+  - the XGBoost GPU-native input path currently rejects sparse CSR preprocessing output, including `categorical_preprocessor: onehot` and related sparse `kbins` compositions; use a dense preprocessing option or force CPU execution
 
 `experiment.candidate` keys:
 - shared:
@@ -158,6 +161,7 @@ Required top-level sections:
     - sparse CSR output: `ridge`, `elasticnet`, `logistic_regression`, `random_forest`, `extra_trees`, `lightgbm`, `catboost`, `xgboost`
     - dense array output: `hist_gradient_boosting`
     - `numeric_preprocessor: kbins` follows the same sparse-versus-dense decision when combined with `onehot`
+    - when `model_family: xgboost` and runtime resolves to GPU, the sparse CSR branch is rejected before training because XGBoost does not support `cupyx` CSR inputs yet in this runtime
 - blend candidate:
   - `base_candidate_ids`: at least two existing compatible candidate IDs from the same competition experiment
   - optional `weights`
