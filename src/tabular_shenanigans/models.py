@@ -15,6 +15,8 @@ from sklearn.ensemble import (
 )
 from sklearn.linear_model import ElasticNet, LogisticRegression, Ridge
 
+from tabular_shenanigans.runtime_execution import get_runtime_execution_context
+
 ModelBuilder = Callable[[int, dict[str, object] | None], tuple[object, dict[str, object]]]
 FitKwargsBuilder = Callable[[object, list[str], list[str]], dict[str, object]]
 TuningSpaceBuilder = Callable[[object], dict[str, object]]
@@ -71,6 +73,20 @@ def _merge_model_params(
     if parameter_overrides:
         merged_params.update(parameter_overrides)
     return merged_params
+
+
+def _resolve_booster_runtime_defaults(model_id: str) -> dict[str, object]:
+    runtime_execution_context = get_runtime_execution_context()
+    if runtime_execution_context.resolved_compute_target != "gpu":
+        return {}
+
+    if model_id == "xgboost":
+        return {"device": "cuda"}
+    if model_id == "lightgbm":
+        return {"device_type": "cuda"}
+    if model_id == "catboost":
+        return {"task_type": "GPU"}
+    return {}
 
 
 def _build_ridge(random_state: int, parameter_overrides: dict[str, object] | None = None) -> tuple[Ridge, dict[str, object]]:
@@ -174,18 +190,17 @@ def _build_lightgbm_regressor(
             "Install them with `uv sync --extra boosters`."
         ) from exc
 
-    params = _merge_model_params(
-        {
-            "colsample_bytree": 0.8,
-            "learning_rate": 0.05,
-            "n_estimators": 500,
-            "n_jobs": -1,
-            "random_state": random_state,
-            "subsample": 0.8,
-            "verbosity": -1,
-        },
-        parameter_overrides,
-    )
+    params = {
+        "colsample_bytree": 0.8,
+        "learning_rate": 0.05,
+        "n_estimators": 500,
+        "n_jobs": -1,
+        "random_state": random_state,
+        "subsample": 0.8,
+        "verbosity": -1,
+        **_resolve_booster_runtime_defaults("lightgbm"),
+    }
+    params = _merge_model_params(params, parameter_overrides)
     return LGBMRegressor(**params), params
 
 
@@ -201,18 +216,17 @@ def _build_lightgbm_classifier(
             "Install them with `uv sync --extra boosters`."
         ) from exc
 
-    params = _merge_model_params(
-        {
-            "colsample_bytree": 0.8,
-            "learning_rate": 0.05,
-            "n_estimators": 500,
-            "n_jobs": -1,
-            "random_state": random_state,
-            "subsample": 0.8,
-            "verbosity": -1,
-        },
-        parameter_overrides,
-    )
+    params = {
+        "colsample_bytree": 0.8,
+        "learning_rate": 0.05,
+        "n_estimators": 500,
+        "n_jobs": -1,
+        "random_state": random_state,
+        "subsample": 0.8,
+        "verbosity": -1,
+        **_resolve_booster_runtime_defaults("lightgbm"),
+    }
+    params = _merge_model_params(params, parameter_overrides)
     return LGBMClassifier(**params), params
 
 
@@ -228,19 +242,18 @@ def _build_catboost_regressor(
             "Install them with `uv sync --extra boosters`."
         ) from exc
 
-    params = _merge_model_params(
-        {
-            "allow_writing_files": False,
-            "depth": 6,
-            "iterations": 500,
-            "learning_rate": 0.05,
-            "loss_function": "RMSE",
-            "random_seed": random_state,
-            "thread_count": -1,
-            "verbose": False,
-        },
-        parameter_overrides,
-    )
+    params = {
+        "allow_writing_files": False,
+        "depth": 6,
+        "iterations": 500,
+        "learning_rate": 0.05,
+        "loss_function": "RMSE",
+        "random_seed": random_state,
+        "thread_count": -1,
+        "verbose": False,
+        **_resolve_booster_runtime_defaults("catboost"),
+    }
+    params = _merge_model_params(params, parameter_overrides)
     return CatBoostRegressor(**params), params
 
 
@@ -256,19 +269,18 @@ def _build_catboost_classifier(
             "Install them with `uv sync --extra boosters`."
         ) from exc
 
-    params = _merge_model_params(
-        {
-            "allow_writing_files": False,
-            "depth": 6,
-            "iterations": 500,
-            "learning_rate": 0.05,
-            "loss_function": "Logloss",
-            "random_seed": random_state,
-            "thread_count": -1,
-            "verbose": False,
-        },
-        parameter_overrides,
-    )
+    params = {
+        "allow_writing_files": False,
+        "depth": 6,
+        "iterations": 500,
+        "learning_rate": 0.05,
+        "loss_function": "Logloss",
+        "random_seed": random_state,
+        "thread_count": -1,
+        "verbose": False,
+        **_resolve_booster_runtime_defaults("catboost"),
+    }
+    params = _merge_model_params(params, parameter_overrides)
     return CatBoostClassifier(**params), params
 
 
@@ -284,21 +296,20 @@ def _build_xgboost_regressor(
             "Install them with `uv sync --extra boosters`."
         ) from exc
 
-    params = _merge_model_params(
-        {
-            "colsample_bytree": 0.8,
-            "eval_metric": "rmse",
-            "learning_rate": 0.05,
-            "max_depth": 6,
-            "n_estimators": 500,
-            "n_jobs": -1,
-            "objective": "reg:squarederror",
-            "random_state": random_state,
-            "subsample": 0.8,
-            "tree_method": "hist",
-        },
-        parameter_overrides,
-    )
+    params = {
+        "colsample_bytree": 0.8,
+        "eval_metric": "rmse",
+        "learning_rate": 0.05,
+        "max_depth": 6,
+        "n_estimators": 500,
+        "n_jobs": -1,
+        "objective": "reg:squarederror",
+        "random_state": random_state,
+        "subsample": 0.8,
+        "tree_method": "hist",
+        **_resolve_booster_runtime_defaults("xgboost"),
+    }
+    params = _merge_model_params(params, parameter_overrides)
     return XGBRegressor(**params), params
 
 
@@ -314,21 +325,20 @@ def _build_xgboost_classifier(
             "Install them with `uv sync --extra boosters`."
         ) from exc
 
-    params = _merge_model_params(
-        {
-            "colsample_bytree": 0.8,
-            "eval_metric": "logloss",
-            "learning_rate": 0.05,
-            "max_depth": 6,
-            "n_estimators": 500,
-            "n_jobs": -1,
-            "objective": "binary:logistic",
-            "random_state": random_state,
-            "subsample": 0.8,
-            "tree_method": "hist",
-        },
-        parameter_overrides,
-    )
+    params = {
+        "colsample_bytree": 0.8,
+        "eval_metric": "logloss",
+        "learning_rate": 0.05,
+        "max_depth": 6,
+        "n_estimators": 500,
+        "n_jobs": -1,
+        "objective": "binary:logistic",
+        "random_state": random_state,
+        "subsample": 0.8,
+        "tree_method": "hist",
+        **_resolve_booster_runtime_defaults("xgboost"),
+    }
+    params = _merge_model_params(params, parameter_overrides)
     return BinaryLabelEncodingClassifier(XGBClassifier(**params)), params
 
 
