@@ -245,6 +245,16 @@ Booster GPU routing contract:
 - when runtime execution resolves to GPU, `catboost` adds `task_type="GPU"`
 - user `model_params` still override repo defaults
 
+XGBoost GPU-native input contract:
+- when runtime execution resolves to GPU for `xgboost`, fold-local preprocessing still happens per fold so CV remains leakage-safe
+- after preprocessing, dense fold outputs are promoted to GPU-native inputs before `fit` and `predict`
+  - pandas DataFrame outputs, such as the `frequency` categorical path, are promoted to `cudf.DataFrame`
+  - dense ndarray outputs, such as the `ordinal` categorical path, are promoted to `cupy.ndarray`
+- prediction outputs are coerced back to NumPy before scoring and artifact assembly
+- sparse CSR preprocessing output is rejected before training for the XGBoost GPU-native path
+  - this currently covers `categorical_preprocessor: onehot` and related sparse `kbins` compositions
+  - rationale: XGBoost does not support `cupyx` CSR inputs in this runtime
+
 ## Candidate Manifest Contract
 Model candidate manifests currently record:
 - identity: `candidate_id`, `candidate_type`, `competition_slug`, `task_type`, `primary_metric`
