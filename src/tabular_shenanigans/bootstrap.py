@@ -13,12 +13,14 @@ def _apply_runtime_bootstrap(argv: list[str] | None) -> None:
 
     from tabular_shenanigans.bootstrap_config import load_bootstrap_runtime_config
     from tabular_shenanigans.runtime_execution import (
+        activate_runtime_acceleration,
         export_runtime_execution_context,
         resolve_runtime_execution,
     )
 
     runtime_config = load_bootstrap_runtime_config()
     runtime_context = resolve_runtime_execution(runtime_config.compute_target)
+    runtime_context = activate_runtime_acceleration(runtime_context)
     export_runtime_execution_context(runtime_context)
 
 
