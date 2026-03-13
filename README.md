@@ -60,6 +60,10 @@ cp config.regression.example.yaml config.yaml
 
 `config.yaml` is the only runtime config source. It is intentionally ignored by Git.
 
+`main.py` is a thin wrapper around a stdlib-only bootstrap module. The bootstrap runs
+before the runtime imports application modules so future accelerator hooks can patch
+imports safely without changing the user-facing command.
+
 ## Stage Commands
 `uv run python main.py` runs the default pipeline: `fetch -> prepare -> train -> submit`.
 
