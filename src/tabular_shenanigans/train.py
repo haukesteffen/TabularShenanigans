@@ -110,6 +110,7 @@ def _build_candidate_manifest(
 ) -> dict[str, object]:
     competition = config.competition
     candidate = config.experiment.candidate
+    runtime_execution_context = config.runtime_execution_context
     manifest = {
         "artifact_type": "candidate",
         "candidate_id": config.resolved_candidate_id,
@@ -146,6 +147,7 @@ def _build_candidate_manifest(
         "test_rows": int(training_context.x_test_features.shape[0]),
         "test_cols": int(training_context.x_test_features.shape[1]),
         "tuning_provenance": tuning_provenance,
+        "runtime_execution": runtime_execution_context.to_dict(),
     }
     manifest.update(
         build_binary_accuracy_artifact_metadata(

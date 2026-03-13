@@ -160,6 +160,7 @@ def ensure_candidate_run_absent(config: AppConfig, candidate_id: str) -> None:
 
 
 def _base_candidate_tags(config: AppConfig, candidate_id: str, candidate_type: str) -> dict[str, object]:
+    runtime_execution_context = config.runtime_execution_context
     tags: dict[str, object] = {
         "run_kind": RUN_KIND_CANDIDATE,
         "tracking_schema_version": TRACKING_SCHEMA_VERSION,
@@ -168,6 +169,8 @@ def _base_candidate_tags(config: AppConfig, candidate_id: str, candidate_type: s
         "candidate_type": candidate_type,
         "task_type": config.competition.task_type,
         "primary_metric": config.competition.primary_metric,
+        "runtime_requested_compute_target": runtime_execution_context.requested_compute_target,
+        "runtime_resolved_compute_target": runtime_execution_context.resolved_compute_target,
         **_git_metadata(),
     }
     return tags
@@ -204,11 +207,17 @@ def terminate_run(
 def _candidate_run_params(config: AppConfig, manifest: dict[str, object]) -> dict[str, object]:
     competition = config.competition
     candidate = config.experiment.candidate
+    runtime_execution_context = config.runtime_execution_context
     params: dict[str, object] = {
         "cv__n_splits": competition.cv.n_splits,
         "cv__shuffle": competition.cv.shuffle,
         "cv__random_state": competition.cv.random_state,
+        "runtime__requested_compute_target": runtime_execution_context.requested_compute_target,
+        "runtime__resolved_compute_target": runtime_execution_context.resolved_compute_target,
+        "runtime__gpu_available": runtime_execution_context.gpu_available,
     }
+    if runtime_execution_context.fallback_reason is not None:
+        params["runtime__fallback_reason"] = runtime_execution_context.fallback_reason
     if config.is_model_candidate:
         params.update(
             {

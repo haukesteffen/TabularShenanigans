@@ -60,9 +60,9 @@ cp config.regression.example.yaml config.yaml
 
 `config.yaml` is the only runtime config source. It is intentionally ignored by Git.
 
-`main.py` is a thin wrapper around a stdlib-only bootstrap module. The bootstrap runs
-before the runtime imports application modules so future accelerator hooks can patch
-imports safely without changing the user-facing command.
+`main.py` is a thin wrapper around a bootstrap module. The bootstrap runs before the
+runtime imports application modules that depend on `pandas` or `sklearn`, so future
+accelerator hooks can patch imports safely without changing the user-facing command.
 
 ## Stage Commands
 `uv run python main.py` runs the default pipeline: `fetch -> prepare -> train -> submit`.
@@ -114,11 +114,18 @@ Required top-level sections:
 
 `experiment` keys:
 - required `tracking`
+- optional `runtime`
 - required `candidate`
 - optional `submit`
 
 `experiment.tracking` keys:
 - `tracking_uri`: MLflow tracking URI. This is required.
+
+`experiment.runtime` keys:
+- `compute_target`: `auto`, `cpu`, or `gpu`
+  - `auto`: prefer GPU when the runtime exposes visible NVIDIA devices, otherwise fall back to CPU
+  - `cpu`: force CPU execution
+  - `gpu`: require GPU execution and fail fast when no GPU runtime is available
 
 `experiment.candidate` keys:
 - shared:

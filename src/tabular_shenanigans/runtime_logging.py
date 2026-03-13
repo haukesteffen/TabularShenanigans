@@ -7,6 +7,11 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Iterator, TextIO
 
+from tabular_shenanigans.runtime_execution import (
+    format_runtime_execution_context,
+    get_runtime_execution_context,
+)
+
 RUNTIME_LOG_ARTIFACT_DIRNAME = "logs"
 RUNTIME_LOG_FILENAME = "runtime.log"
 
@@ -125,6 +130,7 @@ def emit_runtime_log_header(
     candidate_id: str,
     mlflow_run_id: str,
 ) -> None:
+    runtime_execution_context = get_runtime_execution_context()
     print(
         "Runtime log started: "
         f"stage={stage_name}, competition_slug={competition_slug}, "
@@ -134,3 +140,4 @@ def emit_runtime_log_header(
         "Runtime environment: "
         f"pid={os.getpid()}, cwd={Path.cwd()}, python={sys.executable}, argv={sys.argv}"
     )
+    print(f"Runtime execution: {format_runtime_execution_context(runtime_execution_context)}")

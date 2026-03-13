@@ -28,6 +28,9 @@ experiment:
   tracking:
     tracking_uri: http://localhost:5000
 
+  runtime:
+    compute_target: auto
+
   candidate:
     candidate_type: model
     feature_recipe_id: fr0
