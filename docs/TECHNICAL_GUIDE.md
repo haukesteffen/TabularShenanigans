@@ -131,7 +131,7 @@ Stage notes:
 - [candidate_artifacts.py](/Users/hs/dev/TabularShenanigans/src/tabular_shenanigans/candidate_artifacts.py): shared manifest/config helpers and temp-bundle file writers for candidate/context artifacts.
 - [data.py](/Users/hs/dev/TabularShenanigans/src/tabular_shenanigans/data.py): Kaggle downloads, zip access, schema inference, and sample-submission loading.
 - [eda.py](/Users/hs/dev/TabularShenanigans/src/tabular_shenanigans/eda.py): local EDA report generation.
-- [feature_recipes](/Users/hs/dev/TabularShenanigans/src/tabular_shenanigans/feature_recipes): deterministic feature recipes such as `fr0`, `fr1`, `fr2`, and the `fr2_ablate_*` grouped ablation variants used for `s6e3` recipe studies.
+- [feature_recipes](/Users/hs/dev/TabularShenanigans/src/tabular_shenanigans/feature_recipes): deterministic feature recipes such as `fr0`, `fr1`, `fr2`, `fr3`, and the `fr2_ablate_*` grouped ablation variants used for `s6e3` recipe studies.
 - [model_evaluation.py](/Users/hs/dev/TabularShenanigans/src/tabular_shenanigans/model_evaluation.py): shared prepared training context and reusable CV evaluation logic for train/tune.
 - [models.py](/Users/hs/dev/TabularShenanigans/src/tabular_shenanigans/models.py): model registry, capability checks, estimator construction, and tuning space definitions.
 - [preprocess.py](/Users/hs/dev/TabularShenanigans/src/tabular_shenanigans/preprocess.py): raw feature-frame preparation and split preprocessing components.

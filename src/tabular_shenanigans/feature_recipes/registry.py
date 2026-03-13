@@ -5,6 +5,7 @@ from tabular_shenanigans.feature_recipes.playground_series_s6e3 import (
     S6E3_ABLATION_FEATURE_RECIPES,
     S6E3_V1_FEATURE_RECIPE,
     S6E3_V2_FEATURE_RECIPE,
+    S6E3_V3_FEATURE_RECIPE,
 )
 
 IDENTITY_FEATURE_RECIPE_ID = "fr0"
@@ -26,6 +27,7 @@ FEATURE_RECIPE_REGISTRY = {
     ),
     S6E3_V1_FEATURE_RECIPE.recipe_id: S6E3_V1_FEATURE_RECIPE,
     S6E3_V2_FEATURE_RECIPE.recipe_id: S6E3_V2_FEATURE_RECIPE,
+    S6E3_V3_FEATURE_RECIPE.recipe_id: S6E3_V3_FEATURE_RECIPE,
     **{definition.recipe_id: definition for definition in S6E3_ABLATION_FEATURE_RECIPES},
 }
 
