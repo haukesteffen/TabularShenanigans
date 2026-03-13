@@ -1,13 +1,29 @@
 import sys
 
 
-def _apply_runtime_bootstrap() -> None:
-    # Future RAPIDS import hooks must run here before any app module imports.
-    return
+def _should_skip_runtime_bootstrap(argv: list[str] | None) -> bool:
+    if argv is None:
+        return False
+    return any(argument in {"-h", "--help"} for argument in argv)
+
+
+def _apply_runtime_bootstrap(argv: list[str] | None) -> None:
+    if _should_skip_runtime_bootstrap(argv):
+        return
+
+    from tabular_shenanigans.bootstrap_config import load_bootstrap_runtime_config
+    from tabular_shenanigans.runtime_execution import (
+        export_runtime_execution_context,
+        resolve_runtime_execution,
+    )
+
+    runtime_config = load_bootstrap_runtime_config()
+    runtime_context = resolve_runtime_execution(runtime_config.compute_target)
+    export_runtime_execution_context(runtime_context)
 
 
 def main(argv: list[str] | None = None) -> None:
-    _apply_runtime_bootstrap()
+    _apply_runtime_bootstrap(argv)
 
     from tabular_shenanigans.cli import main as cli_main
 

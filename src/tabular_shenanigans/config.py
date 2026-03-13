@@ -206,10 +206,17 @@ class ExperimentTrackingConfig(BaseModel):
     tracking_uri: str = Field(min_length=1)
 
 
+class ExperimentRuntimeConfig(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    compute_target: Literal["auto", "cpu", "gpu"] = "auto"
+
+
 class ExperimentConfig(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     candidate: ExperimentCandidateConfig
+    runtime: ExperimentRuntimeConfig = Field(default_factory=ExperimentRuntimeConfig)
     submit: ExperimentSubmitConfig = Field(default_factory=ExperimentSubmitConfig)
     tracking: ExperimentTrackingConfig = Field(default_factory=ExperimentTrackingConfig)
 
@@ -299,6 +306,12 @@ class AppConfig(BaseModel):
         )
 
     @property
+    def runtime_execution_context(self):
+        from tabular_shenanigans.runtime_execution import get_runtime_execution_context
+
+        return get_runtime_execution_context(self.experiment.runtime.compute_target)
+
+    @property
     def resolved_candidate_id(self) -> str:
         competition = self.competition
         candidate = self.experiment.candidate
@@ -323,6 +336,10 @@ class AppConfig(BaseModel):
                     "model_registry_key": self.resolved_model_registry_key,
                     "model_params": candidate.model_params,
                     "optimization": optimization_payload,
+                },
+                "runtime": {
+                    "compute_target": self.experiment.runtime.compute_target,
+                    "resolved_compute_target": self.runtime_execution_context.resolved_compute_target,
                 },
             }
             return build_model_candidate_id(
