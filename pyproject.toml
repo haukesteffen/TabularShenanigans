@@ -3,12 +3,13 @@ name = "tabularshenanigans"
 version = "0.1.0"
 description = "Add your description here"
 readme = "README.md"
-requires-python = ">=3.13"
+requires-python = ">=3.13,<3.14"
 dependencies = [
     "kaggle>=2.0.0",
     "mlflow-skinny>=3.0.0",
+    "numpy>=2.2,<2.3",
     "optuna>=4.7.0",
-    "pandas>=3.0.1",
+    "pandas>=2.2,<3.0",
     "pydantic",
     "PyYAML",
     "scikit-learn>=1.8.0",
@@ -21,3 +22,16 @@ boosters = [
     "lightgbm>=4.6.0",
     "xgboost>=3.2.0",
 ]
+gpu = [
+    "cudf-cu12>=26.2; sys_platform == 'linux' and platform_machine == 'x86_64'",
+    "cuml-cu12>=26.2; sys_platform == 'linux' and platform_machine == 'x86_64'",
+]
+
+[[tool.uv.index]]
+name = "nvidia"
+url = "https://pypi.nvidia.com"
+explicit = true
+
+[tool.uv.sources]
+cudf-cu12 = { index = "nvidia" }
+cuml-cu12 = { index = "nvidia" }
