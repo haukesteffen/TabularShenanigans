@@ -120,7 +120,7 @@ Required top-level sections:
 - shared:
   - `candidate_type`: `model` or `blend`
 - model candidate:
-  - `feature_recipe_id`: built-in values are `fr0`, `fr1`, and `fr2`
+  - `feature_recipe_id`: built-in values are `fr0`, `fr1`, `fr2`, and the `fr2_ablate_*` grouped ablation variants for `playground-series-s6e3`
   - `model_family`
     - regression: `ridge`, `elasticnet`, `random_forest`, `extra_trees`, `hist_gradient_boosting`, `lightgbm`, `catboost`, `xgboost`
     - binary: `logistic_regression`, `random_forest`, `extra_trees`, `hist_gradient_boosting`, `lightgbm`, `catboost`, `xgboost`
