@@ -37,6 +37,32 @@ SERVICE_ADDON_COLUMNS = [
 STREAMING_COLUMNS = ["StreamingTV", "StreamingMovies"]
 SUPPORT_COLUMNS = ["OnlineSecurity", "OnlineBackup", "DeviceProtection", "TechSupport"]
 SERVICE_COLUMNS = ["PhoneService", "MultipleLines", *SERVICE_ADDON_COLUMNS]
+FR2_CHARGE_CONSISTENCY_COLUMNS = [
+    "charges_per_month",
+    "charges_gap",
+    "charges_per_tenure",
+    "total_vs_expected",
+    "tenure_monthlycharges_interaction",
+]
+FR2_SERVICE_COUNT_COLUMNS = [
+    "service_addon_count",
+    "streaming_count",
+    "support_count",
+    "service_count",
+    "tenure_service_interaction",
+]
+FR2_CONTRACT_PAYMENT_COLUMNS = [
+    "is_monthly_contract",
+    "is_autopay",
+]
+FR2_BUCKET_PROFILE_COLUMNS = [
+    "tenure_bucket",
+    "tenure_contract",
+    "internet_payment_profile",
+    "household_profile",
+    "senior_household_profile",
+    "paperless_payment_profile",
+]
 
 
 def _require_columns(
@@ -122,6 +148,14 @@ def _transform_v2_frame(frame: pd.DataFrame) -> pd.DataFrame:
     return transformed
 
 
+def _transform_v2_ablation_frame(
+    frame: pd.DataFrame,
+    dropped_columns: list[str],
+) -> pd.DataFrame:
+    transformed = _transform_v2_frame(frame)
+    return transformed.drop(columns=dropped_columns)
+
+
 def build_s6e3_v1_features(
     x_train_raw: pd.DataFrame,
     x_test_raw: pd.DataFrame,
@@ -160,6 +194,55 @@ def build_s6e3_v2_features(
     return _transform_v2_frame(x_train_raw), _transform_v2_frame(x_test_raw)
 
 
+def _build_s6e3_v2_ablation_features(
+    recipe_id: str,
+    dropped_columns: list[str],
+    x_train_raw: pd.DataFrame,
+    x_test_raw: pd.DataFrame,
+) -> tuple[pd.DataFrame, pd.DataFrame]:
+    _require_columns(
+        x_train_raw,
+        dataset_name="train features",
+        recipe_id=recipe_id,
+        required_columns=FR2_REQUIRED_COLUMNS,
+    )
+    _require_columns(
+        x_test_raw,
+        dataset_name="test features",
+        recipe_id=recipe_id,
+        required_columns=FR2_REQUIRED_COLUMNS,
+    )
+    return (
+        _transform_v2_ablation_frame(x_train_raw, dropped_columns=dropped_columns),
+        _transform_v2_ablation_frame(x_test_raw, dropped_columns=dropped_columns),
+    )
+
+
+def _make_s6e3_v2_ablation_recipe(
+    recipe_id: str,
+    recipe_name: str,
+    recipe_description: str,
+    dropped_columns: list[str],
+) -> FeatureRecipeDefinition:
+    def _transform(
+        x_train_raw: pd.DataFrame,
+        x_test_raw: pd.DataFrame,
+    ) -> tuple[pd.DataFrame, pd.DataFrame]:
+        return _build_s6e3_v2_ablation_features(
+            recipe_id=recipe_id,
+            dropped_columns=dropped_columns,
+            x_train_raw=x_train_raw,
+            x_test_raw=x_test_raw,
+        )
+
+    return FeatureRecipeDefinition(
+        recipe_id=recipe_id,
+        recipe_name=recipe_name,
+        recipe_description=recipe_description,
+        transform=_transform,
+    )
+
+
 S6E3_V1_FEATURE_RECIPE = FeatureRecipeDefinition(
     recipe_id="fr1",
     recipe_name="TelcoChurnFeatureSetV1",
@@ -176,3 +259,38 @@ S6E3_V2_FEATURE_RECIPE = FeatureRecipeDefinition(
     ),
     transform=build_s6e3_v2_features,
 )
+
+S6E3_V2_ABLATE_CHARGE_CONSISTENCY_FEATURE_RECIPE = _make_s6e3_v2_ablation_recipe(
+    recipe_id="fr2_ablate_charge",
+    recipe_name="TelcoChurnFeatureSetV2AblateChargeConsistency",
+    recipe_description="fr2 ablation variant with charge-consistency engineered features removed.",
+    dropped_columns=FR2_CHARGE_CONSISTENCY_COLUMNS,
+)
+
+S6E3_V2_ABLATE_SERVICE_COUNTS_FEATURE_RECIPE = _make_s6e3_v2_ablation_recipe(
+    recipe_id="fr2_ablate_service",
+    recipe_name="TelcoChurnFeatureSetV2AblateServiceCounts",
+    recipe_description="fr2 ablation variant with service-count engineered features removed.",
+    dropped_columns=FR2_SERVICE_COUNT_COLUMNS,
+)
+
+S6E3_V2_ABLATE_CONTRACT_PAYMENT_FEATURE_RECIPE = _make_s6e3_v2_ablation_recipe(
+    recipe_id="fr2_ablate_contract",
+    recipe_name="TelcoChurnFeatureSetV2AblateContractPayment",
+    recipe_description="fr2 ablation variant with contract/payment engineered features removed.",
+    dropped_columns=FR2_CONTRACT_PAYMENT_COLUMNS,
+)
+
+S6E3_V2_ABLATE_BUCKET_PROFILE_FEATURE_RECIPE = _make_s6e3_v2_ablation_recipe(
+    recipe_id="fr2_ablate_profiles",
+    recipe_name="TelcoChurnFeatureSetV2AblateBucketProfiles",
+    recipe_description="fr2 ablation variant with tenure/profile cross engineered features removed.",
+    dropped_columns=FR2_BUCKET_PROFILE_COLUMNS,
+)
+
+S6E3_ABLATION_FEATURE_RECIPES = [
+    S6E3_V2_ABLATE_CHARGE_CONSISTENCY_FEATURE_RECIPE,
+    S6E3_V2_ABLATE_SERVICE_COUNTS_FEATURE_RECIPE,
+    S6E3_V2_ABLATE_CONTRACT_PAYMENT_FEATURE_RECIPE,
+    S6E3_V2_ABLATE_BUCKET_PROFILE_FEATURE_RECIPE,
+]
