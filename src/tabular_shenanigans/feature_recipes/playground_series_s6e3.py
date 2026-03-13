@@ -63,6 +63,10 @@ FR2_BUCKET_PROFILE_COLUMNS = [
     "senior_household_profile",
     "paperless_payment_profile",
 ]
+FR2_CONTRACT_PROFILE_COLUMNS = [
+    *FR2_CONTRACT_PAYMENT_COLUMNS,
+    *FR2_BUCKET_PROFILE_COLUMNS,
+]
 
 
 def _require_columns(
@@ -288,9 +292,17 @@ S6E3_V2_ABLATE_BUCKET_PROFILE_FEATURE_RECIPE = _make_s6e3_v2_ablation_recipe(
     dropped_columns=FR2_BUCKET_PROFILE_COLUMNS,
 )
 
+S6E3_V2_ABLATE_CONTRACT_PROFILE_FEATURE_RECIPE = _make_s6e3_v2_ablation_recipe(
+    recipe_id="fr2_ablate_contract_profiles",
+    recipe_name="TelcoChurnFeatureSetV2AblateContractProfiles",
+    recipe_description="fr2 ablation variant with contract/payment and tenure/profile engineered features removed.",
+    dropped_columns=FR2_CONTRACT_PROFILE_COLUMNS,
+)
+
 S6E3_ABLATION_FEATURE_RECIPES = [
     S6E3_V2_ABLATE_CHARGE_CONSISTENCY_FEATURE_RECIPE,
     S6E3_V2_ABLATE_SERVICE_COUNTS_FEATURE_RECIPE,
     S6E3_V2_ABLATE_CONTRACT_PAYMENT_FEATURE_RECIPE,
     S6E3_V2_ABLATE_BUCKET_PROFILE_FEATURE_RECIPE,
+    S6E3_V2_ABLATE_CONTRACT_PROFILE_FEATURE_RECIPE,
 ]
