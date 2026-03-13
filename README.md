@@ -61,8 +61,8 @@ cp config.regression.example.yaml config.yaml
 `config.yaml` is the only runtime config source. It is intentionally ignored by Git.
 
 `main.py` is a thin wrapper around a bootstrap module. The bootstrap runs before the
-runtime imports application modules that depend on `pandas` or `sklearn`, so future
-accelerator hooks can patch imports safely without changing the user-facing command.
+runtime imports application modules that depend on `pandas` or `sklearn`, so GPU
+setups can install RAPIDS acceleration hooks before the training stack loads.
 
 ## Stage Commands
 `uv run python main.py` runs the default pipeline: `fetch -> prepare -> train -> submit`.
@@ -123,9 +123,9 @@ Required top-level sections:
 
 `experiment.runtime` keys:
 - `compute_target`: `auto`, `cpu`, or `gpu`
-  - `auto`: prefer GPU when the runtime exposes visible NVIDIA devices, otherwise fall back to CPU
+  - `auto`: prefer GPU only when the runtime exposes visible NVIDIA devices and RAPIDS hooks are available, otherwise fall back to CPU
   - `cpu`: force CPU execution
-  - `gpu`: require GPU execution and fail fast when no GPU runtime is available
+  - `gpu`: require GPU execution and fail fast when no GPU runtime or RAPIDS hook path is available
 
 `experiment.candidate` keys:
 - shared:
@@ -238,6 +238,7 @@ Suggested checks:
 ## Current Limits
 - Kaggle authentication is expected to be preconfigured.
 - Competition downloads still live under `data/<competition_slug>/`.
+- RAPIDS acceleration is a Linux GPU runtime concern. Native macOS runs stay on CPU.
 - EDA reports still live under `reports/<competition_slug>/`.
 - Local temp directories are used during a running command, but candidate state is not kept there after the command finishes.
 - Candidate lookup is keyed by derived `candidate_id` inside the competition MLflow experiment. Reusing the same candidate spec without deleting the existing run is a hard error.

@@ -1,6 +1,8 @@
+import importlib
 import os
 import platform
-from dataclasses import dataclass
+from collections.abc import Callable
+from dataclasses import dataclass, replace
 from functools import lru_cache
 from pathlib import Path
 
@@ -10,7 +12,12 @@ GPU_AVAILABLE_ENV = "TABULAR_SHENANIGANS_GPU_AVAILABLE"
 FALLBACK_REASON_ENV = "TABULAR_SHENANIGANS_RUNTIME_FALLBACK_REASON"
 PLATFORM_SYSTEM_ENV = "TABULAR_SHENANIGANS_RUNTIME_PLATFORM_SYSTEM"
 VISIBLE_NVIDIA_DEVICES_ENV = "TABULAR_SHENANIGANS_VISIBLE_NVIDIA_DEVICES"
+ACCELERATION_BACKEND_ENV = "TABULAR_SHENANIGANS_ACCELERATION_BACKEND"
+RAPIDS_HOOKS_INSTALLED_ENV = "TABULAR_SHENANIGANS_RAPIDS_HOOKS_INSTALLED"
 CUDA_VISIBLE_DEVICES_ENV = "CUDA_VISIBLE_DEVICES"
+CPU_ACCELERATION_BACKEND = "cpu"
+PENDING_ACCELERATION_BACKEND = "pending"
+RAPIDS_ACCELERATION_BACKEND = "rapids"
 
 
 @dataclass(frozen=True)
@@ -37,6 +44,8 @@ class RuntimeExecutionContext:
     resolved_compute_target: str
     capabilities: RuntimeCapabilitySnapshot
     fallback_reason: str | None
+    acceleration_backend: str
+    rapids_hooks_installed: bool
 
     @property
     def gpu_available(self) -> bool:
@@ -48,8 +57,16 @@ class RuntimeExecutionContext:
             "resolved_compute_target": self.resolved_compute_target,
             "gpu_available": self.gpu_available,
             "fallback_reason": self.fallback_reason,
+            "acceleration_backend": self.acceleration_backend,
+            "rapids_hooks_installed": self.rapids_hooks_installed,
             "capabilities": self.capabilities.to_dict(),
         }
+
+
+@dataclass(frozen=True)
+class RapidsHookInstallers:
+    cudf_pandas_install: Callable[[], object]
+    cuml_accel_install: Callable[[], object]
 
 
 def _validate_compute_target(value: str) -> str:
@@ -131,6 +148,8 @@ def resolve_runtime_execution(requested_compute_target: str) -> RuntimeExecution
             resolved_compute_target="cpu",
             capabilities=capabilities,
             fallback_reason=None,
+            acceleration_backend=CPU_ACCELERATION_BACKEND,
+            rapids_hooks_installed=False,
         )
 
     if normalized_target == "gpu":
@@ -140,6 +159,8 @@ def resolve_runtime_execution(requested_compute_target: str) -> RuntimeExecution
                 resolved_compute_target="gpu",
                 capabilities=capabilities,
                 fallback_reason=None,
+                acceleration_backend=PENDING_ACCELERATION_BACKEND,
+                rapids_hooks_installed=False,
             )
         raise RuntimeError(
             "Configured experiment.runtime.compute_target='gpu' but GPU execution is unavailable. "
@@ -152,6 +173,8 @@ def resolve_runtime_execution(requested_compute_target: str) -> RuntimeExecution
             resolved_compute_target="gpu",
             capabilities=capabilities,
             fallback_reason=None,
+            acceleration_backend=PENDING_ACCELERATION_BACKEND,
+            rapids_hooks_installed=False,
         )
 
     return RuntimeExecutionContext(
@@ -159,6 +182,70 @@ def resolve_runtime_execution(requested_compute_target: str) -> RuntimeExecution
         resolved_compute_target="cpu",
         capabilities=capabilities,
         fallback_reason=capabilities.unavailable_reason,
+        acceleration_backend=CPU_ACCELERATION_BACKEND,
+        rapids_hooks_installed=False,
+    )
+
+
+def _load_rapids_hook_installers() -> RapidsHookInstallers:
+    try:
+        cudf_pandas = importlib.import_module("cudf.pandas")
+    except ImportError as exc:
+        raise RuntimeError("cudf.pandas is not importable in this environment") from exc
+
+    try:
+        cuml_accel = importlib.import_module("cuml.accel")
+    except ImportError as exc:
+        raise RuntimeError("cuml.accel is not importable in this environment") from exc
+
+    cudf_pandas_install = getattr(cudf_pandas, "install", None)
+    if not callable(cudf_pandas_install):
+        raise RuntimeError("cudf.pandas.install() is unavailable in this environment")
+
+    cuml_accel_install = getattr(cuml_accel, "install", None)
+    if not callable(cuml_accel_install):
+        raise RuntimeError("cuml.accel.install() is unavailable in this environment")
+
+    return RapidsHookInstallers(
+        cudf_pandas_install=cudf_pandas_install,
+        cuml_accel_install=cuml_accel_install,
+    )
+
+
+def activate_runtime_acceleration(context: RuntimeExecutionContext) -> RuntimeExecutionContext:
+    if context.resolved_compute_target != "gpu":
+        return context
+
+    try:
+        rapids_installers = _load_rapids_hook_installers()
+    except RuntimeError as exc:
+        if context.requested_compute_target == "gpu":
+            raise RuntimeError(
+                "Configured experiment.runtime.compute_target='gpu' but RAPIDS hooks are unavailable. "
+                f"Reason: {exc}. Detection summary: {describe_runtime_capabilities(context.capabilities)}"
+            ) from exc
+        return replace(
+            context,
+            resolved_compute_target="cpu",
+            fallback_reason=f"RAPIDS hooks unavailable: {exc}",
+            acceleration_backend=CPU_ACCELERATION_BACKEND,
+            rapids_hooks_installed=False,
+        )
+
+    # Once either install call runs, rollback is not guaranteed. Treat install failures as hard errors.
+    try:
+        rapids_installers.cudf_pandas_install()
+        rapids_installers.cuml_accel_install()
+    except Exception as exc:
+        raise RuntimeError(
+            "RAPIDS hook installation failed after preflight succeeded. "
+            f"Reason: {exc}. Detection summary: {describe_runtime_capabilities(context.capabilities)}"
+        ) from exc
+
+    return replace(
+        context,
+        acceleration_backend=RAPIDS_ACCELERATION_BACKEND,
+        rapids_hooks_installed=True,
     )
 
 
@@ -168,6 +255,8 @@ def export_runtime_execution_context(context: RuntimeExecutionContext) -> None:
     os.environ[GPU_AVAILABLE_ENV] = "true" if context.gpu_available else "false"
     os.environ[PLATFORM_SYSTEM_ENV] = context.capabilities.platform_system
     os.environ[VISIBLE_NVIDIA_DEVICES_ENV] = ",".join(context.capabilities.visible_nvidia_devices)
+    os.environ[ACCELERATION_BACKEND_ENV] = context.acceleration_backend
+    os.environ[RAPIDS_HOOKS_INSTALLED_ENV] = "true" if context.rapids_hooks_installed else "false"
     if context.fallback_reason is None:
         os.environ.pop(FALLBACK_REASON_ENV, None)
     else:
@@ -179,12 +268,16 @@ def _parse_exported_runtime_execution_context() -> RuntimeExecutionContext | Non
     resolved_compute_target = os.getenv(RESOLVED_COMPUTE_TARGET_ENV)
     gpu_available = os.getenv(GPU_AVAILABLE_ENV)
     platform_system = os.getenv(PLATFORM_SYSTEM_ENV)
+    acceleration_backend = os.getenv(ACCELERATION_BACKEND_ENV)
+    rapids_hooks_installed = os.getenv(RAPIDS_HOOKS_INSTALLED_ENV)
 
     if (
         requested_compute_target is None
         or resolved_compute_target is None
         or gpu_available is None
         or platform_system is None
+        or acceleration_backend is None
+        or rapids_hooks_installed is None
     ):
         return None
 
@@ -205,6 +298,8 @@ def _parse_exported_runtime_execution_context() -> RuntimeExecutionContext | Non
         resolved_compute_target=resolved_compute_target,
         capabilities=capabilities,
         fallback_reason=fallback_reason,
+        acceleration_backend=acceleration_backend,
+        rapids_hooks_installed=rapids_hooks_installed == "true",
     )
 
 
@@ -234,6 +329,8 @@ def format_runtime_execution_context(context: RuntimeExecutionContext) -> str:
         f"requested_compute_target={context.requested_compute_target}, "
         f"resolved_compute_target={context.resolved_compute_target}, "
         f"gpu_available={context.gpu_available}, "
+        f"acceleration_backend={context.acceleration_backend}, "
+        f"rapids_hooks_installed={context.rapids_hooks_installed}, "
         f"platform={context.capabilities.platform_system}"
     )
     visible_devices = ",".join(context.capabilities.visible_nvidia_devices)

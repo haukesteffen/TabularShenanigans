@@ -171,6 +171,7 @@ def _base_candidate_tags(config: AppConfig, candidate_id: str, candidate_type: s
         "primary_metric": config.competition.primary_metric,
         "runtime_requested_compute_target": runtime_execution_context.requested_compute_target,
         "runtime_resolved_compute_target": runtime_execution_context.resolved_compute_target,
+        "runtime_acceleration_backend": runtime_execution_context.acceleration_backend,
         **_git_metadata(),
     }
     return tags
@@ -215,6 +216,8 @@ def _candidate_run_params(config: AppConfig, manifest: dict[str, object]) -> dic
         "runtime__requested_compute_target": runtime_execution_context.requested_compute_target,
         "runtime__resolved_compute_target": runtime_execution_context.resolved_compute_target,
         "runtime__gpu_available": runtime_execution_context.gpu_available,
+        "runtime__acceleration_backend": runtime_execution_context.acceleration_backend,
+        "runtime__rapids_hooks_installed": runtime_execution_context.rapids_hooks_installed,
     }
     if runtime_execution_context.fallback_reason is not None:
         params["runtime__fallback_reason"] = runtime_execution_context.fallback_reason

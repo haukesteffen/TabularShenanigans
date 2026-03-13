@@ -4,7 +4,7 @@ Technical reference for the current repository design. Use GitHub issues and pul
 
 ## System Flow
 1. Enter the bootstrap entrypoint before importing runtime modules that depend on `pandas` or `sklearn`.
-2. Read `experiment.runtime.compute_target` from repository-root `config.yaml` and resolve the requested execution mode to CPU or GPU for the current machine.
+2. Read `experiment.runtime.compute_target` from repository-root `config.yaml`, resolve the requested execution mode for the current machine, and install RAPIDS hooks before the CLI imports the training stack when GPU execution is selected.
 3. Load and validate the repository-root `config.yaml`.
 4. Normalize and validate `competition.task_type`, `competition.primary_metric`, and the candidate contract.
 5. Resolve the MLflow tracking URI from `experiment.tracking.tracking_uri`.
@@ -50,6 +50,7 @@ Current candidate-run tags:
 - `primary_metric`
 - `runtime_requested_compute_target`
 - `runtime_resolved_compute_target`
+- `runtime_acceleration_backend`
 - `config_fingerprint`
 - `git_commit` when available
 - `git_branch` when available
@@ -62,6 +63,8 @@ Current candidate-run params:
 - `runtime__requested_compute_target`
 - `runtime__resolved_compute_target`
 - `runtime__gpu_available`
+- `runtime__acceleration_backend`
+- `runtime__rapids_hooks_installed`
 - `runtime__fallback_reason` when CPU fallback happened under `compute_target=auto`
 - model candidates:
   - `feature_recipe_id`
@@ -129,17 +132,17 @@ Submission artifacts on the same candidate run:
 
 Stage notes:
 - `main.py` keeps the existing user-facing command but now delegates into a bootstrap module before the runtime imports `pandas`- or `sklearn`-dependent modules.
-- bootstrap resolves `experiment.runtime.compute_target` for the current machine before the CLI imports the training stack.
+- bootstrap resolves `experiment.runtime.compute_target` for the current machine and installs RAPIDS hooks before the CLI imports the training stack when GPU execution is selected.
 - `prepare` no longer persists canonical competition metadata. It only prepares the context in memory and writes EDA reports.
 - `train` is the only stage that creates candidate runs.
 - `submit` and `refresh-submissions` mutate existing candidate runs by appending submission history and score metrics.
 
 ## Module Responsibilities
 - [main.py](/Users/hs/dev/TabularShenanigans/main.py): thin repository-root wrapper that inserts `src/` on `sys.path` and forwards into the bootstrap entrypoint.
-- [bootstrap.py](/Users/hs/dev/TabularShenanigans/src/tabular_shenanigans/bootstrap.py): pre-runtime bootstrap hook point that resolves execution mode before runtime modules import `pandas` or `sklearn`.
+- [bootstrap.py](/Users/hs/dev/TabularShenanigans/src/tabular_shenanigans/bootstrap.py): pre-runtime bootstrap hook point that resolves execution mode and installs RAPIDS hooks before runtime modules import `pandas` or `sklearn`.
 - [bootstrap_config.py](/Users/hs/dev/TabularShenanigans/src/tabular_shenanigans/bootstrap_config.py): lightweight YAML reader for the bootstrap-only runtime settings loaded before the full config model.
 - [cli.py](/Users/hs/dev/TabularShenanigans/src/tabular_shenanigans/cli.py): CLI parser and linear stage dispatch after bootstrap completes.
-- [runtime_execution.py](/Users/hs/dev/TabularShenanigans/src/tabular_shenanigans/runtime_execution.py): runtime capability detection, requested-versus-resolved execution context, and bootstrap/runtime metadata helpers.
+- [runtime_execution.py](/Users/hs/dev/TabularShenanigans/src/tabular_shenanigans/runtime_execution.py): runtime capability detection, RAPIDS hook activation, requested-versus-resolved execution context, and bootstrap/runtime metadata helpers.
 - [competition.py](/Users/hs/dev/TabularShenanigans/src/tabular_shenanigans/competition.py): in-memory competition preparation, fold assignment materialization, and prepared-context construction.
 - [config.py](/Users/hs/dev/TabularShenanigans/src/tabular_shenanigans/config.py): nested config validation, metric normalization, candidate-id derivation, and resolved model lookup.
 - [candidate_artifacts.py](/Users/hs/dev/TabularShenanigans/src/tabular_shenanigans/candidate_artifacts.py): shared manifest/config helpers and temp-bundle file writers for candidate/context artifacts.
@@ -180,6 +183,7 @@ Required top-level keys:
 
 `experiment` keys:
 - required `tracking`
+- optional `runtime`
 - required `candidate`
 - optional `submit`
 
@@ -188,6 +192,9 @@ Required top-level keys:
 
 `experiment.runtime`:
 - `compute_target`: `auto`, `cpu`, or `gpu`
+  - `auto`: use GPU only when the machine exposes NVIDIA devices and RAPIDS hooks are available
+  - `cpu`: stay on CPU
+  - `gpu`: require the GPU + RAPIDS path and fail fast otherwise
 
 Model candidate contract:
 - `candidate_type: model`
@@ -227,6 +234,7 @@ Sparse onehot runtime contract:
 Model candidate manifests currently record:
 - identity: `candidate_id`, `candidate_type`, `competition_slug`, `task_type`, `primary_metric`
 - provenance: `config_fingerprint`, `config_snapshot`, `mlflow_run_id`
+- runtime execution: requested/ resolved compute target, acceleration backend, RAPIDS hook status, and hardware capability snapshot
 - model info: `model_family`, `model_registry_key`, `estimator_name`
 - feature/preprocessing info: `feature_recipe_id`, `feature_columns`, `numeric_preprocessor`, `categorical_preprocessor`, `preprocessing_scheme_id`
 - CV summary: `cv_summary`
@@ -257,6 +265,11 @@ Validation rules:
 - regression values must be numeric, non-missing, and finite
 - binary `roc_auc`/`log_loss` values must be numeric probabilities in `[0, 1]`
 - binary `accuracy` values must stay within the observed label pair
+
+## Runtime Constraints
+- RAPIDS acceleration is only expected on Linux GPU runtimes.
+- `auto` can fall back to CPU for either missing GPU hardware or unavailable RAPIDS hook modules.
+- once RAPIDS hook installation starts, rollback is not guaranteed; install failures are treated as hard errors.
 
 Real Kaggle submissions:
 - generate one `submission_event_id`

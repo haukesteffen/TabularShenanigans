@@ -340,6 +340,7 @@ class AppConfig(BaseModel):
                 "runtime": {
                     "compute_target": self.experiment.runtime.compute_target,
                     "resolved_compute_target": self.runtime_execution_context.resolved_compute_target,
+                    "acceleration_backend": self.runtime_execution_context.acceleration_backend,
                 },
             }
             return build_model_candidate_id(
