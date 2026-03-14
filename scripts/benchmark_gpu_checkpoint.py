@@ -34,7 +34,40 @@ def build_parser() -> argparse.ArgumentParser:
         default=str(DEFAULT_OUTPUT_ROOT),
         help="Directory where the benchmark session report and logs should be written.",
     )
+    parser.add_argument(
+        "--cases",
+        default=None,
+        help="Optional comma-separated case IDs to run. Defaults to the full GPU-first matrix.",
+    )
     return parser
+
+
+def _default_cases() -> list[BenchmarkCase]:
+    return [
+        BenchmarkCase("logreg_gpu_patch", "logistic_regression", "gpu", "patch"),
+        BenchmarkCase("logreg_gpu_native", "logistic_regression", "gpu", "native"),
+        BenchmarkCase("logreg_cpu", "logistic_regression", "cpu", None),
+        BenchmarkCase("xgboost_gpu_patch", "xgboost", "gpu", "patch"),
+        BenchmarkCase("xgboost_gpu_native", "xgboost", "gpu", "native"),
+        BenchmarkCase("xgboost_cpu", "xgboost", "cpu", None),
+    ]
+
+
+def _resolve_cases(case_filter: str | None) -> list[BenchmarkCase]:
+    cases_by_id = {case.case_id: case for case in _default_cases()}
+    if case_filter is None:
+        return list(cases_by_id.values())
+
+    requested_case_ids = [case_id.strip() for case_id in case_filter.split(",") if case_id.strip()]
+    if not requested_case_ids:
+        raise ValueError("--cases must include at least one non-empty case ID.")
+
+    unknown_case_ids = [case_id for case_id in requested_case_ids if case_id not in cases_by_id]
+    if unknown_case_ids:
+        raise ValueError(
+            f"Unknown benchmark case IDs: {unknown_case_ids}. Supported case IDs: {sorted(cases_by_id)}"
+        )
+    return [cases_by_id[case_id] for case_id in requested_case_ids]
 
 
 def _load_yaml(path: Path) -> dict[str, object]:
@@ -257,14 +290,7 @@ def main() -> None:
     base_config = _load_yaml(CONFIG_PATH)
     original_config_text = CONFIG_PATH.read_text(encoding="utf-8")
     base_loaded_config = load_config(str(CONFIG_PATH))
-    cases = [
-        BenchmarkCase("logreg_cpu", "logistic_regression", "cpu", None),
-        BenchmarkCase("logreg_gpu_patch", "logistic_regression", "gpu", "patch"),
-        BenchmarkCase("logreg_gpu_native", "logistic_regression", "gpu", "native"),
-        BenchmarkCase("xgboost_cpu", "xgboost", "cpu", None),
-        BenchmarkCase("xgboost_gpu_patch", "xgboost", "gpu", "patch"),
-        BenchmarkCase("xgboost_gpu_native", "xgboost", "gpu", "native"),
-    ]
+    cases = _resolve_cases(args.cases)
     client = MlflowClient(tracking_uri=tracking_uri)
     session_cases: list[dict[str, object]] = []
 
