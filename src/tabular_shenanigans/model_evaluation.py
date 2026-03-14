@@ -371,6 +371,27 @@ def _coerce_prediction_values(values: object) -> np.ndarray:
     return np.asarray(values)
 
 
+def _select_binary_positive_class_scores(
+    probability_values: object,
+    positive_class_index: int,
+) -> object:
+    if hasattr(probability_values, "iloc"):
+        return probability_values.iloc[:, positive_class_index]
+
+    if isinstance(probability_values, np.ndarray):
+        if probability_values.ndim == 1:
+            return probability_values
+        return probability_values[:, positive_class_index]
+
+    if type(probability_values).__module__.startswith("cupy."):
+        return probability_values[:, positive_class_index]
+
+    if hasattr(probability_values, "ndim") and getattr(probability_values, "ndim") == 1:
+        return probability_values
+
+    return probability_values[:, positive_class_index]
+
+
 def _describe_matrix_residency(values: object) -> dict[str, object]:
     value_type = type(values)
     module_name = value_type.__module__
@@ -506,10 +527,16 @@ def _run_cv_evaluation(
             if training_context.positive_label is None or training_context.negative_label is None:
                 raise ValueError("Binary training requires resolved class metadata.")
             positive_class_index = list(model.classes_).index(training_context.positive_label)
-            fold_valid_predictions = model.predict_proba(x_fold_valid_processed)[:, positive_class_index]
+            fold_valid_predictions = _select_binary_positive_class_scores(
+                model.predict_proba(x_fold_valid_processed),
+                positive_class_index=positive_class_index,
+            )
             fold_test_predictions = None
             if x_test_processed is not None:
-                fold_test_predictions = model.predict_proba(x_test_processed)[:, positive_class_index]
+                fold_test_predictions = _select_binary_positive_class_scores(
+                    model.predict_proba(x_test_processed),
+                    positive_class_index=positive_class_index,
+                )
         else:
             fold_valid_predictions = model.predict(x_fold_valid_processed)
             fold_test_predictions = None
