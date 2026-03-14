@@ -149,11 +149,11 @@ def _validate_gpu_native_preprocessing_support(
 ) -> None:
     if resolved_gpu_backend != "gpu_native":
         return
-    if model_registry_key != "xgboost":
+    if model_registry_key not in {"logistic_regression", "xgboost"}:
         raise ValueError(
-            "gpu_native currently supports model_family='xgboost' only in this runtime. "
-            "Use gpu_backend='auto' or 'patch' for other model families until the follow-on "
-            "native model issues land."
+            "gpu_native currently supports model_family in ['logistic_regression', 'xgboost'] only "
+            "in this runtime. Use gpu_backend='auto' or 'patch' for other model families until the "
+            "follow-on native model issues land."
         )
     if categorical_preprocessor_id != "frequency":
         raise ValueError(
@@ -165,6 +165,26 @@ def _validate_gpu_native_preprocessing_support(
             "gpu_native currently supports numeric_preprocessor in "
             f"{sorted(SUPPORTED_GPU_NATIVE_NUMERIC_PREPROCESSOR_IDS)} only. "
             f"Got '{numeric_preprocessor_id}'."
+        )
+
+
+def _validate_gpu_native_logistic_support(
+    resolved_gpu_backend: str,
+    model_registry_key: str,
+    numeric_preprocessor_id: str,
+    categorical_preprocessor_id: str,
+) -> None:
+    if resolved_gpu_backend != "gpu_native" or model_registry_key != "logistic_regression":
+        return
+    if categorical_preprocessor_id != "frequency":
+        raise ValueError(
+            "gpu_native logistic regression currently supports categorical_preprocessor='frequency' only "
+            f"in this runtime. Got '{categorical_preprocessor_id}'."
+        )
+    if numeric_preprocessor_id != "standardize":
+        raise ValueError(
+            "gpu_native logistic regression currently supports numeric_preprocessor='standardize' only "
+            f"in this runtime. Got '{numeric_preprocessor_id}'."
         )
 
 
@@ -242,6 +262,12 @@ def build_prepared_training_context(
         and resolved_gpu_backend == "gpu_patch"
     )
     _validate_gpu_native_preprocessing_support(
+        resolved_gpu_backend=resolved_gpu_backend,
+        model_registry_key=config.resolved_model_registry_key,
+        numeric_preprocessor_id=candidate.numeric_preprocessor,
+        categorical_preprocessor_id=candidate.categorical_preprocessor,
+    )
+    _validate_gpu_native_logistic_support(
         resolved_gpu_backend=resolved_gpu_backend,
         model_registry_key=config.resolved_model_registry_key,
         numeric_preprocessor_id=candidate.numeric_preprocessor,

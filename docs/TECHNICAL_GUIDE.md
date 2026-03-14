@@ -206,6 +206,9 @@ Required top-level keys:
   - `patch`: require the current RAPIDS hook-based `gpu_patch` path
   - `native`: require the explicit `gpu_native` path
   - current supported `gpu_native` tuple:
+    - `model_family: logistic_regression`
+    - `categorical_preprocessor: frequency`
+    - `numeric_preprocessor: standardize`
     - `model_family: xgboost`
     - `categorical_preprocessor: frequency`
     - `numeric_preprocessor: median` or `standardize`
@@ -272,12 +275,17 @@ XGBoost GPU-native input contract:
   - rationale: XGBoost does not support `cupyx` CSR inputs in this runtime
 
 GPU logistic regression contract:
-- when runtime execution resolves to GPU for `logistic_regression`, the builder wraps the sklearn estimator in the existing binary-label encoding adapter before fit
+- when runtime execution resolves to `gpu_patch` for `logistic_regression`, the builder wraps the sklearn estimator in the existing binary-label encoding adapter before fit
 - this keeps original competition labels in `model.classes_` while ensuring cuML sees numeric binary targets during fit
-- `categorical_preprocessor: frequency` is currently the only supported GPU logistic categorical path
+- the `gpu_patch` path currently supports `categorical_preprocessor: frequency` only
 - unsupported preprocessing combinations are rejected before training for the GPU logistic path
   - this currently covers `categorical_preprocessor: ordinal`, `categorical_preprocessor: onehot`, and related sparse `kbins` compositions
   - rationale: the RAPIDS-hooked sklearn preprocessing stack is not stable yet for these branches in the current runtime
+- when runtime execution resolves to `gpu_native` for `logistic_regression`, the repo builds an explicit `cuml.LogisticRegression` estimator instead of relying on sklearn interception
+- the `gpu_native` logistic path currently supports:
+  - `categorical_preprocessor: frequency`
+  - `numeric_preprocessor: standardize`
+- `gpu_native` logistic currently rejects `model_params.class_weight`; use `gpu_backend: patch` or CPU execution when class weighting is required
 
 ## Candidate Manifest Contract
 Model candidate manifests currently record:
