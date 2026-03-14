@@ -133,6 +133,11 @@ Required top-level sections:
   - `auto`: prefer GPU only when the runtime exposes visible NVIDIA devices and RAPIDS hooks are available, otherwise fall back to CPU
   - `cpu`: force CPU execution
   - `gpu`: require GPU execution and fail fast when no GPU runtime or RAPIDS hook path is available
+- optional `gpu_backend`: `auto`, `patch`, or `native`
+  - advanced/transitional override; leave this at `auto` for normal use
+  - `auto`: when GPU execution is selected, route onto the current patch-based GPU path
+  - `patch`: require the current RAPIDS hook-based GPU path
+  - `native`: require the future explicit GPU-native path; this currently fails fast because no `gpu_native` tuples are registered yet
   - when GPU execution is active, `xgboost`, `lightgbm`, and `catboost` also switch to their GPU-specific estimator params automatically
   - when GPU execution is active, `logistic_regression` stays on the sklearn API surface but relies on the RAPIDS `cuml.accel` hook path
   - the RAPIDS-backed GPU path currently expects the project environment to be installed with `uv sync --extra boosters --extra gpu` on a Python 3.13 Linux `x86_64` CUDA 12 host
@@ -220,12 +225,14 @@ Current candidate-run metrics include:
 
 Current candidate-run tags include:
 - `run_kind=candidate`
-- `tracking_schema_version=2`
+- `tracking_schema_version=3`
 - `competition_slug`
 - `candidate_id`
 - `candidate_type`
 - `task_type`
 - `primary_metric`
+- `runtime_requested_gpu_backend`
+- `runtime_resolved_gpu_backend`
 - `config_fingerprint`
 - git metadata when available
 

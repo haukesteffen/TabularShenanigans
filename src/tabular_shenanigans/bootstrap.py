@@ -19,7 +19,10 @@ def _apply_runtime_bootstrap(argv: list[str] | None) -> None:
     )
 
     runtime_config = load_bootstrap_runtime_config()
-    runtime_context = resolve_runtime_execution(runtime_config.compute_target)
+    runtime_context = resolve_runtime_execution(
+        runtime_config.compute_target,
+        runtime_config.gpu_backend,
+    )
     runtime_context = activate_runtime_acceleration(runtime_context)
     export_runtime_execution_context(runtime_context)
 

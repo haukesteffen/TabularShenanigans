@@ -4,7 +4,7 @@ Technical reference for the current repository design. Use GitHub issues and pul
 
 ## System Flow
 1. Enter the bootstrap entrypoint before importing runtime modules that depend on `pandas` or `sklearn`.
-2. Read `experiment.runtime.compute_target` from repository-root `config.yaml`, resolve the requested execution mode for the current machine, install RAPIDS hooks before the CLI imports the training stack when GPU execution is selected, and route GPU-capable booster families onto their GPU parameter paths.
+2. Read `experiment.runtime.compute_target` and the optional advanced `experiment.runtime.gpu_backend` override from repository-root `config.yaml`, resolve hardware intent separately from backend choice for the current machine, install RAPIDS hooks only when the resolved backend is `gpu_patch`, and route GPU-capable booster families onto their GPU parameter paths.
 3. Load and validate the repository-root `config.yaml`.
 4. Normalize and validate `competition.task_type`, `competition.primary_metric`, and the candidate contract.
 5. Resolve the MLflow tracking URI from `experiment.tracking.tracking_uri`.
@@ -42,7 +42,7 @@ Each candidate run is named with `candidate_id`.
 ### Tags
 Current candidate-run tags:
 - `run_kind=candidate`
-- `tracking_schema_version=2`
+- `tracking_schema_version=3`
 - `competition_slug`
 - `candidate_id`
 - `candidate_type`
@@ -50,6 +50,8 @@ Current candidate-run tags:
 - `primary_metric`
 - `runtime_requested_compute_target`
 - `runtime_resolved_compute_target`
+- `runtime_requested_gpu_backend`
+- `runtime_resolved_gpu_backend`
 - `runtime_acceleration_backend`
 - `config_fingerprint`
 - `git_commit` when available
@@ -62,6 +64,8 @@ Current candidate-run params:
 - `cv__random_state`
 - `runtime__requested_compute_target`
 - `runtime__resolved_compute_target`
+- `runtime__requested_gpu_backend`
+- `runtime__resolved_gpu_backend`
 - `runtime__gpu_available`
 - `runtime__acceleration_backend`
 - `runtime__rapids_hooks_installed`
@@ -132,7 +136,7 @@ Submission artifacts on the same candidate run:
 
 Stage notes:
 - `main.py` keeps the existing user-facing command but now delegates into a bootstrap module before the runtime imports `pandas`- or `sklearn`-dependent modules.
-- bootstrap resolves `experiment.runtime.compute_target` for the current machine and installs RAPIDS hooks before the CLI imports the training stack when GPU execution is selected.
+- bootstrap resolves `experiment.runtime.compute_target` and optional `experiment.runtime.gpu_backend` for the current machine and installs RAPIDS hooks only when the resolved backend is `gpu_patch`.
 - the GPU runtime contract assumes the environment was synced with `uv sync --extra boosters --extra gpu`; plain `uv run python main.py ...` is safe after that because the lockfile now pins the RAPIDS-compatible shared dependency range
 - `prepare` no longer persists canonical competition metadata. It only prepares the context in memory and writes EDA reports.
 - `train` is the only stage that creates candidate runs.
@@ -196,6 +200,12 @@ Required top-level keys:
   - `auto`: use GPU only when the machine exposes NVIDIA devices and RAPIDS hooks are available
   - `cpu`: stay on CPU
   - `gpu`: require the GPU + RAPIDS path and fail fast otherwise
+- optional `gpu_backend`: `auto`, `patch`, or `native`
+  - advanced/transitional override; leave this at `auto` for normal use
+  - `auto`: when GPU execution is selected, route onto the current `gpu_patch` path
+  - `patch`: require the current RAPIDS hook-based `gpu_patch` path
+  - `native`: require the future explicit `gpu_native` path
+  - today `gpu_backend: native` fails fast because no native tuples are registered yet
 
 GPU dependency contract:
 - base project dependencies pin `numpy` and `pandas` into the RAPIDS-compatible range used by both CPU and GPU installs

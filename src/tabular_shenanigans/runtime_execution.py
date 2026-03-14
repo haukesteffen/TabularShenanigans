@@ -8,6 +8,8 @@ from pathlib import Path
 
 REQUESTED_COMPUTE_TARGET_ENV = "TABULAR_SHENANIGANS_REQUESTED_COMPUTE_TARGET"
 RESOLVED_COMPUTE_TARGET_ENV = "TABULAR_SHENANIGANS_RESOLVED_COMPUTE_TARGET"
+REQUESTED_GPU_BACKEND_ENV = "TABULAR_SHENANIGANS_REQUESTED_GPU_BACKEND"
+RESOLVED_GPU_BACKEND_ENV = "TABULAR_SHENANIGANS_RESOLVED_GPU_BACKEND"
 GPU_AVAILABLE_ENV = "TABULAR_SHENANIGANS_GPU_AVAILABLE"
 FALLBACK_REASON_ENV = "TABULAR_SHENANIGANS_RUNTIME_FALLBACK_REASON"
 PLATFORM_SYSTEM_ENV = "TABULAR_SHENANIGANS_RUNTIME_PLATFORM_SYSTEM"
@@ -15,9 +17,9 @@ VISIBLE_NVIDIA_DEVICES_ENV = "TABULAR_SHENANIGANS_VISIBLE_NVIDIA_DEVICES"
 ACCELERATION_BACKEND_ENV = "TABULAR_SHENANIGANS_ACCELERATION_BACKEND"
 RAPIDS_HOOKS_INSTALLED_ENV = "TABULAR_SHENANIGANS_RAPIDS_HOOKS_INSTALLED"
 CUDA_VISIBLE_DEVICES_ENV = "CUDA_VISIBLE_DEVICES"
-CPU_ACCELERATION_BACKEND = "cpu"
-PENDING_ACCELERATION_BACKEND = "pending"
-RAPIDS_ACCELERATION_BACKEND = "rapids"
+CPU_GPU_BACKEND = "cpu"
+PATCH_GPU_BACKEND = "gpu_patch"
+NATIVE_GPU_BACKEND = "gpu_native"
 
 
 @dataclass(frozen=True)
@@ -42,19 +44,26 @@ class RuntimeCapabilitySnapshot:
 class RuntimeExecutionContext:
     requested_compute_target: str
     resolved_compute_target: str
+    requested_gpu_backend: str
+    resolved_gpu_backend: str
     capabilities: RuntimeCapabilitySnapshot
     fallback_reason: str | None
-    acceleration_backend: str
     rapids_hooks_installed: bool
 
     @property
     def gpu_available(self) -> bool:
         return self.capabilities.gpu_available
 
+    @property
+    def acceleration_backend(self) -> str:
+        return self.resolved_gpu_backend
+
     def to_dict(self) -> dict[str, object]:
         return {
             "requested_compute_target": self.requested_compute_target,
             "resolved_compute_target": self.resolved_compute_target,
+            "requested_gpu_backend": self.requested_gpu_backend,
+            "resolved_gpu_backend": self.resolved_gpu_backend,
             "gpu_available": self.gpu_available,
             "fallback_reason": self.fallback_reason,
             "acceleration_backend": self.acceleration_backend,
@@ -75,6 +84,15 @@ def _validate_compute_target(value: str) -> str:
         return normalized_value
     raise ValueError(
         f"Unsupported compute target '{value}'. Expected one of ['auto', 'cpu', 'gpu']."
+    )
+
+
+def _validate_gpu_backend(value: str) -> str:
+    normalized_value = value.strip().lower()
+    if normalized_value in {"auto", "patch", "native"}:
+        return normalized_value
+    raise ValueError(
+        f"Unsupported gpu backend '{value}'. Expected one of ['auto', 'patch', 'native']."
     )
 
 
@@ -138,17 +156,22 @@ def detect_runtime_capabilities() -> RuntimeCapabilitySnapshot:
     )
 
 
-def resolve_runtime_execution(requested_compute_target: str) -> RuntimeExecutionContext:
+def resolve_runtime_execution(
+    requested_compute_target: str,
+    requested_gpu_backend: str = "auto",
+) -> RuntimeExecutionContext:
     normalized_target = _validate_compute_target(requested_compute_target)
+    normalized_backend = _validate_gpu_backend(requested_gpu_backend)
     capabilities = detect_runtime_capabilities()
 
     if normalized_target == "cpu":
         return RuntimeExecutionContext(
             requested_compute_target=normalized_target,
             resolved_compute_target="cpu",
+            requested_gpu_backend=normalized_backend,
+            resolved_gpu_backend=CPU_GPU_BACKEND,
             capabilities=capabilities,
             fallback_reason=None,
-            acceleration_backend=CPU_ACCELERATION_BACKEND,
             rapids_hooks_installed=False,
         )
 
@@ -157,9 +180,12 @@ def resolve_runtime_execution(requested_compute_target: str) -> RuntimeExecution
             return RuntimeExecutionContext(
                 requested_compute_target=normalized_target,
                 resolved_compute_target="gpu",
+                requested_gpu_backend=normalized_backend,
+                resolved_gpu_backend=(
+                    NATIVE_GPU_BACKEND if normalized_backend == "native" else PATCH_GPU_BACKEND
+                ),
                 capabilities=capabilities,
                 fallback_reason=None,
-                acceleration_backend=PENDING_ACCELERATION_BACKEND,
                 rapids_hooks_installed=False,
             )
         raise RuntimeError(
@@ -171,18 +197,22 @@ def resolve_runtime_execution(requested_compute_target: str) -> RuntimeExecution
         return RuntimeExecutionContext(
             requested_compute_target=normalized_target,
             resolved_compute_target="gpu",
+            requested_gpu_backend=normalized_backend,
+            resolved_gpu_backend=(
+                NATIVE_GPU_BACKEND if normalized_backend == "native" else PATCH_GPU_BACKEND
+            ),
             capabilities=capabilities,
             fallback_reason=None,
-            acceleration_backend=PENDING_ACCELERATION_BACKEND,
             rapids_hooks_installed=False,
         )
 
     return RuntimeExecutionContext(
         requested_compute_target=normalized_target,
         resolved_compute_target="cpu",
+        requested_gpu_backend=normalized_backend,
+        resolved_gpu_backend=CPU_GPU_BACKEND,
         capabilities=capabilities,
         fallback_reason=capabilities.unavailable_reason,
-        acceleration_backend=CPU_ACCELERATION_BACKEND,
         rapids_hooks_installed=False,
     )
 
@@ -213,22 +243,29 @@ def _load_rapids_hook_installers() -> RapidsHookInstallers:
 
 
 def activate_runtime_acceleration(context: RuntimeExecutionContext) -> RuntimeExecutionContext:
-    if context.resolved_compute_target != "gpu":
+    if context.resolved_gpu_backend == CPU_GPU_BACKEND:
         return context
+
+    if context.resolved_gpu_backend == NATIVE_GPU_BACKEND:
+        raise RuntimeError(
+            "Configured experiment.runtime.gpu_backend='native' but no explicit gpu_native "
+            "paths are registered in this runtime yet. Use gpu_backend='auto' or 'patch' "
+            "until the follow-on native issues land."
+        )
 
     try:
         rapids_installers = _load_rapids_hook_installers()
     except RuntimeError as exc:
         if context.requested_compute_target == "gpu":
             raise RuntimeError(
-                "Configured experiment.runtime.compute_target='gpu' but RAPIDS hooks are unavailable. "
+                "Configured GPU patch execution is unavailable. "
                 f"Reason: {exc}. Detection summary: {describe_runtime_capabilities(context.capabilities)}"
             ) from exc
         return replace(
             context,
             resolved_compute_target="cpu",
+            resolved_gpu_backend=CPU_GPU_BACKEND,
             fallback_reason=f"RAPIDS hooks unavailable: {exc}",
-            acceleration_backend=CPU_ACCELERATION_BACKEND,
             rapids_hooks_installed=False,
         )
 
@@ -244,7 +281,6 @@ def activate_runtime_acceleration(context: RuntimeExecutionContext) -> RuntimeEx
 
     return replace(
         context,
-        acceleration_backend=RAPIDS_ACCELERATION_BACKEND,
         rapids_hooks_installed=True,
     )
 
@@ -252,6 +288,8 @@ def activate_runtime_acceleration(context: RuntimeExecutionContext) -> RuntimeEx
 def export_runtime_execution_context(context: RuntimeExecutionContext) -> None:
     os.environ[REQUESTED_COMPUTE_TARGET_ENV] = context.requested_compute_target
     os.environ[RESOLVED_COMPUTE_TARGET_ENV] = context.resolved_compute_target
+    os.environ[REQUESTED_GPU_BACKEND_ENV] = context.requested_gpu_backend
+    os.environ[RESOLVED_GPU_BACKEND_ENV] = context.resolved_gpu_backend
     os.environ[GPU_AVAILABLE_ENV] = "true" if context.gpu_available else "false"
     os.environ[PLATFORM_SYSTEM_ENV] = context.capabilities.platform_system
     os.environ[VISIBLE_NVIDIA_DEVICES_ENV] = ",".join(context.capabilities.visible_nvidia_devices)
@@ -266,17 +304,19 @@ def export_runtime_execution_context(context: RuntimeExecutionContext) -> None:
 def _parse_exported_runtime_execution_context() -> RuntimeExecutionContext | None:
     requested_compute_target = os.getenv(REQUESTED_COMPUTE_TARGET_ENV)
     resolved_compute_target = os.getenv(RESOLVED_COMPUTE_TARGET_ENV)
+    requested_gpu_backend = os.getenv(REQUESTED_GPU_BACKEND_ENV)
+    resolved_gpu_backend = os.getenv(RESOLVED_GPU_BACKEND_ENV)
     gpu_available = os.getenv(GPU_AVAILABLE_ENV)
     platform_system = os.getenv(PLATFORM_SYSTEM_ENV)
-    acceleration_backend = os.getenv(ACCELERATION_BACKEND_ENV)
     rapids_hooks_installed = os.getenv(RAPIDS_HOOKS_INSTALLED_ENV)
 
     if (
         requested_compute_target is None
         or resolved_compute_target is None
+        or requested_gpu_backend is None
+        or resolved_gpu_backend is None
         or gpu_available is None
         or platform_system is None
-        or acceleration_backend is None
         or rapids_hooks_installed is None
     ):
         return None
@@ -296,18 +336,22 @@ def _parse_exported_runtime_execution_context() -> RuntimeExecutionContext | Non
     return RuntimeExecutionContext(
         requested_compute_target=requested_compute_target,
         resolved_compute_target=resolved_compute_target,
+        requested_gpu_backend=requested_gpu_backend,
+        resolved_gpu_backend=resolved_gpu_backend,
         capabilities=capabilities,
         fallback_reason=fallback_reason,
-        acceleration_backend=acceleration_backend,
         rapids_hooks_installed=rapids_hooks_installed == "true",
     )
 
 
-def get_runtime_execution_context(requested_compute_target: str = "auto") -> RuntimeExecutionContext:
+def get_runtime_execution_context(
+    requested_compute_target: str = "auto",
+    requested_gpu_backend: str = "auto",
+) -> RuntimeExecutionContext:
     exported_context = _parse_exported_runtime_execution_context()
     if exported_context is not None:
         return exported_context
-    return resolve_runtime_execution(requested_compute_target)
+    return resolve_runtime_execution(requested_compute_target, requested_gpu_backend)
 
 
 def describe_runtime_capabilities(capabilities: RuntimeCapabilitySnapshot) -> str:
@@ -328,6 +372,8 @@ def format_runtime_execution_context(context: RuntimeExecutionContext) -> str:
     summary = (
         f"requested_compute_target={context.requested_compute_target}, "
         f"resolved_compute_target={context.resolved_compute_target}, "
+        f"requested_gpu_backend={context.requested_gpu_backend}, "
+        f"resolved_gpu_backend={context.resolved_gpu_backend}, "
         f"gpu_available={context.gpu_available}, "
         f"acceleration_backend={context.acceleration_backend}, "
         f"rapids_hooks_installed={context.rapids_hooks_installed}, "
