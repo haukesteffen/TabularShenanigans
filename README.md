@@ -82,6 +82,7 @@ Available stage-specific commands:
 - `uv run python main.py submit`
 - `uv run python main.py submit --candidate-id <candidate_id>`
 - `uv run python main.py refresh-submissions`
+- `uv run python scripts/benchmark_gpu_checkpoint.py`
 
 Stage behavior:
 - `fetch`: ensures the competition zip is present locally.
@@ -90,6 +91,7 @@ Stage behavior:
 - `train`: trains one candidate and logs it to MLflow. Model candidates stage candidate artifacts in a temp bundle and upload them. Blend candidates download their base candidates from MLflow, materialize blended predictions, then upload the blended candidate run.
 - `submit`: downloads one candidate from MLflow, validates `test_predictions.csv` against `sample_submission.csv`, and when `experiment.submit.enabled=true` submits to Kaggle and records the submission event under that same candidate run.
 - `refresh-submissions`: scans Kaggle submission history, matches `submit=<submission_event_id>` descriptions, and appends new score observations back onto the matching candidate runs.
+- `benchmark_gpu_checkpoint.py`: runs the `#183` CPU vs `gpu_patch` vs `gpu_native` checkpoint matrix, writes a timestamped report plus raw logs under `reports/benchmark_checkpoints/`, temporarily rewrites repository-root `config.yaml` during the session, and restores it at the end while using an isolated file-based MLflow store inside the benchmark output directory.
 
 `submit` defaults to the derived `candidate_id` for the current config. Use `--candidate-id` when you want to submit another existing candidate for the same competition experiment.
 

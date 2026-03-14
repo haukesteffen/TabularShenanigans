@@ -1,3 +1,4 @@
+import time
 from dataclasses import dataclass
 
 import numpy as np
@@ -70,6 +71,7 @@ class ModelEvaluationArtifacts:
     oof_predictions: np.ndarray
     final_test_predictions: np.ndarray
     test_prediction_probabilities: np.ndarray | None = None
+    runtime_profile: dict[str, object] | None = None
 
 
 @dataclass(frozen=True)
@@ -369,6 +371,30 @@ def _coerce_prediction_values(values: object) -> np.ndarray:
     return np.asarray(values)
 
 
+def _describe_matrix_residency(values: object) -> dict[str, object]:
+    value_type = type(values)
+    module_name = value_type.__module__
+    type_name = value_type.__name__
+
+    if module_name.startswith("cudf."):
+        residency = "gpu_cudf"
+    elif module_name.startswith("cupy."):
+        residency = "gpu_cupy"
+    elif sparse.issparse(values):
+        residency = "cpu_scipy_sparse"
+    elif isinstance(values, pd.DataFrame):
+        residency = "cpu_pandas"
+    elif isinstance(values, np.ndarray):
+        residency = "cpu_numpy"
+    else:
+        residency = "unknown"
+
+    return {
+        "residency": residency,
+        "type_name": f"{module_name}.{type_name}",
+    }
+
+
 def _run_cv_evaluation(
     task_type: str,
     primary_metric: str,
@@ -376,7 +402,13 @@ def _run_cv_evaluation(
     training_context: PreparedTrainingContext,
     cv_random_state: int,
     collect_prediction_artifacts: bool,
-) -> tuple[ModelCvEvaluation, np.ndarray | None, np.ndarray | None, np.ndarray | None]:
+) -> tuple[
+    ModelCvEvaluation,
+    np.ndarray | None,
+    np.ndarray | None,
+    np.ndarray | None,
+    dict[str, object],
+]:
     model_definition, _, model_params = build_model(
         task_type,
         model_spec.model_registry_key,
@@ -400,6 +432,10 @@ def _run_cv_evaluation(
     binary_prediction_kind = None
     if task_type == "binary":
         binary_prediction_kind = get_binary_prediction_kind(primary_metric)
+    preprocess_wall_seconds = 0.0
+    fit_wall_seconds = 0.0
+    predict_wall_seconds = 0.0
+    first_fold_residency: dict[str, object] | None = None
 
     for fold_index, train_idx, valid_idx in training_context.split_indices:
         x_fold_train = training_context.x_train_features.iloc[train_idx]
@@ -407,6 +443,7 @@ def _run_cv_evaluation(
         y_fold_train = training_context.y_train.iloc[train_idx]
         y_fold_valid = training_context.y_train.iloc[valid_idx]
 
+        preprocess_started = time.perf_counter()
         if uses_gpu_native_preprocessing:
             preprocessor = build_gpu_native_preprocessor_from_schema(
                 feature_schema=training_context.feature_schema,
@@ -437,6 +474,15 @@ def _run_cv_evaluation(
             x_fold_valid_processed = _coerce_xgboost_gpu_input(x_fold_valid_processed, matrix_output_kind)
             if x_test_processed is not None:
                 x_test_processed = _coerce_xgboost_gpu_input(x_test_processed, matrix_output_kind)
+        preprocess_wall_seconds += time.perf_counter() - preprocess_started
+        if first_fold_residency is None:
+            first_fold_residency = {
+                "train_processed": _describe_matrix_residency(x_fold_train_processed),
+                "valid_processed": _describe_matrix_residency(x_fold_valid_processed),
+                "test_processed": (
+                    _describe_matrix_residency(x_test_processed) if x_test_processed is not None else None
+                ),
+            }
 
         _, model, _ = build_model(
             task_type,
@@ -451,8 +497,11 @@ def _run_cv_evaluation(
             categorical_columns=training_context.feature_schema.categorical_columns,
             uses_native_categorical_preprocessing=matrix_output_kind == "native_frame",
         )
+        fit_started = time.perf_counter()
         model.fit(x_fold_train_processed, y_fold_train, **model_fit_kwargs)
+        fit_wall_seconds += time.perf_counter() - fit_started
 
+        predict_started = time.perf_counter()
         if task_type == "binary":
             if training_context.positive_label is None or training_context.negative_label is None:
                 raise ValueError("Binary training requires resolved class metadata.")
@@ -470,6 +519,7 @@ def _run_cv_evaluation(
         fold_valid_predictions = _coerce_prediction_values(fold_valid_predictions)
         if fold_test_predictions is not None:
             fold_test_predictions = _coerce_prediction_values(fold_test_predictions)
+        predict_wall_seconds += time.perf_counter() - predict_started
 
         fold_score = score_predictions(
             task_type=task_type,
@@ -509,9 +559,17 @@ def _run_cv_evaluation(
         ),
         fold_metrics_df=fold_metrics_df,
     )
+    runtime_profile = {
+        "fold_count": len(training_context.split_indices),
+        "cv_preprocess_wall_seconds": preprocess_wall_seconds,
+        "cv_fit_wall_seconds": fit_wall_seconds,
+        "cv_predict_wall_seconds": predict_wall_seconds,
+        "cv_stage_wall_seconds": preprocess_wall_seconds + fit_wall_seconds + predict_wall_seconds,
+        "first_fold_residency": first_fold_residency,
+    }
 
     if not collect_prediction_artifacts:
-        return cv_evaluation, None, None, None
+        return cv_evaluation, None, None, None, runtime_profile
 
     if oof_predictions is None or test_predictions_per_fold is None:
         raise RuntimeError("Prediction artifacts were requested but not collected.")
@@ -537,6 +595,7 @@ def _run_cv_evaluation(
         oof_predictions,
         np.asarray(final_test_predictions),
         test_prediction_probabilities,
+        runtime_profile,
     )
 
 
@@ -547,7 +606,7 @@ def score_model_spec(
     training_context: PreparedTrainingContext,
     cv_random_state: int,
 ) -> ModelCvEvaluation:
-    cv_evaluation, _, _, _ = _run_cv_evaluation(
+    cv_evaluation, _, _, _, _ = _run_cv_evaluation(
         task_type=task_type,
         primary_metric=primary_metric,
         model_spec=model_spec,
@@ -565,7 +624,7 @@ def evaluate_model_spec(
     training_context: PreparedTrainingContext,
     cv_random_state: int,
 ) -> ModelEvaluationArtifacts:
-    cv_evaluation, oof_predictions, final_test_predictions, test_prediction_probabilities = _run_cv_evaluation(
+    cv_evaluation, oof_predictions, final_test_predictions, test_prediction_probabilities, runtime_profile = _run_cv_evaluation(
         task_type=task_type,
         primary_metric=primary_metric,
         model_spec=model_spec,
@@ -582,4 +641,5 @@ def evaluate_model_spec(
         oof_predictions=oof_predictions,
         final_test_predictions=final_test_predictions,
         test_prediction_probabilities=test_prediction_probabilities,
+        runtime_profile=runtime_profile,
     )
