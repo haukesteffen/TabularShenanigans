@@ -34,6 +34,8 @@ experiment:
 
   runtime:
     compute_target: auto
+    # Advanced/transitional override. Leave on auto for normal use.
+    # gpu_backend: auto
 
   candidate:
     candidate_type: model

@@ -210,6 +210,7 @@ class ExperimentRuntimeConfig(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     compute_target: Literal["auto", "cpu", "gpu"] = "auto"
+    gpu_backend: Literal["auto", "patch", "native"] = "auto"
 
 
 class ExperimentConfig(BaseModel):
@@ -309,7 +310,10 @@ class AppConfig(BaseModel):
     def runtime_execution_context(self):
         from tabular_shenanigans.runtime_execution import get_runtime_execution_context
 
-        return get_runtime_execution_context(self.experiment.runtime.compute_target)
+        return get_runtime_execution_context(
+            self.experiment.runtime.compute_target,
+            self.experiment.runtime.gpu_backend,
+        )
 
     @property
     def resolved_candidate_id(self) -> str:
@@ -339,7 +343,9 @@ class AppConfig(BaseModel):
                 },
                 "runtime": {
                     "compute_target": self.experiment.runtime.compute_target,
+                    "gpu_backend": self.experiment.runtime.gpu_backend,
                     "resolved_compute_target": self.runtime_execution_context.resolved_compute_target,
+                    "resolved_gpu_backend": self.runtime_execution_context.resolved_gpu_backend,
                     "acceleration_backend": self.runtime_execution_context.acceleration_backend,
                 },
             }

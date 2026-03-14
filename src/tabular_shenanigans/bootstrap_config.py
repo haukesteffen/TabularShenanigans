@@ -7,6 +7,7 @@ import yaml
 @dataclass(frozen=True)
 class BootstrapRuntimeConfig:
     compute_target: str = "auto"
+    gpu_backend: str = "auto"
 
 
 def _validate_compute_target(value: object) -> str:
@@ -21,6 +22,21 @@ def _validate_compute_target(value: object) -> str:
 
     raise ValueError(
         "experiment.runtime.compute_target must be one of ['auto', 'cpu', 'gpu']."
+    )
+
+
+def _validate_gpu_backend(value: object) -> str:
+    if value is None:
+        return "auto"
+    if not isinstance(value, str):
+        raise ValueError("experiment.runtime.gpu_backend must be a string when provided.")
+
+    normalized_value = value.strip().lower()
+    if normalized_value in {"auto", "patch", "native"}:
+        return normalized_value
+
+    raise ValueError(
+        "experiment.runtime.gpu_backend must be one of ['auto', 'patch', 'native']."
     )
 
 
@@ -57,4 +73,5 @@ def load_bootstrap_runtime_config(path: str | Path = "config.yaml") -> Bootstrap
 
     return BootstrapRuntimeConfig(
         compute_target=_validate_compute_target(runtime.get("compute_target")),
+        gpu_backend=_validate_gpu_backend(runtime.get("gpu_backend")),
     )
