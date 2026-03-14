@@ -151,9 +151,8 @@ Required top-level sections:
   - when GPU execution is active, `xgboost`, `lightgbm`, and `catboost` also switch to their GPU-specific estimator params automatically
   - when GPU execution is active, `logistic_regression` stays on the sklearn API surface but relies on the RAPIDS `cuml.accel` hook path
   - the RAPIDS-backed GPU path currently expects the project environment to be installed with `uv sync --extra boosters --extra gpu` on a Python 3.13 Linux `x86_64` CUDA 12 host
-  - when GPU execution is active for `xgboost`, the runtime keeps fold-local preprocessing semantics but converts dense fold outputs to `cupy` / `cudf` before XGBoost fit and predict
-  - when runtime resolves to `gpu_native` for the supported XGBoost slice, `frequency` preprocessing is performed by the repo-owned `cudf` path rather than patched pandas/sklearn behavior
-  - the XGBoost GPU-native input path currently supports dense preprocessing outputs such as `categorical_preprocessor: ordinal` and `categorical_preprocessor: frequency`
+  - when runtime resolves to `gpu_native` for the supported XGBoost slice, fold-local preprocessing remains per-CV-split, `frequency` preprocessing is performed by the repo-owned `cudf` path, and the first supported dense outputs stay GPU-resident through fit and predict
+  - the current native XGBoost support matrix is intentionally narrow and aligned with the documented `gpu_native` tuples above
   - the XGBoost GPU-native input path currently rejects sparse CSR preprocessing output, including `categorical_preprocessor: onehot` and related sparse `kbins` compositions; use a dense preprocessing option or force CPU execution
   - the `gpu_patch` logistic regression path currently supports `categorical_preprocessor: frequency` only
   - the `gpu_patch` logistic regression path currently rejects `categorical_preprocessor: ordinal`, `categorical_preprocessor: onehot`, and related sparse `kbins` compositions; use `frequency` or force CPU execution
