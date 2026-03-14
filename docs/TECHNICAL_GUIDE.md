@@ -4,7 +4,7 @@ Technical reference for the current repository design. Use GitHub issues and pul
 
 ## System Flow
 1. Enter the bootstrap entrypoint before importing runtime modules that depend on `pandas` or `sklearn`.
-2. Read `experiment.runtime.compute_target` and the optional advanced `experiment.runtime.gpu_backend` override from repository-root `config.yaml`, resolve hardware intent separately from backend choice for the current machine, install RAPIDS hooks only when the resolved backend is `gpu_patch`, and route GPU-capable booster families onto their GPU parameter paths.
+2. Read `experiment.runtime.compute_target` and the optional advanced `experiment.runtime.gpu_backend` override from repository-root `config.yaml`, resolve hardware capability separately from tuple routing, install RAPIDS hooks only when the registry resolves the current tuple to `gpu_patch`, and route GPU-capable booster families onto their GPU parameter paths.
 3. Load and validate the repository-root `config.yaml`.
 4. Normalize and validate `competition.task_type`, `competition.primary_metric`, and the candidate contract.
 5. Resolve the MLflow tracking URI from `experiment.tracking.tracking_uri`.
@@ -146,6 +146,7 @@ Stage notes:
 - [main.py](/Users/hs/dev/TabularShenanigans/main.py): thin repository-root wrapper that inserts `src/` on `sys.path` and forwards into the bootstrap entrypoint.
 - [bootstrap.py](/Users/hs/dev/TabularShenanigans/src/tabular_shenanigans/bootstrap.py): pre-runtime bootstrap hook point that resolves execution mode and installs RAPIDS hooks before runtime modules import `pandas` or `sklearn`.
 - [bootstrap_config.py](/Users/hs/dev/TabularShenanigans/src/tabular_shenanigans/bootstrap_config.py): lightweight YAML reader for the bootstrap-only runtime settings loaded before the full config model.
+- [execution_routing.py](/Users/hs/dev/TabularShenanigans/src/tabular_shenanigans/execution_routing.py): repo-owned tuple support registry and routing resolver for `cpu`, `gpu_patch`, and `gpu_native`.
 - [cli.py](/Users/hs/dev/TabularShenanigans/src/tabular_shenanigans/cli.py): CLI parser and linear stage dispatch after bootstrap completes.
 - [runtime_execution.py](/Users/hs/dev/TabularShenanigans/src/tabular_shenanigans/runtime_execution.py): runtime capability detection, RAPIDS hook activation, requested-versus-resolved execution context, and bootstrap/runtime metadata helpers.
 - [competition.py](/Users/hs/dev/TabularShenanigans/src/tabular_shenanigans/competition.py): in-memory competition preparation, fold assignment materialization, and prepared-context construction.
@@ -198,14 +199,15 @@ Required top-level keys:
 
 `experiment.runtime`:
 - `compute_target`: `auto`, `cpu`, or `gpu`
-  - `auto`: use GPU only when the machine exposes NVIDIA devices and RAPIDS hooks are available
+  - `auto`: choose the best registered implementation for the current tuple on the current machine: `gpu_native`, then `gpu_patch`, otherwise CPU fallback
   - `cpu`: stay on CPU
-  - `gpu`: require the GPU + RAPIDS path and fail fast otherwise
+  - `gpu`: require a registered GPU implementation for the current tuple and fail fast otherwise
 - optional `gpu_backend`: `auto`, `patch`, or `native`
   - advanced/transitional override; leave this at `auto` for normal use
-  - `auto`: when GPU execution is selected, route onto the current `gpu_patch` path
-  - `patch`: require the current RAPIDS hook-based `gpu_patch` path
-  - `native`: require the explicit `gpu_native` path
+  - `auto`: let the registry choose between `gpu_native` and `gpu_patch`
+  - `patch`: require the registered RAPIDS hook-based `gpu_patch` path for the current tuple
+  - `native`: require the registered explicit `gpu_native` path for the current tuple
+  - tuple routing is registry-driven and is resolved during bootstrap for model candidates before `pandas` / `sklearn` imports happen
   - current supported `gpu_native` tuple:
     - `model_family: logistic_regression`
     - `categorical_preprocessor: frequency`
@@ -213,7 +215,8 @@ Required top-level keys:
     - `model_family: xgboost`
     - `categorical_preprocessor: frequency`
     - `numeric_preprocessor: median` or `standardize`
-  - unsupported `gpu_native` tuples fail fast with repo-owned errors
+  - unsupported explicit `gpu_backend: patch` / `gpu_backend: native` requests fail fast with repo-owned errors
+  - under `compute_target: auto`, tuples with no registered GPU implementation intentionally fall back to CPU
 
 GPU dependency contract:
 - base project dependencies pin `numpy` and `pandas` into the RAPIDS-compatible range used by both CPU and GPU installs

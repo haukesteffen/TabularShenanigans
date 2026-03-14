@@ -308,11 +308,32 @@ class AppConfig(BaseModel):
 
     @property
     def runtime_execution_context(self):
-        from tabular_shenanigans.runtime_execution import get_runtime_execution_context
+        from tabular_shenanigans.execution_routing import resolve_model_candidate_runtime_execution
+        from tabular_shenanigans.runtime_execution import (
+            get_exported_runtime_execution_context,
+            get_runtime_execution_context,
+        )
 
-        return get_runtime_execution_context(
+        exported_runtime_execution_context = get_exported_runtime_execution_context()
+        if exported_runtime_execution_context is not None:
+            return exported_runtime_execution_context
+
+        runtime_execution_context = get_runtime_execution_context(
             self.experiment.runtime.compute_target,
             self.experiment.runtime.gpu_backend,
+        )
+        if not self.is_model_candidate:
+            return runtime_execution_context
+
+        candidate = self.experiment.candidate
+        return resolve_model_candidate_runtime_execution(
+            requested_compute_target=self.experiment.runtime.compute_target,
+            requested_gpu_backend=self.experiment.runtime.gpu_backend,
+            capabilities=runtime_execution_context.capabilities,
+            task_type=self.competition.task_type,
+            model_family=candidate.model_family,
+            numeric_preprocessor=candidate.numeric_preprocessor,
+            categorical_preprocessor=candidate.categorical_preprocessor,
         )
 
     @property

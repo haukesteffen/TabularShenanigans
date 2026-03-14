@@ -252,7 +252,7 @@ def activate_runtime_acceleration(context: RuntimeExecutionContext) -> RuntimeEx
     try:
         rapids_installers = _load_rapids_hook_installers()
     except RuntimeError as exc:
-        if context.requested_compute_target == "gpu":
+        if context.requested_compute_target == "gpu" or context.requested_gpu_backend == "patch":
             raise RuntimeError(
                 "Configured GPU patch execution is unavailable. "
                 f"Reason: {exc}. Detection summary: {describe_runtime_capabilities(context.capabilities)}"
@@ -340,11 +340,15 @@ def _parse_exported_runtime_execution_context() -> RuntimeExecutionContext | Non
     )
 
 
+def get_exported_runtime_execution_context() -> RuntimeExecutionContext | None:
+    return _parse_exported_runtime_execution_context()
+
+
 def get_runtime_execution_context(
     requested_compute_target: str = "auto",
     requested_gpu_backend: str = "auto",
 ) -> RuntimeExecutionContext:
-    exported_context = _parse_exported_runtime_execution_context()
+    exported_context = get_exported_runtime_execution_context()
     if exported_context is not None:
         return exported_context
     return resolve_runtime_execution(requested_compute_target, requested_gpu_backend)

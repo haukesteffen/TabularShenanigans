@@ -12,7 +12,6 @@ from tabular_shenanigans.cv import is_higher_better, resolve_positive_label, sco
 from tabular_shenanigans.data import CompetitionDatasetContext, get_binary_prediction_kind
 from tabular_shenanigans.feature_recipes import apply_feature_recipe
 from tabular_shenanigans.gpu_preprocess import (
-    SUPPORTED_GPU_NATIVE_NUMERIC_PREPROCESSOR_IDS,
     build_gpu_native_preprocessor_from_schema,
 )
 from tabular_shenanigans.models import (
@@ -125,77 +124,6 @@ def _validate_gpu_native_matrix_output(
     )
 
 
-def _validate_gpu_logistic_matrix_output(
-    uses_gpu_logistic_regression: bool,
-    categorical_preprocessor_id: str,
-    matrix_output_kind: str,
-) -> None:
-    if not uses_gpu_logistic_regression:
-        return
-    if categorical_preprocessor_id == "frequency":
-        return
-    if matrix_output_kind == "sparse_csr":
-        raise ValueError(
-            "Logistic regression GPU execution currently supports categorical_preprocessor='frequency' only in "
-            "this runtime. The sparse CSR path produced by categorical_preprocessor='onehot' and related kbins "
-            "compositions is not supported under the RAPIDS-hooked sklearn preprocessing stack yet. "
-            "Use categorical_preprocessor='frequency' or force CPU execution."
-        )
-    raise ValueError(
-        "Logistic regression GPU execution currently supports categorical_preprocessor='frequency' only in "
-        "this runtime. The RAPIDS-hooked sklearn preprocessing stack is not stable yet for "
-        f"categorical_preprocessor='{categorical_preprocessor_id}'. "
-        "Use categorical_preprocessor='frequency' or force CPU execution."
-    )
-
-
-def _validate_gpu_native_preprocessing_support(
-    resolved_gpu_backend: str,
-    model_registry_key: str,
-    numeric_preprocessor_id: str,
-    categorical_preprocessor_id: str,
-) -> None:
-    if resolved_gpu_backend != "gpu_native":
-        return
-    if model_registry_key not in {"logistic_regression", "xgboost"}:
-        raise ValueError(
-            "gpu_native currently supports model_family in ['logistic_regression', 'xgboost'] only "
-            "in this runtime. Use gpu_backend='auto' or 'patch' for other model families until the "
-            "follow-on native model issues land."
-        )
-    if categorical_preprocessor_id != "frequency":
-        raise ValueError(
-            "gpu_native currently supports categorical_preprocessor='frequency' only in this runtime. "
-            f"Got '{categorical_preprocessor_id}'."
-        )
-    if numeric_preprocessor_id not in SUPPORTED_GPU_NATIVE_NUMERIC_PREPROCESSOR_IDS:
-        raise ValueError(
-            "gpu_native currently supports numeric_preprocessor in "
-            f"{sorted(SUPPORTED_GPU_NATIVE_NUMERIC_PREPROCESSOR_IDS)} only. "
-            f"Got '{numeric_preprocessor_id}'."
-        )
-
-
-def _validate_gpu_native_logistic_support(
-    resolved_gpu_backend: str,
-    model_registry_key: str,
-    numeric_preprocessor_id: str,
-    categorical_preprocessor_id: str,
-) -> None:
-    if resolved_gpu_backend != "gpu_native" or model_registry_key != "logistic_regression":
-        return
-    if categorical_preprocessor_id != "frequency":
-        raise ValueError(
-            "gpu_native logistic regression currently supports categorical_preprocessor='frequency' only "
-            f"in this runtime. Got '{categorical_preprocessor_id}'."
-        )
-    if numeric_preprocessor_id != "standardize":
-        raise ValueError(
-            "gpu_native logistic regression currently supports numeric_preprocessor='standardize' only "
-            f"in this runtime. Got '{numeric_preprocessor_id}'."
-        )
-
-
 def build_prepared_training_context(
     config: AppConfig,
     dataset_context: CompetitionDatasetContext,
@@ -264,30 +192,8 @@ def build_prepared_training_context(
         config.resolved_model_registry_key == "xgboost"
         and config.runtime_execution_context.resolved_compute_target == "gpu"
     )
-    uses_gpu_logistic_regression = (
-        config.resolved_model_registry_key == "logistic_regression"
-        and config.runtime_execution_context.resolved_compute_target == "gpu"
-        and resolved_gpu_backend == "gpu_patch"
-    )
-    _validate_gpu_native_preprocessing_support(
-        resolved_gpu_backend=resolved_gpu_backend,
-        model_registry_key=config.resolved_model_registry_key,
-        numeric_preprocessor_id=candidate.numeric_preprocessor,
-        categorical_preprocessor_id=candidate.categorical_preprocessor,
-    )
-    _validate_gpu_native_logistic_support(
-        resolved_gpu_backend=resolved_gpu_backend,
-        model_registry_key=config.resolved_model_registry_key,
-        numeric_preprocessor_id=candidate.numeric_preprocessor,
-        categorical_preprocessor_id=candidate.categorical_preprocessor,
-    )
     _validate_gpu_native_matrix_output(
         uses_xgboost_gpu_native_inputs=uses_xgboost_gpu_native_inputs,
-        matrix_output_kind=matrix_output_kind,
-    )
-    _validate_gpu_logistic_matrix_output(
-        uses_gpu_logistic_regression=uses_gpu_logistic_regression,
-        categorical_preprocessor_id=candidate.categorical_preprocessor,
         matrix_output_kind=matrix_output_kind,
     )
     return PreparedTrainingContext(
