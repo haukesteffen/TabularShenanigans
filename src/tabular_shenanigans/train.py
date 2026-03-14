@@ -10,6 +10,7 @@ import pandas as pd
 
 from tabular_shenanigans.candidate_artifacts import (
     CANDIDATE_ARTIFACT_DIRNAME,
+    CANDIDATE_MANIFEST_FILENAME,
     build_base_config_snapshot,
     build_binary_accuracy_artifact_metadata,
     build_config_fingerprint,
@@ -238,15 +239,18 @@ def run_training(
     candidate = config.experiment.candidate
     candidate_id = config.resolved_candidate_id
     resolved_model_spec = _resolve_training_model_spec(config=config, model_spec=model_spec)
+    prepare_training_context_wall_seconds = 0.0
 
     training_context = prepared_training_context
     if training_context is None:
+        prepare_started = time.perf_counter()
         training_context = build_prepared_training_context(
             config=config,
             dataset_context=dataset_context,
         )
+        prepare_training_context_wall_seconds = time.perf_counter() - prepare_started
 
-    fit_started = time.perf_counter()
+    evaluation_started = time.perf_counter()
     evaluation_artifacts = evaluate_model_spec(
         task_type=competition.task_type,
         primary_metric=competition.primary_metric,
@@ -254,7 +258,7 @@ def run_training(
         training_context=training_context,
         cv_random_state=competition.cv.random_state,
     )
-    fit_wall_seconds = time.perf_counter() - fit_started
+    fit_wall_seconds = time.perf_counter() - evaluation_started
     model_result = evaluation_artifacts.model_result
     print(
         f"Training candidate: {candidate_id} | "
@@ -288,6 +292,10 @@ def run_training(
         tuning_provenance=tuning_provenance,
         mlflow_run_id=candidate_run.run_id,
     )
+    runtime_profile = dict(evaluation_artifacts.runtime_profile or {})
+    runtime_profile["prepare_training_context_wall_seconds"] = prepare_training_context_wall_seconds
+    candidate_manifest["runtime_profile"] = runtime_profile
+    artifact_staging_started = time.perf_counter()
     _stage_candidate_bundle(
         bundle_root=bundle_root,
         config=config,
@@ -296,6 +304,12 @@ def run_training(
         dataset_context=dataset_context,
         evaluation_artifacts=evaluation_artifacts,
         optimization_artifacts=optimization_artifacts,
+    )
+    runtime_profile["artifact_staging_wall_seconds"] = time.perf_counter() - artifact_staging_started
+    candidate_artifact_dir = bundle_root / CANDIDATE_ARTIFACT_DIRNAME
+    (candidate_artifact_dir / CANDIDATE_MANIFEST_FILENAME).write_text(
+        json.dumps(json_ready(candidate_manifest), indent=2, sort_keys=True),
+        encoding="utf-8",
     )
     optimization_summary = optimization_artifacts.summary if optimization_artifacts is not None else None
     log_candidate_run(

@@ -285,6 +285,19 @@ def _candidate_run_metrics(
         "feature_count": manifest.get("train_cols"),
         "fit_wall_seconds": fit_wall_seconds,
     }
+    runtime_profile = manifest.get("runtime_profile")
+    if isinstance(runtime_profile, dict):
+        for metric_name in (
+            "prepare_training_context_wall_seconds",
+            "cv_preprocess_wall_seconds",
+            "cv_fit_wall_seconds",
+            "cv_predict_wall_seconds",
+            "cv_stage_wall_seconds",
+            "artifact_staging_wall_seconds",
+        ):
+            metric_value = runtime_profile.get(metric_name)
+            if isinstance(metric_value, int | float):
+                metrics[metric_name] = metric_value
     if optimization_summary is not None:
         metrics["optimization_best_value"] = optimization_summary.get("best_value")  # type: ignore[assignment]
         metrics["optimization_trial_count"] = optimization_summary.get("trial_count")  # type: ignore[assignment]

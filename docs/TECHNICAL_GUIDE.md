@@ -154,16 +154,17 @@ Stage notes:
 - [data.py](/Users/hs/dev/TabularShenanigans/src/tabular_shenanigans/data.py): Kaggle downloads, zip access, schema inference, and sample-submission loading.
 - [eda.py](/Users/hs/dev/TabularShenanigans/src/tabular_shenanigans/eda.py): local EDA report generation.
 - [feature_recipes](/Users/hs/dev/TabularShenanigans/src/tabular_shenanigans/feature_recipes): deterministic feature recipes such as `fr0`, `fr1`, `fr2`, `fr3`, and the `fr2_ablate_*` / `fr3_ablate_*` grouped ablation variants used for `s6e3` recipe studies.
-- [model_evaluation.py](/Users/hs/dev/TabularShenanigans/src/tabular_shenanigans/model_evaluation.py): shared prepared training context and reusable CV evaluation logic for train/tune.
+- [model_evaluation.py](/Users/hs/dev/TabularShenanigans/src/tabular_shenanigans/model_evaluation.py): shared prepared training context, reusable CV evaluation logic for train/tune, and fold-stage runtime profiling for benchmark checkpoints.
 - [models.py](/Users/hs/dev/TabularShenanigans/src/tabular_shenanigans/models.py): model registry, capability checks, estimator construction, and tuning space definitions.
 - [preprocess.py](/Users/hs/dev/TabularShenanigans/src/tabular_shenanigans/preprocess.py): raw feature-frame preparation and split preprocessing components.
 - [cv.py](/Users/hs/dev/TabularShenanigans/src/tabular_shenanigans/cv.py): splitters and task-aware metric scoring.
-- [train.py](/Users/hs/dev/TabularShenanigans/src/tabular_shenanigans/train.py): model training workflow, candidate manifest construction, temp bundle staging, and MLflow candidate logging.
+- [train.py](/Users/hs/dev/TabularShenanigans/src/tabular_shenanigans/train.py): model training workflow, candidate manifest construction, temp bundle staging, MLflow candidate logging, and training-stage runtime profiling capture.
 - [blend.py](/Users/hs/dev/TabularShenanigans/src/tabular_shenanigans/blend.py): MLflow-backed base-candidate loading, compatibility checks, weighted blending, and blended candidate logging.
 - [tune.py](/Users/hs/dev/TabularShenanigans/src/tabular_shenanigans/tune.py): Optuna orchestration on top of the shared model-evaluation layer.
 - [submit.py](/Users/hs/dev/TabularShenanigans/src/tabular_shenanigans/submit.py): MLflow-backed candidate resolution, submission validation, Kaggle submit orchestration, and submission refresh.
 - [submission_history.py](/Users/hs/dev/TabularShenanigans/src/tabular_shenanigans/submission_history.py): candidate-run submission event/observation models and Kaggle refresh helpers.
 - [mlflow_store.py](/Users/hs/dev/TabularShenanigans/src/tabular_shenanigans/mlflow_store.py): MLflow experiment/run lookup, candidate-run creation, candidate download, artifact upload, and submission-history persistence.
+- [benchmark_gpu_checkpoint.py](/Users/hs/dev/TabularShenanigans/scripts/benchmark_gpu_checkpoint.py): issue-scoped benchmark harness for the early CPU vs `gpu_patch` vs `gpu_native` checkpoint, using a temporary file-based MLflow store and timestamped reports under `reports/benchmark_checkpoints/`.
 
 ## Configuration Contract
 Input:
@@ -292,6 +293,7 @@ Model candidate manifests currently record:
 - identity: `candidate_id`, `candidate_type`, `competition_slug`, `task_type`, `primary_metric`
 - provenance: `config_fingerprint`, `config_snapshot`, `mlflow_run_id`
 - runtime execution: requested/ resolved compute target, acceleration backend, RAPIDS hook status, and hardware capability snapshot
+- runtime profiling: training-context build time, fold-stage CV timings, artifact staging time, and first-fold matrix residency snapshots when collected
 - model info: `model_family`, `model_registry_key`, `estimator_name`
 - feature/preprocessing info: `feature_recipe_id`, `feature_columns`, `numeric_preprocessor`, `categorical_preprocessor`, `preprocessing_scheme_id`
 - CV summary: `cv_summary`
