@@ -204,8 +204,12 @@ Required top-level keys:
   - advanced/transitional override; leave this at `auto` for normal use
   - `auto`: when GPU execution is selected, route onto the current `gpu_patch` path
   - `patch`: require the current RAPIDS hook-based `gpu_patch` path
-  - `native`: require the future explicit `gpu_native` path
-  - today `gpu_backend: native` fails fast because no native tuples are registered yet
+  - `native`: require the explicit `gpu_native` path
+  - current supported `gpu_native` tuple:
+    - `model_family: xgboost`
+    - `categorical_preprocessor: frequency`
+    - `numeric_preprocessor: median` or `standardize`
+  - unsupported `gpu_native` tuples fail fast with repo-owned errors
 
 GPU dependency contract:
 - base project dependencies pin `numpy` and `pandas` into the RAPIDS-compatible range used by both CPU and GPU installs
@@ -258,6 +262,7 @@ Booster GPU routing contract:
 
 XGBoost GPU-native input contract:
 - when runtime execution resolves to GPU for `xgboost`, fold-local preprocessing still happens per fold so CV remains leakage-safe
+- when runtime execution resolves to `gpu_native` for the supported `frequency` slice, the repo uses an explicit `cudf` preprocessing path instead of CPU-side transformed folds plus conversion
 - after preprocessing, dense fold outputs are promoted to GPU-native inputs before `fit` and `predict`
   - pandas DataFrame outputs, such as the `frequency` categorical path, are promoted to `cudf.DataFrame`
   - dense ndarray outputs, such as the `ordinal` categorical path, are promoted to `cupy.ndarray`

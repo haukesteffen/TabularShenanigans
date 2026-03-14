@@ -247,11 +247,7 @@ def activate_runtime_acceleration(context: RuntimeExecutionContext) -> RuntimeEx
         return context
 
     if context.resolved_gpu_backend == NATIVE_GPU_BACKEND:
-        raise RuntimeError(
-            "Configured experiment.runtime.gpu_backend='native' but no explicit gpu_native "
-            "paths are registered in this runtime yet. Use gpu_backend='auto' or 'patch' "
-            "until the follow-on native issues land."
-        )
+        return context
 
     try:
         rapids_installers = _load_rapids_hook_installers()
