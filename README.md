@@ -139,6 +139,9 @@ Required top-level sections:
   - `patch`: require the current RAPIDS hook-based GPU path
   - `native`: require the explicit GPU-native path
   - the current `gpu_native` support matrix is intentionally narrow:
+    - `model_family: logistic_regression`
+    - `categorical_preprocessor: frequency`
+    - `numeric_preprocessor: standardize`
     - `model_family: xgboost`
     - `categorical_preprocessor: frequency`
     - `numeric_preprocessor: median` or `standardize`
@@ -150,8 +153,9 @@ Required top-level sections:
   - when runtime resolves to `gpu_native` for the supported XGBoost slice, `frequency` preprocessing is performed by the repo-owned `cudf` path rather than patched pandas/sklearn behavior
   - the XGBoost GPU-native input path currently supports dense preprocessing outputs such as `categorical_preprocessor: ordinal` and `categorical_preprocessor: frequency`
   - the XGBoost GPU-native input path currently rejects sparse CSR preprocessing output, including `categorical_preprocessor: onehot` and related sparse `kbins` compositions; use a dense preprocessing option or force CPU execution
-  - the GPU logistic regression path currently supports `categorical_preprocessor: frequency` only
-  - the GPU logistic regression path currently rejects `categorical_preprocessor: ordinal`, `categorical_preprocessor: onehot`, and related sparse `kbins` compositions; use `frequency` or force CPU execution
+  - the `gpu_patch` logistic regression path currently supports `categorical_preprocessor: frequency` only
+  - the `gpu_patch` logistic regression path currently rejects `categorical_preprocessor: ordinal`, `categorical_preprocessor: onehot`, and related sparse `kbins` compositions; use `frequency` or force CPU execution
+  - the `gpu_native` logistic regression path currently supports `categorical_preprocessor: frequency` with `numeric_preprocessor: standardize` only
 
 `experiment.candidate` keys:
 - shared:

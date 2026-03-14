@@ -142,11 +142,55 @@ def _build_logreg(
 ) -> tuple[object, dict[str, object]]:
     del random_state
     _validate_logreg_parameter_overrides(parameter_overrides)
+    runtime_execution_context = get_runtime_execution_context()
+    if runtime_execution_context.resolved_gpu_backend == "gpu_native":
+        params = _build_gpu_native_logreg_params(parameter_overrides)
+        try:
+            from cuml.linear_model import LogisticRegression as CuMlLogisticRegression
+        except ImportError as exc:
+            raise ImportError(
+                "gpu_native logistic regression requires the optional GPU dependencies. "
+                "Install them with `uv sync --extra boosters --extra gpu`."
+            ) from exc
+
+        estimator = CuMlLogisticRegression(**params)
+        return BinaryLabelEncodingClassifier(estimator), params
+
     params = _merge_model_params({"solver": "saga", "max_iter": 1000}, parameter_overrides)
     estimator = LogisticRegression(**params)
-    if get_runtime_execution_context().resolved_compute_target == "gpu":
+    if runtime_execution_context.resolved_gpu_backend == "gpu_patch":
         return BinaryLabelEncodingClassifier(estimator), params
     return estimator, params
+
+
+def _build_gpu_native_logreg_params(
+    parameter_overrides: dict[str, object] | None,
+) -> dict[str, object]:
+    resolved_overrides = dict(parameter_overrides or {})
+    class_weight = resolved_overrides.get("class_weight")
+    if class_weight not in (None,):
+        raise ValueError(
+            "gpu_native logistic regression currently does not support model_params.class_weight. "
+            "Use null, force gpu_backend='patch', or force CPU execution."
+        )
+    resolved_overrides.pop("class_weight", None)
+
+    l1_ratio = float(resolved_overrides.pop("l1_ratio", 0.0))
+    if l1_ratio == 0.0:
+        penalty = "l2"
+    elif l1_ratio == 1.0:
+        penalty = "l1"
+    else:
+        penalty = "elasticnet"
+
+    default_params: dict[str, object] = {
+        "penalty": penalty,
+        "max_iter": 1000,
+    }
+    if penalty == "elasticnet":
+        default_params["l1_ratio"] = l1_ratio
+    params = _merge_model_params(default_params, resolved_overrides)
+    return params
 
 
 def _build_random_forest_classifier(
@@ -375,6 +419,14 @@ def _build_hist_gradient_boosting_tuning_space(trial: object) -> dict[str, objec
 
 
 def _build_logreg_tuning_space(trial: object) -> dict[str, object]:
+    runtime_execution_context = get_runtime_execution_context()
+    if runtime_execution_context.resolved_gpu_backend == "gpu_native":
+        return {
+            "C": trial.suggest_float("C", 1e-4, 1e3, log=True),
+            "l1_ratio": trial.suggest_float("l1_ratio", 0.0, 1.0, step=0.05),
+            "max_iter": 1000,
+            "tol": trial.suggest_float("tol", 1e-4, 1e-2, log=True),
+        }
     return {
         "C": trial.suggest_float("C", 1e-4, 1e3, log=True),
         "class_weight": trial.suggest_categorical("class_weight", [None, "balanced"]),
