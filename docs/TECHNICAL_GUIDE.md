@@ -266,10 +266,12 @@ Booster GPU routing contract:
 
 XGBoost GPU-native input contract:
 - when runtime execution resolves to GPU for `xgboost`, fold-local preprocessing still happens per fold so CV remains leakage-safe
-- when runtime execution resolves to `gpu_native` for the supported `frequency` slice, the repo uses an explicit `cudf` preprocessing path instead of CPU-side transformed folds plus conversion
-- after preprocessing, dense fold outputs are promoted to GPU-native inputs before `fit` and `predict`
-  - pandas DataFrame outputs, such as the `frequency` categorical path, are promoted to `cudf.DataFrame`
-  - dense ndarray outputs, such as the `ordinal` categorical path, are promoted to `cupy.ndarray`
+- when runtime execution resolves to `gpu_native` for the supported XGBoost tuple, the repo uses the explicit native preprocessing path instead of CPU-side transformed folds plus conversion
+- the current native XGBoost support matrix remains intentionally narrow:
+  - `categorical_preprocessor: frequency`
+  - `numeric_preprocessor: median` or `standardize`
+- after preprocessing, supported dense fold outputs stay on GPU through `fit` and `predict`
+  - the current supported slice produces `cudf.DataFrame` fold outputs
 - prediction outputs are coerced back to NumPy before scoring and artifact assembly
 - sparse CSR preprocessing output is rejected before training for the XGBoost GPU-native path
   - this currently covers `categorical_preprocessor: onehot` and related sparse `kbins` compositions

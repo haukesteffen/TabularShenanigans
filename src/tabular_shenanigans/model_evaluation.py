@@ -26,6 +26,12 @@ from tabular_shenanigans.preprocess import (
     prepare_feature_frames,
     resolve_feature_schema,
 )
+
+
+def _module_startswith(values: object, prefix: str) -> bool:
+    return type(values).__module__.startswith(prefix)
+
+
 @dataclass(frozen=True)
 class CvSummary:
     metric_name: str
@@ -308,7 +314,7 @@ def build_prepared_training_context(
 
 
 def _coerce_processed_matrix(values: object, matrix_output_kind: str) -> object:
-    if type(values).__module__.startswith("cudf.") or type(values).__module__.startswith("cupy."):
+    if _module_startswith(values, "cudf") or _module_startswith(values, "cupy"):
         return values
     if matrix_output_kind == "native_frame":
         if not isinstance(values, pd.DataFrame):
@@ -341,7 +347,7 @@ def _coerce_xgboost_gpu_input(values: object, matrix_output_kind: str) -> object
             "XGBoost GPU execution currently does not support sparse CSR preprocessing output in this runtime."
         )
 
-    if type(values).__module__.startswith("cudf.") or type(values).__module__.startswith("cupy."):
+    if _module_startswith(values, "cudf") or _module_startswith(values, "cupy"):
         return values
 
     if isinstance(values, pd.DataFrame):
@@ -357,7 +363,7 @@ def _coerce_prediction_values(values: object) -> np.ndarray:
     if isinstance(values, np.ndarray):
         return values
 
-    if type(values).__module__.startswith("cupy."):
+    if _module_startswith(values, "cupy"):
         import cupy as cp
 
         return cp.asnumpy(values)
@@ -383,7 +389,7 @@ def _select_binary_positive_class_scores(
             return probability_values
         return probability_values[:, positive_class_index]
 
-    if type(probability_values).__module__.startswith("cupy."):
+    if _module_startswith(probability_values, "cupy"):
         return probability_values[:, positive_class_index]
 
     if hasattr(probability_values, "ndim") and getattr(probability_values, "ndim") == 1:
@@ -397,9 +403,9 @@ def _describe_matrix_residency(values: object) -> dict[str, object]:
     module_name = value_type.__module__
     type_name = value_type.__name__
 
-    if module_name.startswith("cudf."):
+    if module_name.startswith("cudf"):
         residency = "gpu_cudf"
-    elif module_name.startswith("cupy."):
+    elif module_name.startswith("cupy"):
         residency = "gpu_cupy"
     elif sparse.issparse(values):
         residency = "cpu_scipy_sparse"
