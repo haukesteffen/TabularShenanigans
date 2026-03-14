@@ -10,6 +10,10 @@ from tabular_shenanigans.config import AppConfig
 from tabular_shenanigans.cv import is_higher_better, resolve_positive_label, score_predictions
 from tabular_shenanigans.data import CompetitionDatasetContext, get_binary_prediction_kind
 from tabular_shenanigans.feature_recipes import apply_feature_recipe
+from tabular_shenanigans.gpu_preprocess import (
+    SUPPORTED_GPU_NATIVE_NUMERIC_PREPROCESSOR_IDS,
+    build_gpu_native_preprocessor_from_schema,
+)
 from tabular_shenanigans.models import (
     build_model,
     build_model_fit_kwargs,
@@ -94,6 +98,7 @@ class PreparedTrainingContext:
     preprocessing_scheme_id: str
     matrix_output_kind: str
     uses_xgboost_gpu_native_inputs: bool
+    uses_gpu_native_preprocessing: bool
 
 
 def _validate_gpu_native_matrix_output(
@@ -134,6 +139,33 @@ def _validate_gpu_logistic_matrix_output(
         f"categorical_preprocessor='{categorical_preprocessor_id}'. "
         "Use categorical_preprocessor='frequency' or force CPU execution."
     )
+
+
+def _validate_gpu_native_preprocessing_support(
+    resolved_gpu_backend: str,
+    model_registry_key: str,
+    numeric_preprocessor_id: str,
+    categorical_preprocessor_id: str,
+) -> None:
+    if resolved_gpu_backend != "gpu_native":
+        return
+    if model_registry_key != "xgboost":
+        raise ValueError(
+            "gpu_native currently supports model_family='xgboost' only in this runtime. "
+            "Use gpu_backend='auto' or 'patch' for other model families until the follow-on "
+            "native model issues land."
+        )
+    if categorical_preprocessor_id != "frequency":
+        raise ValueError(
+            "gpu_native currently supports categorical_preprocessor='frequency' only in this runtime. "
+            f"Got '{categorical_preprocessor_id}'."
+        )
+    if numeric_preprocessor_id not in SUPPORTED_GPU_NATIVE_NUMERIC_PREPROCESSOR_IDS:
+        raise ValueError(
+            "gpu_native currently supports numeric_preprocessor in "
+            f"{sorted(SUPPORTED_GPU_NATIVE_NUMERIC_PREPROCESSOR_IDS)} only. "
+            f"Got '{numeric_preprocessor_id}'."
+        )
 
 
 def build_prepared_training_context(
@@ -198,6 +230,8 @@ def build_prepared_training_context(
         model_id=config.resolved_model_registry_key,
         categorical_preprocessor_id=candidate.categorical_preprocessor,
     )
+    resolved_gpu_backend = config.runtime_execution_context.resolved_gpu_backend
+    uses_gpu_native_preprocessing = resolved_gpu_backend == "gpu_native"
     uses_xgboost_gpu_native_inputs = (
         config.resolved_model_registry_key == "xgboost"
         and config.runtime_execution_context.resolved_compute_target == "gpu"
@@ -205,6 +239,13 @@ def build_prepared_training_context(
     uses_gpu_logistic_regression = (
         config.resolved_model_registry_key == "logistic_regression"
         and config.runtime_execution_context.resolved_compute_target == "gpu"
+        and resolved_gpu_backend == "gpu_patch"
+    )
+    _validate_gpu_native_preprocessing_support(
+        resolved_gpu_backend=resolved_gpu_backend,
+        model_registry_key=config.resolved_model_registry_key,
+        numeric_preprocessor_id=candidate.numeric_preprocessor,
+        categorical_preprocessor_id=candidate.categorical_preprocessor,
     )
     _validate_gpu_native_matrix_output(
         uses_xgboost_gpu_native_inputs=uses_xgboost_gpu_native_inputs,
@@ -234,10 +275,13 @@ def build_prepared_training_context(
         preprocessing_scheme_id=candidate.preprocessing_scheme_id,
         matrix_output_kind=matrix_output_kind,
         uses_xgboost_gpu_native_inputs=uses_xgboost_gpu_native_inputs,
+        uses_gpu_native_preprocessing=uses_gpu_native_preprocessing,
     )
 
 
 def _coerce_processed_matrix(values: object, matrix_output_kind: str) -> object:
+    if type(values).__module__.startswith("cudf.") or type(values).__module__.startswith("cupy."):
+        return values
     if matrix_output_kind == "native_frame":
         if not isinstance(values, pd.DataFrame):
             raise ValueError("Native categorical preprocessing must produce a pandas DataFrame.")
@@ -318,6 +362,7 @@ def _run_cv_evaluation(
     preprocessing_scheme_id = training_context.preprocessing_scheme_id
     matrix_output_kind = training_context.matrix_output_kind
     uses_xgboost_gpu_native_inputs = training_context.uses_xgboost_gpu_native_inputs
+    uses_gpu_native_preprocessing = training_context.uses_gpu_native_preprocessing
 
     oof_predictions = (
         np.zeros(training_context.x_train_features.shape[0], dtype=float)
@@ -336,12 +381,19 @@ def _run_cv_evaluation(
         y_fold_train = training_context.y_train.iloc[train_idx]
         y_fold_valid = training_context.y_train.iloc[valid_idx]
 
-        preprocessor = build_preprocessor_from_schema(
-            feature_schema=training_context.feature_schema,
-            numeric_preprocessor_id=training_context.numeric_preprocessor,
-            categorical_preprocessor_id=training_context.categorical_preprocessor,
-            matrix_output_kind=matrix_output_kind,
-        )
+        if uses_gpu_native_preprocessing:
+            preprocessor = build_gpu_native_preprocessor_from_schema(
+                feature_schema=training_context.feature_schema,
+                numeric_preprocessor_id=training_context.numeric_preprocessor,
+                categorical_preprocessor_id=training_context.categorical_preprocessor,
+            )
+        else:
+            preprocessor = build_preprocessor_from_schema(
+                feature_schema=training_context.feature_schema,
+                numeric_preprocessor_id=training_context.numeric_preprocessor,
+                categorical_preprocessor_id=training_context.categorical_preprocessor,
+                matrix_output_kind=matrix_output_kind,
+            )
         x_fold_train_processed = preprocessor.fit_transform(x_fold_train)
         x_fold_valid_processed = preprocessor.transform(x_fold_valid)
         x_test_processed = None

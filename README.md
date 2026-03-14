@@ -137,11 +137,17 @@ Required top-level sections:
   - advanced/transitional override; leave this at `auto` for normal use
   - `auto`: when GPU execution is selected, route onto the current patch-based GPU path
   - `patch`: require the current RAPIDS hook-based GPU path
-  - `native`: require the future explicit GPU-native path; this currently fails fast because no `gpu_native` tuples are registered yet
+  - `native`: require the explicit GPU-native path
+  - the current `gpu_native` support matrix is intentionally narrow:
+    - `model_family: xgboost`
+    - `categorical_preprocessor: frequency`
+    - `numeric_preprocessor: median` or `standardize`
+  - unsupported `gpu_native` tuples fail fast with repo-owned errors
   - when GPU execution is active, `xgboost`, `lightgbm`, and `catboost` also switch to their GPU-specific estimator params automatically
   - when GPU execution is active, `logistic_regression` stays on the sklearn API surface but relies on the RAPIDS `cuml.accel` hook path
   - the RAPIDS-backed GPU path currently expects the project environment to be installed with `uv sync --extra boosters --extra gpu` on a Python 3.13 Linux `x86_64` CUDA 12 host
   - when GPU execution is active for `xgboost`, the runtime keeps fold-local preprocessing semantics but converts dense fold outputs to `cupy` / `cudf` before XGBoost fit and predict
+  - when runtime resolves to `gpu_native` for the supported XGBoost slice, `frequency` preprocessing is performed by the repo-owned `cudf` path rather than patched pandas/sklearn behavior
   - the XGBoost GPU-native input path currently supports dense preprocessing outputs such as `categorical_preprocessor: ordinal` and `categorical_preprocessor: frequency`
   - the XGBoost GPU-native input path currently rejects sparse CSR preprocessing output, including `categorical_preprocessor: onehot` and related sparse `kbins` compositions; use a dense preprocessing option or force CPU execution
   - the GPU logistic regression path currently supports `categorical_preprocessor: frequency` only
