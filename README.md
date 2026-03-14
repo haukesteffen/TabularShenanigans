@@ -150,6 +150,7 @@ Required top-level sections:
     - `numeric_preprocessor: median` or `standardize`
   - unsupported explicit `gpu_backend: patch` / `gpu_backend: native` requests fail fast with repo-owned errors
   - under `compute_target: auto`, tuples with no registered GPU implementation intentionally fall back to CPU
+  - `extra_trees` and `hist_gradient_boosting` are currently intentional CPU-fallback families under `compute_target: auto` even on GPU hosts; this repo does not ship custom GPU implementations for them
   - when GPU execution is active, `xgboost`, `lightgbm`, and `catboost` also switch to their GPU-specific estimator params automatically
   - when GPU execution is active, `logistic_regression` stays on the sklearn API surface but relies on the RAPIDS `cuml.accel` hook path
   - the RAPIDS-backed GPU path currently expects the project environment to be installed with `uv sync --extra boosters --extra gpu` on a Python 3.13 Linux `x86_64` CUDA 12 host

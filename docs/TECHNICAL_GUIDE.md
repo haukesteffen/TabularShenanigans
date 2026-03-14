@@ -217,6 +217,8 @@ Required top-level keys:
     - `numeric_preprocessor: median` or `standardize`
   - unsupported explicit `gpu_backend: patch` / `gpu_backend: native` requests fail fast with repo-owned errors
   - under `compute_target: auto`, tuples with no registered GPU implementation intentionally fall back to CPU
+  - `extra_trees` and `hist_gradient_boosting` are currently intentional CPU-fallback families on GPU hosts because no maintained official GPU implementation is registered for them in this runtime
+  - `#181` does not authorize custom GPU implementations for those algorithms; a future GPU path would need to come from a maintained upstream library and then be added to the registry
 
 GPU dependency contract:
 - base project dependencies pin `numpy` and `pandas` into the RAPIDS-compatible range used by both CPU and GPU installs

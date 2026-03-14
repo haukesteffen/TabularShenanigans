@@ -10,6 +10,7 @@ from tabular_shenanigans.runtime_execution import (
 
 
 GPU_EXECUTION_PATHS = (NATIVE_GPU_BACKEND, PATCH_GPU_BACKEND)
+CPU_ONLY_MODEL_FAMILIES = ("extra_trees", "hist_gradient_boosting")
 
 
 @dataclass(frozen=True)
@@ -89,6 +90,10 @@ def _build_gpu_support_registry() -> dict[tuple[str, str, str, str], tuple[str, 
 GPU_SUPPORT_REGISTRY = _build_gpu_support_registry()
 
 
+def is_cpu_only_model_family(model_family: str) -> bool:
+    return model_family in CPU_ONLY_MODEL_FAMILIES
+
+
 def format_model_execution_routing_key(key: ModelExecutionRoutingKey) -> str:
     return (
         f"(task_type={key.task_type}, model_family={key.model_family}, "
@@ -99,6 +104,19 @@ def format_model_execution_routing_key(key: ModelExecutionRoutingKey) -> str:
 
 def get_registered_gpu_execution_paths(key: ModelExecutionRoutingKey) -> tuple[str, ...]:
     return GPU_SUPPORT_REGISTRY.get(key.to_tuple(), ())
+
+
+def describe_missing_gpu_implementation(key: ModelExecutionRoutingKey) -> str:
+    if is_cpu_only_model_family(key.model_family):
+        return (
+            f"{key.model_family} is intentionally CPU-only in this runtime because no maintained "
+            "official GPU implementation is registered for "
+            f"{format_model_execution_routing_key(key)}"
+        )
+    return (
+        "No supported GPU implementation is registered for "
+        f"{format_model_execution_routing_key(key)}"
+    )
 
 
 def resolve_model_candidate_runtime_execution(
@@ -193,7 +211,8 @@ def resolve_model_candidate_runtime_execution(
     if requested_compute_target == "gpu":
         raise RuntimeError(
             "Configured experiment.runtime.compute_target='gpu' but no supported GPU implementation is "
-            f"registered for {format_model_execution_routing_key(routing_key)}."
+            f"registered for {format_model_execution_routing_key(routing_key)}. "
+            f"Reason: {describe_missing_gpu_implementation(routing_key)}"
         )
 
     return RuntimeExecutionContext(
@@ -202,9 +221,6 @@ def resolve_model_candidate_runtime_execution(
         requested_gpu_backend=requested_gpu_backend,
         resolved_gpu_backend=CPU_GPU_BACKEND,
         capabilities=capabilities,
-        fallback_reason=(
-            "No supported GPU implementation is registered for "
-            f"{format_model_execution_routing_key(routing_key)}"
-        ),
+        fallback_reason=describe_missing_gpu_implementation(routing_key),
         rapids_hooks_installed=False,
     )
