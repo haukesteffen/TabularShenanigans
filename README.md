@@ -132,14 +132,15 @@ Required top-level sections:
 
 `experiment.runtime` keys:
 - `compute_target`: `auto`, `cpu`, or `gpu`
-  - `auto`: prefer GPU only when the runtime exposes visible NVIDIA devices and RAPIDS hooks are available, otherwise fall back to CPU
+  - `auto`: choose the best registered implementation for the current tuple on the current machine: `gpu_native` first, then `gpu_patch`, otherwise CPU fallback
   - `cpu`: force CPU execution
-  - `gpu`: require GPU execution and fail fast when no GPU runtime or RAPIDS hook path is available
+  - `gpu`: require GPU execution and fail fast when no supported GPU implementation exists for the current tuple on the current machine
 - optional `gpu_backend`: `auto`, `patch`, or `native`
   - advanced/transitional override; leave this at `auto` for normal use
-  - `auto`: when GPU execution is selected, route onto the current patch-based GPU path
-  - `patch`: require the current RAPIDS hook-based GPU path
-  - `native`: require the explicit GPU-native path
+  - `auto`: let the registry choose between `gpu_native` and `gpu_patch`
+  - `patch`: require the registered RAPIDS hook-based GPU path for the current tuple
+  - `native`: require the registered explicit GPU-native path for the current tuple
+  - tuple routing is registry-driven rather than spread across model-specific branches
   - the current `gpu_native` support matrix is intentionally narrow:
     - `model_family: logistic_regression`
     - `categorical_preprocessor: frequency`
@@ -147,7 +148,8 @@ Required top-level sections:
     - `model_family: xgboost`
     - `categorical_preprocessor: frequency`
     - `numeric_preprocessor: median` or `standardize`
-  - unsupported `gpu_native` tuples fail fast with repo-owned errors
+  - unsupported explicit `gpu_backend: patch` / `gpu_backend: native` requests fail fast with repo-owned errors
+  - under `compute_target: auto`, tuples with no registered GPU implementation intentionally fall back to CPU
   - when GPU execution is active, `xgboost`, `lightgbm`, and `catboost` also switch to their GPU-specific estimator params automatically
   - when GPU execution is active, `logistic_regression` stays on the sklearn API surface but relies on the RAPIDS `cuml.accel` hook path
   - the RAPIDS-backed GPU path currently expects the project environment to be installed with `uv sync --extra boosters --extra gpu` on a Python 3.13 Linux `x86_64` CUDA 12 host

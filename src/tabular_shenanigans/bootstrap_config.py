@@ -8,6 +8,11 @@ import yaml
 class BootstrapRuntimeConfig:
     compute_target: str = "auto"
     gpu_backend: str = "auto"
+    task_type: str | None = None
+    candidate_type: str | None = None
+    model_family: str | None = None
+    numeric_preprocessor: str | None = None
+    categorical_preprocessor: str | None = None
 
 
 def _validate_compute_target(value: object) -> str:
@@ -66,12 +71,21 @@ def load_bootstrap_runtime_config(path: str | Path = "config.yaml") -> Bootstrap
         raise ValueError("experiment must be a mapping when provided.")
 
     runtime = experiment.get("runtime")
-    if runtime is None:
-        return BootstrapRuntimeConfig()
-    if not isinstance(runtime, dict):
+    if runtime is not None and not isinstance(runtime, dict):
         raise ValueError("experiment.runtime must be a mapping when provided.")
+    candidate = experiment.get("candidate")
+    if candidate is not None and not isinstance(candidate, dict):
+        raise ValueError("experiment.candidate must be a mapping when provided.")
+    competition = raw_data.get("competition")
+    if competition is not None and not isinstance(competition, dict):
+        raise ValueError("competition must be a mapping when provided.")
 
     return BootstrapRuntimeConfig(
-        compute_target=_validate_compute_target(runtime.get("compute_target")),
-        gpu_backend=_validate_gpu_backend(runtime.get("gpu_backend")),
+        compute_target=_validate_compute_target(None if runtime is None else runtime.get("compute_target")),
+        gpu_backend=_validate_gpu_backend(None if runtime is None else runtime.get("gpu_backend")),
+        task_type=None if competition is None else competition.get("task_type"),
+        candidate_type=None if candidate is None else candidate.get("candidate_type"),
+        model_family=None if candidate is None else candidate.get("model_family"),
+        numeric_preprocessor=None if candidate is None else candidate.get("numeric_preprocessor"),
+        categorical_preprocessor=None if candidate is None else candidate.get("categorical_preprocessor"),
     )
