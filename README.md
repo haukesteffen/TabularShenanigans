@@ -162,7 +162,8 @@ Required top-level sections:
     | `lightgbm` | `gpu_native` | `onehot` keeps the existing sparse CSR boundary; the model still trains through the explicit CUDA adapter |
     | `xgboost` | `gpu_native` for `frequency + median|standardize`; `gpu_patch` for the remaining registered `ordinal` / `frequency` tuples; CPU fallback otherwise | sparse GPU-native inputs remain unsupported |
     | `catboost` | `gpu_native` for `categorical_preprocessor: native`; CPU fallback otherwise | preprocessing stays on `cpu_native_frame` |
-    | `ridge`, `elasticnet`, `random_forest` | CPU fallback | no GPU path is registered yet |
+    | `ridge`, `elasticnet` | `gpu_native` for `frequency + median|standardize`; CPU fallback otherwise | explicit cuML regressors stay on dense inputs only |
+    | `random_forest` | CPU fallback | no GPU path is registered yet |
     | `extra_trees`, `hist_gradient_boosting` | CPU fallback | intentional fallback because no maintained official GPU backend is registered |
 
   - preprocessing backend selection is separate from model routing, so a GPU host can still resolve to explicit GPU preprocessing while the model backend falls back to CPU
@@ -171,13 +172,15 @@ Required top-level sections:
   - `extra_trees` and `hist_gradient_boosting` are currently intentional CPU-fallback families under `compute_target: auto` even on GPU hosts; this repo does not ship custom GPU implementations for them
   - when GPU execution is active, `xgboost` and `catboost` switch to their GPU-specific estimator params automatically
   - when runtime resolves to `gpu_native` for `lightgbm`, the repo uses an explicit LightGBM adapter, validates the installed CUDA build, and then trains with `device_type="cuda"`
-  - when GPU execution is active, `logistic_regression` stays on the sklearn API surface but relies on the RAPIDS `cuml.accel` hook path
+  - when runtime resolves to `gpu_patch` for `logistic_regression`, the repo keeps the sklearn estimator surface and relies on the RAPIDS `cuml.accel` hook path
   - on GPU hosts, preprocessing can resolve to an explicit GPU backend even when the model backend falls back to CPU; GPU outputs are coerced back to CPU before fit in those hybrid cases
   - `gpu_cuml` is the current maintained explicit preprocessing backend and currently supports dense `categorical_preprocessor: onehot` with numeric `median`, `standardize`, or `kbins`
   - `gpu_patch` preprocessing currently keeps the existing sklearn/pandas constructors and runs them after RAPIDS hooks are installed when no explicit GPU preprocessing backend is selected
   - `gpu_native_frequency` is currently the only explicit GPU preprocessing backend
   - the RAPIDS-backed GPU path currently expects the project environment to be installed with `uv sync --extra boosters --extra gpu` on a Python 3.13 Linux `x86_64` CUDA 12 host
   - the LightGBM `gpu_native` path additionally expects a CUDA-enabled LightGBM source build; the repo ships `./scripts/install_lightgbm_cuda.sh` and `PYTHONPATH=src uv run python scripts/validate_lightgbm_cuda_build.py` for that contract
+  - when runtime resolves to `gpu_native` for `ridge` or `elasticnet`, the repo builds explicit `cuml.Ridge` / `cuml.ElasticNet` estimators for the `frequency + median|standardize` slice and flattens predictions back to the repo's single-target 1D regression contract
+  - the `gpu_native` ridge and elasticnet paths accept only the cuML-overlapping `model_params` subset; unsupported sklearn-only params fail with repo-owned errors
   - when runtime resolves to `gpu_native` for the supported XGBoost slice, fold-local preprocessing remains per-CV-split, `frequency` preprocessing is performed by the repo-owned `cudf` path, and the first supported dense outputs stay GPU-resident through fit and predict
   - the current native XGBoost support matrix is intentionally narrow and aligned with the documented `gpu_native` tuples above
   - explicit cuML preprocessing currently stays on dense output only; sparse onehot paths continue to use `gpu_patch` or CPU fallback

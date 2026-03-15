@@ -22,6 +22,14 @@ ModelBuilder = Callable[[int, dict[str, object] | None], tuple[object, dict[str,
 FitKwargsBuilder = Callable[[object, list[str], list[str]], dict[str, object]]
 TuningSpaceBuilder = Callable[[object], dict[str, object]]
 
+GPU_NATIVE_RIDGE_SUPPORTED_PARAM_NAMES = frozenset({"alpha", "copy_X", "fit_intercept", "solver"})
+GPU_NATIVE_RIDGE_SUPPORTED_SOLVERS = frozenset({"auto", "eig", "svd"})
+GPU_NATIVE_ELASTICNET_SUPPORTED_PARAM_NAMES = frozenset(
+    {"alpha", "fit_intercept", "l1_ratio", "max_iter", "selection", "solver", "tol"}
+)
+GPU_NATIVE_ELASTICNET_SUPPORTED_SOLVERS = frozenset({"cd", "qn"})
+GPU_NATIVE_ELASTICNET_SUPPORTED_SELECTIONS = frozenset({"cyclic", "random"})
+
 
 @dataclass(frozen=True)
 class ModelDefinition:
@@ -66,6 +74,21 @@ class BinaryLabelEncodingClassifier:
         return self.estimator.predict_proba(x_values)
 
 
+class SingleTargetRegressionAdapter:
+    def __init__(self, estimator: object) -> None:
+        self.estimator = estimator
+
+    def fit(self, x_train: object, y_train: pd.Series, **fit_kwargs: object) -> "SingleTargetRegressionAdapter":
+        self.estimator.fit(x_train, y_train, **fit_kwargs)
+        return self
+
+    def predict(self, x_values: object) -> object:
+        return _normalize_single_target_regression_predictions(self.estimator.predict(x_values))
+
+    def __getattr__(self, attribute_name: str) -> object:
+        return getattr(self.estimator, attribute_name)
+
+
 def _merge_model_params(
     default_params: dict[str, object],
     parameter_overrides: dict[str, object] | None = None,
@@ -90,8 +113,172 @@ def _resolve_booster_runtime_defaults(model_id: str) -> dict[str, object]:
     return {}
 
 
-def _build_ridge(random_state: int, parameter_overrides: dict[str, object] | None = None) -> tuple[Ridge, dict[str, object]]:
+def _normalize_single_target_regression_predictions(predictions: object) -> object:
+    prediction_ndim = getattr(predictions, "ndim", None)
+    if prediction_ndim != 2:
+        return predictions
+
+    prediction_shape = getattr(predictions, "shape", None)
+    if prediction_shape is None or len(prediction_shape) != 2:
+        return predictions
+    if prediction_shape[1] != 1:
+        raise ValueError(
+            "Single-target regression predictions must be 1-dimensional or single-column. "
+            f"Observed shape: {prediction_shape!r}"
+        )
+
+    if hasattr(predictions, "iloc"):
+        return predictions.iloc[:, 0]
+    if hasattr(predictions, "reshape"):
+        return predictions.reshape(-1)
+    return predictions
+
+
+def _import_cuml_linear_model(
+    model_class_name: str,
+    *,
+    model_label: str,
+) -> type[object]:
+    try:
+        from cuml import linear_model as cuml_linear_model
+    except ImportError as exc:
+        raise ImportError(
+            f"gpu_native {model_label} requires the optional GPU dependencies. "
+            "Install them with `uv sync --extra boosters --extra gpu`."
+        ) from exc
+
+    model_class = getattr(cuml_linear_model, model_class_name, None)
+    if model_class is None:
+        raise ImportError(f"cuml.linear_model.{model_class_name} is unavailable in this environment.")
+    return model_class
+
+
+def _is_numeric_scalar_param(value: object) -> bool:
+    return isinstance(value, (int, float, np.integer, np.floating)) and not isinstance(value, bool)
+
+
+def _resolve_supported_gpu_native_params(
+    *,
+    model_label: str,
+    parameter_overrides: Mapping[str, object] | None,
+    supported_param_names: frozenset[str],
+) -> dict[str, object]:
+    resolved_overrides = dict(parameter_overrides or {})
+    unsupported_param_names = sorted(set(resolved_overrides) - supported_param_names)
+    if unsupported_param_names:
+        raise ValueError(
+            f"gpu_native {model_label} only supports cuML-overlapping model_params {sorted(supported_param_names)}. "
+            f"Unsupported params: {unsupported_param_names}"
+        )
+    return resolved_overrides
+
+
+def _build_gpu_native_ridge_params(
+    parameter_overrides: Mapping[str, object] | None,
+) -> dict[str, object]:
+    resolved_overrides = _resolve_supported_gpu_native_params(
+        model_label="ridge",
+        parameter_overrides=parameter_overrides,
+        supported_param_names=GPU_NATIVE_RIDGE_SUPPORTED_PARAM_NAMES,
+    )
+
+    if "alpha" in resolved_overrides:
+        alpha_value = resolved_overrides["alpha"]
+        if not _is_numeric_scalar_param(alpha_value):
+            raise ValueError("gpu_native ridge model_params.alpha must be a numeric scalar.")
+        alpha_float = float(alpha_value)
+        if not np.isfinite(alpha_float) or alpha_float <= 0.0:
+            raise ValueError("gpu_native ridge model_params.alpha must be finite and > 0.")
+
+    if "fit_intercept" in resolved_overrides and not isinstance(resolved_overrides["fit_intercept"], bool):
+        raise ValueError("gpu_native ridge model_params.fit_intercept must be a boolean.")
+
+    if "copy_X" in resolved_overrides and not isinstance(resolved_overrides["copy_X"], bool):
+        raise ValueError("gpu_native ridge model_params.copy_X must be a boolean.")
+
+    if "solver" in resolved_overrides:
+        solver = resolved_overrides["solver"]
+        if not isinstance(solver, str) or solver not in GPU_NATIVE_RIDGE_SUPPORTED_SOLVERS:
+            raise ValueError(
+                "gpu_native ridge model_params.solver must be one of "
+                f"{sorted(GPU_NATIVE_RIDGE_SUPPORTED_SOLVERS)}."
+            )
+
+    return _merge_model_params({}, resolved_overrides)
+
+
+def _build_gpu_native_elasticnet_params(
+    parameter_overrides: Mapping[str, object] | None,
+) -> dict[str, object]:
+    resolved_overrides = _resolve_supported_gpu_native_params(
+        model_label="elasticnet",
+        parameter_overrides=parameter_overrides,
+        supported_param_names=GPU_NATIVE_ELASTICNET_SUPPORTED_PARAM_NAMES,
+    )
+
+    if "alpha" in resolved_overrides:
+        alpha_value = resolved_overrides["alpha"]
+        if not _is_numeric_scalar_param(alpha_value):
+            raise ValueError("gpu_native elasticnet model_params.alpha must be a numeric scalar.")
+        alpha_float = float(alpha_value)
+        if not np.isfinite(alpha_float) or alpha_float < 0.0:
+            raise ValueError("gpu_native elasticnet model_params.alpha must be finite and >= 0.")
+
+    if "l1_ratio" in resolved_overrides:
+        l1_ratio_value = resolved_overrides["l1_ratio"]
+        if not _is_numeric_scalar_param(l1_ratio_value):
+            raise ValueError("gpu_native elasticnet model_params.l1_ratio must be numeric.")
+        l1_ratio_float = float(l1_ratio_value)
+        if not np.isfinite(l1_ratio_float) or not 0.0 <= l1_ratio_float <= 1.0:
+            raise ValueError(
+                "gpu_native elasticnet model_params.l1_ratio must be finite and within [0, 1]."
+            )
+
+    if "fit_intercept" in resolved_overrides and not isinstance(resolved_overrides["fit_intercept"], bool):
+        raise ValueError("gpu_native elasticnet model_params.fit_intercept must be a boolean.")
+
+    if "max_iter" in resolved_overrides:
+        max_iter = resolved_overrides["max_iter"]
+        if not isinstance(max_iter, int) or isinstance(max_iter, bool):
+            raise ValueError("gpu_native elasticnet model_params.max_iter must be an integer.")
+        if max_iter <= 0:
+            raise ValueError("gpu_native elasticnet model_params.max_iter must be > 0.")
+
+    if "tol" in resolved_overrides:
+        tol_value = resolved_overrides["tol"]
+        if not _is_numeric_scalar_param(tol_value):
+            raise ValueError("gpu_native elasticnet model_params.tol must be numeric.")
+        tol_float = float(tol_value)
+        if not np.isfinite(tol_float) or tol_float <= 0.0:
+            raise ValueError("gpu_native elasticnet model_params.tol must be finite and > 0.")
+
+    if "solver" in resolved_overrides:
+        solver = resolved_overrides["solver"]
+        if not isinstance(solver, str) or solver not in GPU_NATIVE_ELASTICNET_SUPPORTED_SOLVERS:
+            raise ValueError(
+                "gpu_native elasticnet model_params.solver must be one of "
+                f"{sorted(GPU_NATIVE_ELASTICNET_SUPPORTED_SOLVERS)}."
+            )
+
+    if "selection" in resolved_overrides:
+        selection = resolved_overrides["selection"]
+        if not isinstance(selection, str) or selection not in GPU_NATIVE_ELASTICNET_SUPPORTED_SELECTIONS:
+            raise ValueError(
+                "gpu_native elasticnet model_params.selection must be one of "
+                f"{sorted(GPU_NATIVE_ELASTICNET_SUPPORTED_SELECTIONS)}."
+            )
+
+    return _merge_model_params({}, resolved_overrides)
+
+
+def _build_ridge(random_state: int, parameter_overrides: dict[str, object] | None = None) -> tuple[object, dict[str, object]]:
     del random_state
+    runtime_execution_context = get_runtime_execution_context()
+    if runtime_execution_context.resolved_gpu_backend == "gpu_native":
+        params = _build_gpu_native_ridge_params(parameter_overrides)
+        estimator_class = _import_cuml_linear_model("Ridge", model_label="ridge")
+        return SingleTargetRegressionAdapter(estimator_class(**params)), params
+
     params = _merge_model_params({}, parameter_overrides)
     return Ridge(**params), params
 
@@ -99,8 +286,14 @@ def _build_ridge(random_state: int, parameter_overrides: dict[str, object] | Non
 def _build_elasticnet(
     random_state: int,
     parameter_overrides: dict[str, object] | None = None,
-) -> tuple[ElasticNet, dict[str, object]]:
+) -> tuple[object, dict[str, object]]:
     del random_state
+    runtime_execution_context = get_runtime_execution_context()
+    if runtime_execution_context.resolved_gpu_backend == "gpu_native":
+        params = _build_gpu_native_elasticnet_params(parameter_overrides)
+        estimator_class = _import_cuml_linear_model("ElasticNet", model_label="elasticnet")
+        return SingleTargetRegressionAdapter(estimator_class(**params)), params
+
     params = _merge_model_params({}, parameter_overrides)
     return ElasticNet(**params), params
 
