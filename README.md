@@ -154,19 +154,18 @@ Required top-level sections:
     - `gpu_cuml`
     - `gpu_patch`
     - `gpu_native_frequency`
-  - the current `gpu_native` support matrix is intentionally narrow:
-    - `model_family: logistic_regression`
-    - `categorical_preprocessor: frequency`
-    - `numeric_preprocessor: standardize`
-    - `model_family: lightgbm`
-    - `categorical_preprocessor: onehot`, `ordinal`, or `frequency`
-    - `numeric_preprocessor: median`, `standardize`, or `kbins`
-    - `model_family: xgboost`
-    - `categorical_preprocessor: frequency`
-    - `numeric_preprocessor: median` or `standardize`
-    - `model_family: catboost`
-    - `categorical_preprocessor: native`
-    - `numeric_preprocessor: median`, `standardize`, or `kbins`
+  - current `compute_target: auto` routing on supported Linux NVIDIA hosts is:
+
+    | Model family | Auto-selected model backend | Notes |
+    | --- | --- | --- |
+    | `logistic_regression` (binary) | `gpu_native` for `frequency + standardize`; `gpu_patch` for `frequency + median|kbins`; CPU fallback otherwise | GPU logistic is still `frequency`-only in this runtime |
+    | `lightgbm` | `gpu_native` | `onehot` keeps the existing sparse CSR boundary; the model still trains through the explicit CUDA adapter |
+    | `xgboost` | `gpu_native` for `frequency + median|standardize`; `gpu_patch` for the remaining registered `ordinal` / `frequency` tuples; CPU fallback otherwise | sparse GPU-native inputs remain unsupported |
+    | `catboost` | `gpu_native` for `categorical_preprocessor: native`; CPU fallback otherwise | preprocessing stays on `cpu_native_frame` |
+    | `ridge`, `elasticnet`, `random_forest` | CPU fallback | no GPU path is registered yet |
+    | `extra_trees`, `hist_gradient_boosting` | CPU fallback | intentional fallback because no maintained official GPU backend is registered |
+
+  - preprocessing backend selection is separate from model routing, so a GPU host can still resolve to explicit GPU preprocessing while the model backend falls back to CPU
   - unsupported explicit `gpu_backend: patch` / `gpu_backend: native` requests fail fast with repo-owned errors
   - under `compute_target: auto`, tuples with no registered GPU implementation intentionally fall back to CPU
   - `extra_trees` and `hist_gradient_boosting` are currently intentional CPU-fallback families under `compute_target: auto` even on GPU hosts; this repo does not ship custom GPU implementations for them

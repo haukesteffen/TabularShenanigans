@@ -222,23 +222,30 @@ Required top-level keys:
     - `gpu_cuml`
     - `gpu_patch`
     - `gpu_native_frequency`
-  - current supported `gpu_native` tuple:
-    - `model_family: logistic_regression`
-    - `categorical_preprocessor: frequency`
-    - `numeric_preprocessor: standardize`
-    - `model_family: lightgbm`
-    - `categorical_preprocessor: onehot`, `ordinal`, or `frequency`
-    - `numeric_preprocessor: median`, `standardize`, or `kbins`
-    - `model_family: xgboost`
-    - `categorical_preprocessor: frequency`
-    - `numeric_preprocessor: median` or `standardize`
-    - `model_family: catboost`
-    - `categorical_preprocessor: native`
-    - `numeric_preprocessor: median`, `standardize`, or `kbins`
+  - current `compute_target: auto` routing on supported Linux NVIDIA hosts is:
+
+    | Model family | Auto-selected model backend | Notes |
+    | --- | --- | --- |
+    | `logistic_regression` (binary) | `gpu_native` for `frequency + standardize`; `gpu_patch` for `frequency + median|kbins`; CPU fallback otherwise | GPU logistic is still `frequency`-only |
+    | `lightgbm` | `gpu_native` | `onehot` keeps the existing sparse CSR boundary; the model trains through the explicit CUDA adapter |
+    | `xgboost` | `gpu_native` for `frequency + median|standardize`; `gpu_patch` for the remaining registered `ordinal` / `frequency` tuples; CPU fallback otherwise | sparse GPU-native inputs remain unsupported |
+    | `catboost` | `gpu_native` for `categorical_preprocessor: native`; CPU fallback otherwise | preprocessing stays on `cpu_native_frame` |
+    | `ridge`, `elasticnet`, `random_forest` | CPU fallback | no GPU path is registered yet |
+    | `extra_trees`, `hist_gradient_boosting` | CPU fallback | intentional fallback because no maintained official GPU backend is registered |
+
+  - current preprocessing selection on GPU hosts is:
+
+    | Condition | Resolved preprocessing backend |
+    | --- | --- |
+    | `categorical_preprocessor: native` | `cpu_native_frame` |
+    | dense `onehot` with `median`, `standardize`, or `kbins` | `gpu_cuml` |
+    | `frequency` with `median` or `standardize` | `gpu_native_frequency` |
+    | no explicit GPU preprocessor matched and model routing resolved to `gpu_patch` | `gpu_patch` |
+    | CPU fallback tuples | `cpu_sklearn`, `cpu_frequency`, or `cpu_native_frame` depending on the categorical preprocessor |
   - unsupported explicit `gpu_backend: patch` / `gpu_backend: native` requests fail fast with repo-owned errors
   - under `compute_target: auto`, tuples with no registered GPU implementation intentionally fall back to CPU
   - `extra_trees` and `hist_gradient_boosting` are currently intentional CPU-fallback families on GPU hosts because no maintained official GPU implementation is registered for them in this runtime
-  - `#181` does not authorize custom GPU implementations for those algorithms; a future GPU path would need to come from a maintained upstream library and then be added to the registry
+  - the runtime does not ship custom GPU implementations for those algorithms; a future GPU path would need to come from a maintained upstream library and then be added to the registry
 
 GPU dependency contract:
 - base project dependencies pin `numpy` and `pandas` into the RAPIDS-compatible range used by both CPU and GPU installs
