@@ -230,7 +230,8 @@ Required top-level keys:
     | `lightgbm` | `gpu_native` | `onehot` keeps the existing sparse CSR boundary; the model trains through the explicit CUDA adapter |
     | `xgboost` | `gpu_native` for `frequency + median|standardize`; `gpu_patch` for the remaining registered `ordinal` / `frequency` tuples; CPU fallback otherwise | sparse GPU-native inputs remain unsupported |
     | `catboost` | `gpu_native` for `categorical_preprocessor: native`; CPU fallback otherwise | preprocessing stays on `cpu_native_frame` |
-    | `ridge`, `elasticnet`, `random_forest` | CPU fallback | no GPU path is registered yet |
+    | `ridge`, `elasticnet` | `gpu_native` for `frequency + median|standardize`; CPU fallback otherwise | explicit cuML regressors stay on dense inputs only |
+    | `random_forest` | CPU fallback | no GPU path is registered yet |
     | `extra_trees`, `hist_gradient_boosting` | CPU fallback | intentional fallback because no maintained official GPU backend is registered |
 
   - current preprocessing selection on GPU hosts is:
@@ -309,7 +310,8 @@ Booster GPU routing contract:
 - the LightGBM `gpu_native` path keeps the current sparse-CSR contract for `onehot`, so CUDA training is available there even though explicit GPU preprocessing is currently limited to the `frequency + median|standardize` slice
 - the repo-owned LightGBM adapter coerces fit and predict inputs onto the same NumPy / SciPy boundary before calling LightGBM
   - this removes the current fit/predict feature-name mismatch instead of suppressing it
-- when runtime execution resolves to GPU, `logistic_regression` continues to use the sklearn estimator surface but runs through the RAPIDS `cuml.accel` hook path
+- when runtime execution resolves to `gpu_patch`, `logistic_regression` keeps the sklearn estimator surface and runs through the RAPIDS `cuml.accel` hook path
+- when runtime execution resolves to `gpu_native` for `ridge` or `elasticnet`, the repo builds explicit `cuml.Ridge` / `cuml.ElasticNet` estimators on top of the shared dense `gpu_native_frequency` preprocessing outputs
 - user `model_params` still override repo defaults
 
 XGBoost GPU-native input contract:
@@ -337,6 +339,16 @@ GPU logistic regression contract:
   - `categorical_preprocessor: frequency`
   - `numeric_preprocessor: standardize`
 - `gpu_native` logistic currently rejects `model_params.class_weight`; use `gpu_backend: patch` or CPU execution when class weighting is required
+
+GPU linear regression contract:
+- when runtime execution resolves to `gpu_native` for `ridge` or `elasticnet`, the repo builds explicit `cuml.Ridge` / `cuml.ElasticNet` estimators instead of relying on sklearn interception
+- the current `gpu_native` linear-regression support matrix is intentionally narrow:
+  - `categorical_preprocessor: frequency`
+  - `numeric_preprocessor: median` or `standardize`
+- fold-local preprocessing still happens per CV split, and the supported dense `cudf.DataFrame` outputs stay GPU-resident through fit and predict
+- prediction outputs from the cuML regressors are flattened back to the repo's single-target 1D regression contract before scoring, OOF assembly, and test artifact export
+- `gpu_native` ridge only accepts the cuML-overlapping `model_params` subset: `alpha`, `copy_X`, `fit_intercept`, `solver`
+- `gpu_native` elasticnet only accepts the cuML-overlapping `model_params` subset: `alpha`, `fit_intercept`, `l1_ratio`, `max_iter`, `selection`, `solver`, `tol`
 
 ## Candidate Manifest Contract
 Model candidate manifests currently record:
