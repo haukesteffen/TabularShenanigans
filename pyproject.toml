@@ -11,6 +11,7 @@ dependencies = [
     "optuna>=4.7.0",
     "pandas>=2.2,<3.0",
     "pydantic",
+    "python-dotenv>=1.0.0",
     "PyYAML",
     "scikit-learn>=1.8.0",
 ]

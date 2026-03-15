@@ -1,6 +1,8 @@
 import argparse
 from pathlib import Path
 
+from dotenv import load_dotenv
+
 from tabular_shenanigans.competition import prepare_competition
 from tabular_shenanigans.config import AppConfig, load_config
 from tabular_shenanigans.data import fetch_competition_data, load_competition_dataset_context
@@ -176,6 +178,7 @@ def _run_full_pipeline(config: AppConfig) -> None:
 def main(argv: list[str] | None = None) -> None:
     parser = build_parser()
     args = parser.parse_args(argv)
+    load_dotenv(dotenv_path=Path(".env"), override=False)
     config = load_config()
     _print_resolved_setup(config)
 
