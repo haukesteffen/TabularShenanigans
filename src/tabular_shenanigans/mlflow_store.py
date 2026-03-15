@@ -176,6 +176,8 @@ def _base_candidate_tags(config: AppConfig, candidate_id: str, candidate_type: s
         "runtime_acceleration_backend": runtime_execution_context.acceleration_backend,
         **_git_metadata(),
     }
+    if config.is_model_candidate:
+        tags["runtime_preprocessing_backend"] = config.preprocessing_execution_plan.preprocessing_backend
     return tags
 
 
@@ -226,6 +228,7 @@ def _candidate_run_params(config: AppConfig, manifest: dict[str, object]) -> dic
     if runtime_execution_context.fallback_reason is not None:
         params["runtime__fallback_reason"] = runtime_execution_context.fallback_reason
     if config.is_model_candidate:
+        params["runtime__preprocessing_backend"] = config.preprocessing_execution_plan.preprocessing_backend
         params.update(
             {
                 "feature_recipe_id": manifest.get("feature_recipe_id"),
