@@ -231,7 +231,7 @@ Required top-level keys:
     | `xgboost` | `gpu_native` for `frequency + median|standardize`; `gpu_patch` for the remaining registered `ordinal` / `frequency` tuples; CPU fallback otherwise | sparse GPU-native inputs remain unsupported |
     | `catboost` | `gpu_native` for `categorical_preprocessor: native`; CPU fallback otherwise | preprocessing stays on `cpu_native_frame` |
     | `ridge`, `elasticnet` | `gpu_native` for `frequency + median|standardize`; CPU fallback otherwise | explicit cuML regressors stay on dense inputs only |
-    | `random_forest` | CPU fallback | no GPU path is registered yet |
+    | `random_forest` | `gpu_native` for `onehot + median|standardize|kbins` and `frequency + median|standardize`; CPU fallback otherwise | explicit cuML random forest stays on dense inputs only |
     | `extra_trees`, `hist_gradient_boosting` | CPU fallback | intentional fallback because no maintained official GPU backend is registered |
 
   - current preprocessing selection on GPU hosts is:
@@ -291,8 +291,8 @@ Hard-invalid preprocessing combination:
 
 Sparse onehot runtime contract:
 - `categorical_preprocessor: onehot` stays an internal runtime choice rather than a user-facing dense/sparse switch
-- sparse CSR output is used for `ridge`, `elasticnet`, `logistic_regression`, `random_forest`, `extra_trees`, `lightgbm`, `catboost`, and `xgboost`
-- dense array output remains in place for `hist_gradient_boosting`
+- sparse CSR output is used for `ridge`, `elasticnet`, `logistic_regression`, `extra_trees`, `lightgbm`, `catboost`, `xgboost`, and `random_forest` when runtime does not resolve to `gpu_native`
+- dense array output remains in place for `hist_gradient_boosting` and is also used for `random_forest` when runtime resolves to `gpu_native`
 - `numeric_preprocessor: kbins` follows the same sparse-versus-dense output contract when composed with `onehot`
 
 Booster GPU routing contract:
@@ -312,6 +312,17 @@ Booster GPU routing contract:
   - this removes the current fit/predict feature-name mismatch instead of suppressing it
 - when runtime execution resolves to `gpu_patch`, `logistic_regression` keeps the sklearn estimator surface and runs through the RAPIDS `cuml.accel` hook path
 - when runtime execution resolves to `gpu_native` for `ridge` or `elasticnet`, the repo builds explicit `cuml.Ridge` / `cuml.ElasticNet` estimators on top of the shared dense `gpu_native_frequency` preprocessing outputs
+- when runtime execution resolves to `gpu_native` for `random_forest`, the repo builds explicit `cuml.RandomForestClassifier` / `cuml.RandomForestRegressor` estimators instead of relying on sklearn interception or RAPIDS patch hooks
+- the current `gpu_native` random-forest support matrix is:
+  - `categorical_preprocessor: frequency` with `numeric_preprocessor: median` or `standardize`
+  - `categorical_preprocessor: onehot` with `numeric_preprocessor: median`, `standardize`, or `kbins`
+- fold-local preprocessing still happens per CV split, and the supported native random-forest inputs stay GPU-resident through fit and predict
+  - `gpu_native_frequency` produces dense `cudf.DataFrame` inputs for the `frequency` slice
+  - `gpu_cuml` produces dense `cupy.ndarray` inputs for the `onehot` slice
+- `gpu_native` random_forest requires dense inputs only, so the runtime flips `onehot` from its usual sparse CSR branch onto dense arrays only when the native random-forest path is selected
+- `gpu_native` random_forest normalizes `model_params.criterion` onto cuML's `split_criterion` and `model_params.max_leaf_nodes` onto `max_leaves`
+- `gpu_native` random_forest only accepts the cuML-overlapping `model_params` subset: `bootstrap`, `criterion`, `max_batch_size`, `max_depth`, `max_features`, `max_leaf_nodes`, `max_samples`, `min_impurity_decrease`, `min_samples_leaf`, `min_samples_split`, `n_bins`, `n_estimators`, `n_streams`, `oob_score`, `random_state`
+- `gpu_native` random_forest rejects `model_params.n_jobs`, and `model_params.max_depth` does not support `null`; omit `max_depth` to use cuML's default finite depth or set an explicit positive integer
 - user `model_params` still override repo defaults
 
 XGBoost GPU-native input contract:
@@ -356,6 +367,7 @@ Model candidate manifests currently record:
 - provenance: `config_fingerprint`, `config_snapshot`, `mlflow_run_id`
 - runtime execution: requested/ resolved compute target, acceleration backend, RAPIDS hook status, and hardware capability snapshot
 - runtime profiling: training-context build time, fold-stage CV timings, artifact staging time, and first-fold matrix residency snapshots when collected
+  - together with `runtime_execution.resolved_gpu_backend` and `preprocessing_backend`, this is the repo-owned record of whether a native GPU path used dense `cupy` onehot inputs or dense `cudf` frequency inputs
 - model info: `model_family`, `model_registry_key`, `estimator_name`
 - feature/preprocessing info: `feature_recipe_id`, `feature_columns`, `numeric_preprocessor`, `categorical_preprocessor`, `preprocessing_scheme_id`
 - runtime-selected preprocessing backend: `preprocessing_backend`

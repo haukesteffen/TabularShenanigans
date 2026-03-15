@@ -349,6 +349,7 @@ class AppConfig(BaseModel):
             task_type=self.competition.task_type,
             model_id=self.resolved_model_registry_key,
             categorical_preprocessor_id=candidate.categorical_preprocessor,
+            runtime_execution_context=self.runtime_execution_context,
         )
         return resolve_preprocessing_execution_plan(
             runtime_execution_context=self.runtime_execution_context,
