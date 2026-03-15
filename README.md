@@ -68,6 +68,7 @@ setups can install RAPIDS acceleration hooks before the training stack loads.
 Supported environment matrix:
 - CPU and local development: `uv sync` or `uv sync --extra boosters`
 - Linux GPU hosts: `uv sync --extra boosters --extra gpu`
+- LightGBM `gpu_native` on Linux GPU hosts also requires a CUDA-enabled source build; run `./scripts/install_lightgbm_cuda.sh` inside the synced repo environment on the target machine
 - RAPIDS GPU support currently targets Python 3.13 on Linux `x86_64` CUDA 12 hosts with NVIDIA-visible devices
 - The repository lockfile is now the source of truth for the RAPIDS-compatible `numpy` / `pandas` range, so `uv run python main.py ...` is safe after syncing the correct extras
 
@@ -83,6 +84,8 @@ Available stage-specific commands:
 - `uv run python main.py submit --candidate-id <candidate_id>`
 - `uv run python main.py refresh-submissions`
 - `uv run python scripts/benchmark_gpu_checkpoint.py`
+- `PYTHONPATH=src uv run python scripts/validate_lightgbm_cuda_build.py`
+- `./scripts/install_lightgbm_cuda.sh`
 
 Stage behavior:
 - `fetch`: ensures the competition zip is present locally.
@@ -92,6 +95,8 @@ Stage behavior:
 - `submit`: downloads one candidate from MLflow, validates `test_predictions.csv` against `sample_submission.csv`, and when `experiment.submit.enabled=true` submits to Kaggle and records the submission event under that same candidate run.
 - `refresh-submissions`: scans Kaggle submission history, matches `submit=<submission_event_id>` descriptions, and appends new score observations back onto the matching candidate runs.
 - `benchmark_gpu_checkpoint.py`: runs the `#183` CPU vs `gpu_patch` vs `gpu_native` checkpoint matrix, writes a timestamped report plus raw logs under `reports/benchmark_checkpoints/`, temporarily rewrites repository-root `config.yaml` during the session, and restores it at the end while using an isolated file-based MLflow store inside the benchmark output directory.
+- `validate_lightgbm_cuda_build.py`: runs the repo-owned LightGBM CUDA probe and exits non-zero when the installed LightGBM build does not satisfy `device_type="cuda"` on the current host.
+- `install_lightgbm_cuda.sh`: reinstalls LightGBM from source with `USE_CUDA=ON` in the project virtualenv, then runs the validation probe.
 
 `submit` defaults to the derived `candidate_id` for the current config. Use `--candidate-id` when you want to submit another existing candidate for the same competition experiment.
 
@@ -153,6 +158,9 @@ Required top-level sections:
     - `model_family: logistic_regression`
     - `categorical_preprocessor: frequency`
     - `numeric_preprocessor: standardize`
+    - `model_family: lightgbm`
+    - `categorical_preprocessor: onehot`, `ordinal`, or `frequency`
+    - `numeric_preprocessor: median`, `standardize`, or `kbins`
     - `model_family: xgboost`
     - `categorical_preprocessor: frequency`
     - `numeric_preprocessor: median` or `standardize`
@@ -162,16 +170,20 @@ Required top-level sections:
   - unsupported explicit `gpu_backend: patch` / `gpu_backend: native` requests fail fast with repo-owned errors
   - under `compute_target: auto`, tuples with no registered GPU implementation intentionally fall back to CPU
   - `extra_trees` and `hist_gradient_boosting` are currently intentional CPU-fallback families under `compute_target: auto` even on GPU hosts; this repo does not ship custom GPU implementations for them
-  - when GPU execution is active, `xgboost`, `lightgbm`, and `catboost` also switch to their GPU-specific estimator params automatically
+  - when GPU execution is active, `xgboost` and `catboost` switch to their GPU-specific estimator params automatically
+  - when runtime resolves to `gpu_native` for `lightgbm`, the repo uses an explicit LightGBM adapter, validates the installed CUDA build, and then trains with `device_type="cuda"`
   - when GPU execution is active, `logistic_regression` stays on the sklearn API surface but relies on the RAPIDS `cuml.accel` hook path
   - on GPU hosts, preprocessing can resolve to an explicit GPU backend even when the model backend falls back to CPU; GPU outputs are coerced back to CPU before fit in those hybrid cases
   - `gpu_cuml` is the current maintained explicit preprocessing backend and currently supports dense `categorical_preprocessor: onehot` with numeric `median`, `standardize`, or `kbins`
   - `gpu_patch` preprocessing currently keeps the existing sklearn/pandas constructors and runs them after RAPIDS hooks are installed when no explicit GPU preprocessing backend is selected
   - `gpu_native_frequency` is currently the only explicit GPU preprocessing backend
   - the RAPIDS-backed GPU path currently expects the project environment to be installed with `uv sync --extra boosters --extra gpu` on a Python 3.13 Linux `x86_64` CUDA 12 host
+  - the LightGBM `gpu_native` path additionally expects a CUDA-enabled LightGBM source build; the repo ships `./scripts/install_lightgbm_cuda.sh` and `PYTHONPATH=src uv run python scripts/validate_lightgbm_cuda_build.py` for that contract
   - when runtime resolves to `gpu_native` for the supported XGBoost slice, fold-local preprocessing remains per-CV-split, `frequency` preprocessing is performed by the repo-owned `cudf` path, and the first supported dense outputs stay GPU-resident through fit and predict
   - the current native XGBoost support matrix is intentionally narrow and aligned with the documented `gpu_native` tuples above
   - explicit cuML preprocessing currently stays on dense output only; sparse onehot paths continue to use `gpu_patch` or CPU fallback
+  - the LightGBM `gpu_native` path currently preserves the existing sparse-CSR contract for `onehot`; that means CUDA training is available there, but explicit GPU preprocessing is currently limited to the `frequency + median|standardize` slice
+  - the repo-owned LightGBM adapter coerces fit and predict inputs onto the same NumPy / SciPy boundary before calling LightGBM so the current feature-name warning is not carried into the CUDA path
   - the XGBoost GPU-native input path currently rejects sparse CSR preprocessing output, including `categorical_preprocessor: onehot` and related sparse `kbins` compositions; use a dense preprocessing option or force CPU execution
   - the `gpu_patch` logistic regression path currently supports `categorical_preprocessor: frequency` only
   - the `gpu_patch` logistic regression path currently rejects `categorical_preprocessor: ordinal`, `categorical_preprocessor: onehot`, and related sparse `kbins` compositions; use `frequency` or force CPU execution
