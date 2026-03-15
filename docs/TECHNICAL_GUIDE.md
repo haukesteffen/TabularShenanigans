@@ -4,7 +4,7 @@ Technical reference for the current repository design. Use GitHub issues and pul
 
 ## System Flow
 1. Enter the bootstrap entrypoint before importing runtime modules that depend on `pandas` or `sklearn`.
-2. Read `experiment.runtime.compute_target` and the optional advanced `experiment.runtime.gpu_backend` override from repository-root `config.yaml`, resolve hardware capability separately from tuple routing, install RAPIDS hooks only when the registry resolves the current tuple to `gpu_patch`, and route GPU-capable booster families onto their GPU parameter paths.
+2. Read `experiment.runtime.compute_target` and the optional advanced `experiment.runtime.gpu_backend` override from repository-root `config.yaml`, resolve hardware capability separately from tuple routing, resolve preprocessing backend selection separately from model routing, install RAPIDS hooks only when the registry resolves the current tuple to `gpu_patch`, and route GPU-capable booster families onto their GPU parameter paths.
 3. Load and validate the repository-root `config.yaml`.
 4. Normalize and validate `competition.task_type`, `competition.primary_metric`, and the candidate contract.
 5. Resolve the MLflow tracking URI from `experiment.tracking.tracking_uri`.
@@ -53,6 +53,7 @@ Current candidate-run tags:
 - `runtime_requested_gpu_backend`
 - `runtime_resolved_gpu_backend`
 - `runtime_acceleration_backend`
+- `runtime_preprocessing_backend`
 - `config_fingerprint`
 - `git_commit` when available
 - `git_branch` when available
@@ -68,6 +69,7 @@ Current candidate-run params:
 - `runtime__resolved_gpu_backend`
 - `runtime__gpu_available`
 - `runtime__acceleration_backend`
+- `runtime__preprocessing_backend`
 - `runtime__rapids_hooks_installed`
 - `runtime__fallback_reason` when CPU fallback happened under `compute_target=auto`
 - model candidates:
@@ -149,6 +151,8 @@ Stage notes:
 - [execution_routing.py](/Users/hs/dev/TabularShenanigans/src/tabular_shenanigans/execution_routing.py): repo-owned tuple support registry and routing resolver for `cpu`, `gpu_patch`, and `gpu_native`.
 - [cli.py](/Users/hs/dev/TabularShenanigans/src/tabular_shenanigans/cli.py): CLI parser and linear stage dispatch after bootstrap completes.
 - [runtime_execution.py](/Users/hs/dev/TabularShenanigans/src/tabular_shenanigans/runtime_execution.py): runtime capability detection, RAPIDS hook activation, requested-versus-resolved execution context, and bootstrap/runtime metadata helpers.
+- [preprocess_execution.py](/Users/hs/dev/TabularShenanigans/src/tabular_shenanigans/preprocess_execution.py): preprocessing backend selection and preprocessor construction for CPU, `gpu_patch`, and the current explicit GPU-native frequency path.
+- [gpu_cuml_preprocess.py](/Users/hs/dev/TabularShenanigans/src/tabular_shenanigans/gpu_cuml_preprocess.py): explicit dense GPU preprocessing adapters built on maintained cuML preprocessing constructors.
 - [competition.py](/Users/hs/dev/TabularShenanigans/src/tabular_shenanigans/competition.py): in-memory competition preparation, fold assignment materialization, and prepared-context construction.
 - [config.py](/Users/hs/dev/TabularShenanigans/src/tabular_shenanigans/config.py): nested config validation, metric normalization, candidate-id derivation, and resolved model lookup.
 - [candidate_artifacts.py](/Users/hs/dev/TabularShenanigans/src/tabular_shenanigans/candidate_artifacts.py): shared manifest/config helpers and temp-bundle file writers for candidate/context artifacts.
@@ -208,6 +212,13 @@ Required top-level keys:
   - `patch`: require the registered RAPIDS hook-based `gpu_patch` path for the current tuple
   - `native`: require the registered explicit `gpu_native` path for the current tuple
   - tuple routing is registry-driven and is resolved during bootstrap for model candidates before `pandas` / `sklearn` imports happen
+  - preprocessing backend selection is resolved separately from model routing and currently emits one of:
+    - `cpu_sklearn`
+    - `cpu_frequency`
+    - `cpu_native_frame`
+    - `gpu_cuml`
+    - `gpu_patch`
+    - `gpu_native_frequency`
   - current supported `gpu_native` tuple:
     - `model_family: logistic_regression`
     - `categorical_preprocessor: frequency`
@@ -269,7 +280,14 @@ Booster GPU routing contract:
 - when runtime execution resolves to GPU, `xgboost` adds `device="cuda"`
 - when runtime execution resolves to GPU, `lightgbm` adds `device_type="cuda"`
 - when runtime execution resolves to GPU, `catboost` adds `task_type="GPU"`
+- on GPU hosts, preprocessing can resolve to an explicit GPU backend even when the model backend still resolves to CPU; in those hybrid cases the runtime converts the preprocessed outputs back to CPU arrays before fit/predict
+- `gpu_cuml` is the current maintained explicit preprocessing backend and currently supports dense `categorical_preprocessor: onehot` with numeric `median`, `standardize`, or `kbins`
+- when runtime execution resolves to `gpu_patch`, preprocessing currently stays on the existing sklearn/pandas constructors and relies on the installed RAPIDS hooks rather than explicit repo-owned GPU preprocessing adapters
 - when runtime execution resolves to `gpu_native` for `catboost`, the repo keeps CatBoost on the existing native categorical frame path and does not route it through the RAPIDS patch layer or the repo-owned `cudf` frequency preprocessor
+- the current explicit GPU preprocessing surface is intentionally narrow:
+  - `gpu_cuml` for dense `onehot` plus numeric `median`, `standardize`, or `kbins`
+  - `gpu_native_frequency` for `categorical_preprocessor: frequency` with numeric `median` or `standardize`
+  - other preprocessing schemes currently stay on CPU-backed constructors unless the runtime is using `gpu_patch`
 - when runtime execution resolves to GPU, `logistic_regression` continues to use the sklearn estimator surface but runs through the RAPIDS `cuml.accel` hook path
 - user `model_params` still override repo defaults
 
@@ -307,6 +325,7 @@ Model candidate manifests currently record:
 - runtime profiling: training-context build time, fold-stage CV timings, artifact staging time, and first-fold matrix residency snapshots when collected
 - model info: `model_family`, `model_registry_key`, `estimator_name`
 - feature/preprocessing info: `feature_recipe_id`, `feature_columns`, `numeric_preprocessor`, `categorical_preprocessor`, `preprocessing_scheme_id`
+- runtime-selected preprocessing backend: `preprocessing_backend`
 - CV summary: `cv_summary`
 - schema/label metadata: `id_column`, `label_column`, `positive_label`, `negative_label`, `observed_label_pair`
 - dataset metadata: `target_summary`, `train_rows`, `train_cols`, `test_rows`, `test_cols`

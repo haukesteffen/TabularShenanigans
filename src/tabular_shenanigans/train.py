@@ -128,6 +128,7 @@ def _build_candidate_manifest(
         "feature_columns": training_context.x_train_features.columns.tolist(),
         "numeric_preprocessor": candidate.numeric_preprocessor,
         "categorical_preprocessor": candidate.categorical_preprocessor,
+        "preprocessing_backend": training_context.preprocessing_backend,
         "model_registry_key": model_result.model_registry_key,
         "estimator_name": model_result.estimator_name,
         "preprocessing_scheme_id": model_result.preprocessing_scheme_id,

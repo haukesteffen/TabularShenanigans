@@ -141,6 +141,14 @@ Required top-level sections:
   - `patch`: require the registered RAPIDS hook-based GPU path for the current tuple
   - `native`: require the registered explicit GPU-native path for the current tuple
   - tuple routing is registry-driven rather than spread across model-specific branches
+  - preprocessing backend selection is resolved separately from model routing and is recorded in runtime metadata
+  - current preprocessing backend ids are:
+    - `cpu_sklearn`
+    - `cpu_frequency`
+    - `cpu_native_frame`
+    - `gpu_cuml`
+    - `gpu_patch`
+    - `gpu_native_frequency`
   - the current `gpu_native` support matrix is intentionally narrow:
     - `model_family: logistic_regression`
     - `categorical_preprocessor: frequency`
@@ -156,14 +164,19 @@ Required top-level sections:
   - `extra_trees` and `hist_gradient_boosting` are currently intentional CPU-fallback families under `compute_target: auto` even on GPU hosts; this repo does not ship custom GPU implementations for them
   - when GPU execution is active, `xgboost`, `lightgbm`, and `catboost` also switch to their GPU-specific estimator params automatically
   - when GPU execution is active, `logistic_regression` stays on the sklearn API surface but relies on the RAPIDS `cuml.accel` hook path
+  - on GPU hosts, preprocessing can resolve to an explicit GPU backend even when the model backend falls back to CPU; GPU outputs are coerced back to CPU before fit in those hybrid cases
+  - `gpu_cuml` is the current maintained explicit preprocessing backend and currently supports dense `categorical_preprocessor: onehot` with numeric `median`, `standardize`, or `kbins`
+  - `gpu_patch` preprocessing currently keeps the existing sklearn/pandas constructors and runs them after RAPIDS hooks are installed when no explicit GPU preprocessing backend is selected
+  - `gpu_native_frequency` is currently the only explicit GPU preprocessing backend
   - the RAPIDS-backed GPU path currently expects the project environment to be installed with `uv sync --extra boosters --extra gpu` on a Python 3.13 Linux `x86_64` CUDA 12 host
   - when runtime resolves to `gpu_native` for the supported XGBoost slice, fold-local preprocessing remains per-CV-split, `frequency` preprocessing is performed by the repo-owned `cudf` path, and the first supported dense outputs stay GPU-resident through fit and predict
   - the current native XGBoost support matrix is intentionally narrow and aligned with the documented `gpu_native` tuples above
+  - explicit cuML preprocessing currently stays on dense output only; sparse onehot paths continue to use `gpu_patch` or CPU fallback
   - the XGBoost GPU-native input path currently rejects sparse CSR preprocessing output, including `categorical_preprocessor: onehot` and related sparse `kbins` compositions; use a dense preprocessing option or force CPU execution
   - the `gpu_patch` logistic regression path currently supports `categorical_preprocessor: frequency` only
   - the `gpu_patch` logistic regression path currently rejects `categorical_preprocessor: ordinal`, `categorical_preprocessor: onehot`, and related sparse `kbins` compositions; use `frequency` or force CPU execution
   - the `gpu_native` logistic regression path currently supports `categorical_preprocessor: frequency` with `numeric_preprocessor: standardize` only
-  - the `gpu_native` CatBoost path currently supports `categorical_preprocessor: native` only and uses CatBoost's own GPU mode rather than the RAPIDS patch layer
+  - the `gpu_native` CatBoost path currently supports `categorical_preprocessor: native` only, uses CatBoost's own GPU mode rather than the RAPIDS patch layer, and keeps preprocessing on the existing `cpu_native_frame` path
 
 `experiment.candidate` keys:
 - shared:
@@ -251,6 +264,7 @@ Current candidate-run tags include:
 - `primary_metric`
 - `runtime_requested_gpu_backend`
 - `runtime_resolved_gpu_backend`
+- `runtime_preprocessing_backend`
 - `config_fingerprint`
 - git metadata when available
 

@@ -11,9 +11,6 @@ from tabular_shenanigans.config import AppConfig
 from tabular_shenanigans.cv import is_higher_better, resolve_positive_label, score_predictions
 from tabular_shenanigans.data import CompetitionDatasetContext, get_binary_prediction_kind
 from tabular_shenanigans.feature_recipes import apply_feature_recipe
-from tabular_shenanigans.gpu_preprocess import (
-    build_gpu_native_preprocessor_from_schema,
-)
 from tabular_shenanigans.models import (
     build_model,
     build_model_fit_kwargs,
@@ -21,9 +18,12 @@ from tabular_shenanigans.models import (
 )
 from tabular_shenanigans.preprocess import (
     ResolvedFeatureSchema,
-    build_preprocessor_from_schema,
     prepare_feature_frames,
     resolve_feature_schema,
+)
+from tabular_shenanigans.preprocess_execution import (
+    PreprocessingExecutionPlan,
+    build_preprocessor_for_execution_plan,
 )
 
 
@@ -105,7 +105,8 @@ class PreparedTrainingContext:
     preprocessing_scheme_id: str
     matrix_output_kind: str
     uses_xgboost_gpu_native_inputs: bool
-    uses_repo_gpu_native_preprocessing: bool
+    preprocessing_backend: str
+    model_compute_target: str
 
 
 def _validate_gpu_native_matrix_output(
@@ -122,13 +123,6 @@ def _validate_gpu_native_matrix_output(
         "cannot be promoted to a supported GPU-native XGBoost input because cupyx CSR is not supported yet. "
         "Use categorical_preprocessor='ordinal' or 'frequency', or force CPU execution."
     )
-
-
-def _uses_repo_gpu_native_preprocessing(
-    resolved_gpu_backend: str,
-    categorical_preprocessor: str,
-) -> bool:
-    return resolved_gpu_backend == "gpu_native" and categorical_preprocessor == "frequency"
 
 
 def build_prepared_training_context(
@@ -193,11 +187,7 @@ def build_prepared_training_context(
         model_id=config.resolved_model_registry_key,
         categorical_preprocessor_id=candidate.categorical_preprocessor,
     )
-    resolved_gpu_backend = config.runtime_execution_context.resolved_gpu_backend
-    uses_repo_gpu_native_preprocessing = _uses_repo_gpu_native_preprocessing(
-        resolved_gpu_backend=resolved_gpu_backend,
-        categorical_preprocessor=candidate.categorical_preprocessor,
-    )
+    preprocessing_execution_plan = config.preprocessing_execution_plan
     uses_xgboost_gpu_native_inputs = (
         config.resolved_model_registry_key == "xgboost"
         and config.runtime_execution_context.resolved_compute_target == "gpu"
@@ -223,13 +213,26 @@ def build_prepared_training_context(
         numeric_preprocessor=candidate.numeric_preprocessor,
         categorical_preprocessor=candidate.categorical_preprocessor,
         preprocessing_scheme_id=candidate.preprocessing_scheme_id,
-        matrix_output_kind=matrix_output_kind,
+        matrix_output_kind=preprocessing_execution_plan.matrix_output_kind,
         uses_xgboost_gpu_native_inputs=uses_xgboost_gpu_native_inputs,
-        uses_repo_gpu_native_preprocessing=uses_repo_gpu_native_preprocessing,
+        preprocessing_backend=preprocessing_execution_plan.preprocessing_backend,
+        model_compute_target=config.runtime_execution_context.resolved_compute_target,
     )
 
 
-def _coerce_processed_matrix(values: object, matrix_output_kind: str) -> object:
+def _coerce_processed_matrix(
+    values: object,
+    matrix_output_kind: str,
+    model_compute_target: str,
+) -> object:
+    if model_compute_target != "gpu":
+        if _module_startswith(values, "cupy"):
+            import cupy as cp
+
+            values = cp.asnumpy(values)
+        elif _module_startswith(values, "cudf"):
+            values = values.to_pandas()
+
     if _module_startswith(values, "cudf") or _module_startswith(values, "cupy"):
         return values
     if matrix_output_kind == "native_frame":
@@ -363,7 +366,8 @@ def _run_cv_evaluation(
     preprocessing_scheme_id = training_context.preprocessing_scheme_id
     matrix_output_kind = training_context.matrix_output_kind
     uses_xgboost_gpu_native_inputs = training_context.uses_xgboost_gpu_native_inputs
-    uses_repo_gpu_native_preprocessing = training_context.uses_repo_gpu_native_preprocessing
+    preprocessing_backend = training_context.preprocessing_backend
+    model_compute_target = training_context.model_compute_target
 
     oof_predictions = (
         np.zeros(training_context.x_train_features.shape[0], dtype=float)
@@ -387,29 +391,37 @@ def _run_cv_evaluation(
         y_fold_valid = training_context.y_train.iloc[valid_idx]
 
         preprocess_started = time.perf_counter()
-        if uses_repo_gpu_native_preprocessing:
-            preprocessor = build_gpu_native_preprocessor_from_schema(
-                feature_schema=training_context.feature_schema,
-                numeric_preprocessor_id=training_context.numeric_preprocessor,
-                categorical_preprocessor_id=training_context.categorical_preprocessor,
-            )
-        else:
-            preprocessor = build_preprocessor_from_schema(
-                feature_schema=training_context.feature_schema,
-                numeric_preprocessor_id=training_context.numeric_preprocessor,
-                categorical_preprocessor_id=training_context.categorical_preprocessor,
+        preprocessor = build_preprocessor_for_execution_plan(
+            feature_schema=training_context.feature_schema,
+            numeric_preprocessor_id=training_context.numeric_preprocessor,
+            categorical_preprocessor_id=training_context.categorical_preprocessor,
+            execution_plan=PreprocessingExecutionPlan(
+                preprocessing_backend=training_context.preprocessing_backend,
                 matrix_output_kind=matrix_output_kind,
-            )
+            ),
+        )
         x_fold_train_processed = preprocessor.fit_transform(x_fold_train)
         x_fold_valid_processed = preprocessor.transform(x_fold_valid)
         x_test_processed = None
         if collect_prediction_artifacts:
             x_test_processed = preprocessor.transform(training_context.x_test_features)
 
-        x_fold_train_processed = _coerce_processed_matrix(x_fold_train_processed, matrix_output_kind)
-        x_fold_valid_processed = _coerce_processed_matrix(x_fold_valid_processed, matrix_output_kind)
+        x_fold_train_processed = _coerce_processed_matrix(
+            x_fold_train_processed,
+            matrix_output_kind,
+            model_compute_target,
+        )
+        x_fold_valid_processed = _coerce_processed_matrix(
+            x_fold_valid_processed,
+            matrix_output_kind,
+            model_compute_target,
+        )
         if x_test_processed is not None:
-            x_test_processed = _coerce_processed_matrix(x_test_processed, matrix_output_kind)
+            x_test_processed = _coerce_processed_matrix(
+                x_test_processed,
+                matrix_output_kind,
+                model_compute_target,
+            )
 
         if uses_xgboost_gpu_native_inputs:
             # Convert fold-local preprocessing outputs to GPU-native inputs before XGBoost fit/predict.
@@ -510,6 +522,7 @@ def _run_cv_evaluation(
     )
     runtime_profile = {
         "fold_count": len(training_context.split_indices),
+        "preprocessing_backend": preprocessing_backend,
         "cv_preprocess_wall_seconds": preprocess_wall_seconds,
         "cv_fit_wall_seconds": fit_wall_seconds,
         "cv_predict_wall_seconds": predict_wall_seconds,

@@ -24,6 +24,7 @@ from tabular_shenanigans.preprocess import (
     NUMERIC_PREPROCESSOR_IDS,
     build_preprocessing_scheme_id,
 )
+from tabular_shenanigans.preprocess_execution import resolve_preprocessing_execution_plan
 
 
 class ConfigError(ValueError):
@@ -337,6 +338,26 @@ class AppConfig(BaseModel):
         )
 
     @property
+    def preprocessing_execution_plan(self):
+        from tabular_shenanigans.models import resolve_model_matrix_output_kind
+
+        if not self.is_model_candidate:
+            raise ValueError("preprocessing_execution_plan is only available for model candidates.")
+
+        candidate = self.experiment.candidate
+        matrix_output_kind = resolve_model_matrix_output_kind(
+            task_type=self.competition.task_type,
+            model_id=self.resolved_model_registry_key,
+            categorical_preprocessor_id=candidate.categorical_preprocessor,
+        )
+        return resolve_preprocessing_execution_plan(
+            runtime_execution_context=self.runtime_execution_context,
+            numeric_preprocessor_id=candidate.numeric_preprocessor,
+            categorical_preprocessor_id=candidate.categorical_preprocessor,
+            matrix_output_kind=matrix_output_kind,
+        )
+
+    @property
     def resolved_candidate_id(self) -> str:
         competition = self.competition
         candidate = self.experiment.candidate
@@ -368,6 +389,7 @@ class AppConfig(BaseModel):
                     "resolved_compute_target": self.runtime_execution_context.resolved_compute_target,
                     "resolved_gpu_backend": self.runtime_execution_context.resolved_gpu_backend,
                     "acceleration_backend": self.runtime_execution_context.acceleration_backend,
+                    "preprocessing_backend": self.preprocessing_execution_plan.preprocessing_backend,
                 },
             }
             return build_model_candidate_id(
