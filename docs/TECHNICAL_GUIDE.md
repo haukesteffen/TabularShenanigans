@@ -215,6 +215,9 @@ Required top-level keys:
     - `model_family: xgboost`
     - `categorical_preprocessor: frequency`
     - `numeric_preprocessor: median` or `standardize`
+    - `model_family: catboost`
+    - `categorical_preprocessor: native`
+    - `numeric_preprocessor: median`, `standardize`, or `kbins`
   - unsupported explicit `gpu_backend: patch` / `gpu_backend: native` requests fail fast with repo-owned errors
   - under `compute_target: auto`, tuples with no registered GPU implementation intentionally fall back to CPU
   - `extra_trees` and `hist_gradient_boosting` are currently intentional CPU-fallback families on GPU hosts because no maintained official GPU implementation is registered for them in this runtime
@@ -266,6 +269,7 @@ Booster GPU routing contract:
 - when runtime execution resolves to GPU, `xgboost` adds `device="cuda"`
 - when runtime execution resolves to GPU, `lightgbm` adds `device_type="cuda"`
 - when runtime execution resolves to GPU, `catboost` adds `task_type="GPU"`
+- when runtime execution resolves to `gpu_native` for `catboost`, the repo keeps CatBoost on the existing native categorical frame path and does not route it through the RAPIDS patch layer or the repo-owned `cudf` frequency preprocessor
 - when runtime execution resolves to GPU, `logistic_regression` continues to use the sklearn estimator surface but runs through the RAPIDS `cuml.accel` hook path
 - user `model_params` still override repo defaults
 

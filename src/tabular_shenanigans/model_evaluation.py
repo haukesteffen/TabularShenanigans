@@ -105,7 +105,7 @@ class PreparedTrainingContext:
     preprocessing_scheme_id: str
     matrix_output_kind: str
     uses_xgboost_gpu_native_inputs: bool
-    uses_gpu_native_preprocessing: bool
+    uses_repo_gpu_native_preprocessing: bool
 
 
 def _validate_gpu_native_matrix_output(
@@ -122,6 +122,13 @@ def _validate_gpu_native_matrix_output(
         "cannot be promoted to a supported GPU-native XGBoost input because cupyx CSR is not supported yet. "
         "Use categorical_preprocessor='ordinal' or 'frequency', or force CPU execution."
     )
+
+
+def _uses_repo_gpu_native_preprocessing(
+    resolved_gpu_backend: str,
+    categorical_preprocessor: str,
+) -> bool:
+    return resolved_gpu_backend == "gpu_native" and categorical_preprocessor == "frequency"
 
 
 def build_prepared_training_context(
@@ -187,7 +194,10 @@ def build_prepared_training_context(
         categorical_preprocessor_id=candidate.categorical_preprocessor,
     )
     resolved_gpu_backend = config.runtime_execution_context.resolved_gpu_backend
-    uses_gpu_native_preprocessing = resolved_gpu_backend == "gpu_native"
+    uses_repo_gpu_native_preprocessing = _uses_repo_gpu_native_preprocessing(
+        resolved_gpu_backend=resolved_gpu_backend,
+        categorical_preprocessor=candidate.categorical_preprocessor,
+    )
     uses_xgboost_gpu_native_inputs = (
         config.resolved_model_registry_key == "xgboost"
         and config.runtime_execution_context.resolved_compute_target == "gpu"
@@ -215,7 +225,7 @@ def build_prepared_training_context(
         preprocessing_scheme_id=candidate.preprocessing_scheme_id,
         matrix_output_kind=matrix_output_kind,
         uses_xgboost_gpu_native_inputs=uses_xgboost_gpu_native_inputs,
-        uses_gpu_native_preprocessing=uses_gpu_native_preprocessing,
+        uses_repo_gpu_native_preprocessing=uses_repo_gpu_native_preprocessing,
     )
 
 
@@ -353,7 +363,7 @@ def _run_cv_evaluation(
     preprocessing_scheme_id = training_context.preprocessing_scheme_id
     matrix_output_kind = training_context.matrix_output_kind
     uses_xgboost_gpu_native_inputs = training_context.uses_xgboost_gpu_native_inputs
-    uses_gpu_native_preprocessing = training_context.uses_gpu_native_preprocessing
+    uses_repo_gpu_native_preprocessing = training_context.uses_repo_gpu_native_preprocessing
 
     oof_predictions = (
         np.zeros(training_context.x_train_features.shape[0], dtype=float)
@@ -377,7 +387,7 @@ def _run_cv_evaluation(
         y_fold_valid = training_context.y_train.iloc[valid_idx]
 
         preprocess_started = time.perf_counter()
-        if uses_gpu_native_preprocessing:
+        if uses_repo_gpu_native_preprocessing:
             preprocessor = build_gpu_native_preprocessor_from_schema(
                 feature_schema=training_context.feature_schema,
                 numeric_preprocessor_id=training_context.numeric_preprocessor,

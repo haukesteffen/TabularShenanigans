@@ -148,6 +148,9 @@ Required top-level sections:
     - `model_family: xgboost`
     - `categorical_preprocessor: frequency`
     - `numeric_preprocessor: median` or `standardize`
+    - `model_family: catboost`
+    - `categorical_preprocessor: native`
+    - `numeric_preprocessor: median`, `standardize`, or `kbins`
   - unsupported explicit `gpu_backend: patch` / `gpu_backend: native` requests fail fast with repo-owned errors
   - under `compute_target: auto`, tuples with no registered GPU implementation intentionally fall back to CPU
   - `extra_trees` and `hist_gradient_boosting` are currently intentional CPU-fallback families under `compute_target: auto` even on GPU hosts; this repo does not ship custom GPU implementations for them
@@ -160,6 +163,7 @@ Required top-level sections:
   - the `gpu_patch` logistic regression path currently supports `categorical_preprocessor: frequency` only
   - the `gpu_patch` logistic regression path currently rejects `categorical_preprocessor: ordinal`, `categorical_preprocessor: onehot`, and related sparse `kbins` compositions; use `frequency` or force CPU execution
   - the `gpu_native` logistic regression path currently supports `categorical_preprocessor: frequency` with `numeric_preprocessor: standardize` only
+  - the `gpu_native` CatBoost path currently supports `categorical_preprocessor: native` only and uses CatBoost's own GPU mode rather than the RAPIDS patch layer
 
 `experiment.candidate` keys:
 - shared:

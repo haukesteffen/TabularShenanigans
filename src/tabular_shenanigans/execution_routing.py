@@ -84,6 +84,14 @@ def _build_gpu_support_registry() -> dict[tuple[str, str, str, str], tuple[str, 
         categorical_preprocessors=("frequency",),
         gpu_paths=(NATIVE_GPU_BACKEND, PATCH_GPU_BACKEND),
     )
+    _register_model_paths(
+        registry,
+        task_types=("binary", "regression"),
+        model_family="catboost",
+        numeric_preprocessors=("median", "standardize", "kbins"),
+        categorical_preprocessors=("native",),
+        gpu_paths=(NATIVE_GPU_BACKEND,),
+    )
     return registry
 
 
