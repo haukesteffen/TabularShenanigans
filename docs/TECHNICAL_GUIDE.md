@@ -153,6 +153,7 @@ Stage notes:
 - [runtime_execution.py](/Users/hs/dev/TabularShenanigans/src/tabular_shenanigans/runtime_execution.py): runtime capability detection, RAPIDS hook activation, requested-versus-resolved execution context, and bootstrap/runtime metadata helpers.
 - [preprocess_execution.py](/Users/hs/dev/TabularShenanigans/src/tabular_shenanigans/preprocess_execution.py): preprocessing backend selection and preprocessor construction for CPU, `gpu_patch`, and the current explicit GPU-native frequency path.
 - [gpu_cuml_preprocess.py](/Users/hs/dev/TabularShenanigans/src/tabular_shenanigans/gpu_cuml_preprocess.py): explicit dense GPU preprocessing adapters built on maintained cuML preprocessing constructors.
+- [lightgbm_cuda_backend.py](/Users/hs/dev/TabularShenanigans/src/tabular_shenanigans/lightgbm_cuda_backend.py): repo-owned LightGBM adapter, input-coercion helpers, and CUDA build validation probe for the `gpu_native` LightGBM path.
 - [competition.py](/Users/hs/dev/TabularShenanigans/src/tabular_shenanigans/competition.py): in-memory competition preparation, fold assignment materialization, and prepared-context construction.
 - [config.py](/Users/hs/dev/TabularShenanigans/src/tabular_shenanigans/config.py): nested config validation, metric normalization, candidate-id derivation, and resolved model lookup.
 - [candidate_artifacts.py](/Users/hs/dev/TabularShenanigans/src/tabular_shenanigans/candidate_artifacts.py): shared manifest/config helpers and temp-bundle file writers for candidate/context artifacts.
@@ -170,6 +171,8 @@ Stage notes:
 - [submission_history.py](/Users/hs/dev/TabularShenanigans/src/tabular_shenanigans/submission_history.py): candidate-run submission event/observation models and Kaggle refresh helpers.
 - [mlflow_store.py](/Users/hs/dev/TabularShenanigans/src/tabular_shenanigans/mlflow_store.py): MLflow experiment/run lookup, candidate-run creation, candidate download, artifact upload, and submission-history persistence.
 - [benchmark_gpu_checkpoint.py](/Users/hs/dev/TabularShenanigans/scripts/benchmark_gpu_checkpoint.py): issue-scoped benchmark harness for the early CPU vs `gpu_patch` vs `gpu_native` checkpoint, using a temporary file-based MLflow store and timestamped reports under `reports/benchmark_checkpoints/`.
+- [validate_lightgbm_cuda_build.py](/Users/hs/dev/TabularShenanigans/scripts/validate_lightgbm_cuda_build.py): repo-owned validation probe for the installed LightGBM CUDA build on the current host.
+- [install_lightgbm_cuda.sh](/Users/hs/dev/TabularShenanigans/scripts/install_lightgbm_cuda.sh): source-build helper that reinstalls LightGBM with `USE_CUDA=ON` into the project virtualenv and immediately runs the validation probe.
 
 ## Configuration Contract
 Input:
@@ -223,6 +226,9 @@ Required top-level keys:
     - `model_family: logistic_regression`
     - `categorical_preprocessor: frequency`
     - `numeric_preprocessor: standardize`
+    - `model_family: lightgbm`
+    - `categorical_preprocessor: onehot`, `ordinal`, or `frequency`
+    - `numeric_preprocessor: median`, `standardize`, or `kbins`
     - `model_family: xgboost`
     - `categorical_preprocessor: frequency`
     - `numeric_preprocessor: median` or `standardize`
@@ -240,6 +246,11 @@ GPU dependency contract:
 - the project currently supports Python `>=3.13,<3.14`
 - the `gpu` extra currently targets Python 3.13 Linux `x86_64` CUDA 12 hosts via NVIDIA's Python package index
 - expected install command on GPU hosts: `uv sync --extra boosters --extra gpu`
+- `lightgbm` is still declared in the `boosters` extra, but the stock wheel is not accepted for the explicit `gpu_native` CUDA path
+- the repo-owned LightGBM CUDA contract is:
+  - sync the shared dependencies with `uv sync --extra boosters --extra gpu`
+  - run `./scripts/install_lightgbm_cuda.sh` on the target Linux GPU host
+  - validate the result with `PYTHONPATH=src uv run python scripts/validate_lightgbm_cuda_build.py`
 - CPU and macOS installs should continue using `uv sync` or `uv sync --extra boosters`
 
 Model candidate contract:
@@ -278,8 +289,8 @@ Sparse onehot runtime contract:
 
 Booster GPU routing contract:
 - when runtime execution resolves to GPU, `xgboost` adds `device="cuda"`
-- when runtime execution resolves to GPU, `lightgbm` adds `device_type="cuda"`
 - when runtime execution resolves to GPU, `catboost` adds `task_type="GPU"`
+- when runtime execution resolves to `gpu_native` for `lightgbm`, the repo builds a `RepositoryLightGbmEstimator`, validates the installed CUDA build once per process, and trains with `device_type="cuda"`
 - on GPU hosts, preprocessing can resolve to an explicit GPU backend even when the model backend still resolves to CPU; in those hybrid cases the runtime converts the preprocessed outputs back to CPU arrays before fit/predict
 - `gpu_cuml` is the current maintained explicit preprocessing backend and currently supports dense `categorical_preprocessor: onehot` with numeric `median`, `standardize`, or `kbins`
 - when runtime execution resolves to `gpu_patch`, preprocessing currently stays on the existing sklearn/pandas constructors and relies on the installed RAPIDS hooks rather than explicit repo-owned GPU preprocessing adapters
@@ -288,6 +299,9 @@ Booster GPU routing contract:
   - `gpu_cuml` for dense `onehot` plus numeric `median`, `standardize`, or `kbins`
   - `gpu_native_frequency` for `categorical_preprocessor: frequency` with numeric `median` or `standardize`
   - other preprocessing schemes currently stay on CPU-backed constructors unless the runtime is using `gpu_patch`
+- the LightGBM `gpu_native` path keeps the current sparse-CSR contract for `onehot`, so CUDA training is available there even though explicit GPU preprocessing is currently limited to the `frequency + median|standardize` slice
+- the repo-owned LightGBM adapter coerces fit and predict inputs onto the same NumPy / SciPy boundary before calling LightGBM
+  - this removes the current fit/predict feature-name mismatch instead of suppressing it
 - when runtime execution resolves to GPU, `logistic_regression` continues to use the sklearn estimator surface but runs through the RAPIDS `cuml.accel` hook path
 - user `model_params` still override repo defaults
 

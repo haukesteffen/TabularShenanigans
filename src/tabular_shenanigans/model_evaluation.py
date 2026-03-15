@@ -6,6 +6,7 @@ import pandas as pd
 from scipy import sparse
 
 from tabular_shenanigans.candidate_artifacts import build_target_summary
+from tabular_shenanigans.lightgbm_cuda_backend import coerce_lightgbm_matrix_input
 from tabular_shenanigans.competition import ensure_prepared_competition_context
 from tabular_shenanigans.config import AppConfig
 from tabular_shenanigans.cv import is_higher_better, resolve_positive_label, score_predictions
@@ -429,6 +430,11 @@ def _run_cv_evaluation(
             x_fold_valid_processed = _coerce_xgboost_gpu_input(x_fold_valid_processed, matrix_output_kind)
             if x_test_processed is not None:
                 x_test_processed = _coerce_xgboost_gpu_input(x_test_processed, matrix_output_kind)
+        elif resolved_model_registry_key == "lightgbm":
+            x_fold_train_processed = coerce_lightgbm_matrix_input(x_fold_train_processed)
+            x_fold_valid_processed = coerce_lightgbm_matrix_input(x_fold_valid_processed)
+            if x_test_processed is not None:
+                x_test_processed = coerce_lightgbm_matrix_input(x_test_processed)
         preprocess_wall_seconds += time.perf_counter() - preprocess_started
         if first_fold_residency is None:
             first_fold_residency = {

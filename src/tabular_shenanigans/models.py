@@ -15,6 +15,7 @@ from sklearn.ensemble import (
 )
 from sklearn.linear_model import ElasticNet, LogisticRegression, Ridge
 
+from tabular_shenanigans.lightgbm_cuda_backend import RepositoryLightGbmEstimator
 from tabular_shenanigans.runtime_execution import get_runtime_execution_context
 
 ModelBuilder = Callable[[int, dict[str, object] | None], tuple[object, dict[str, object]]]
@@ -82,7 +83,7 @@ def _resolve_booster_runtime_defaults(model_id: str) -> dict[str, object]:
 
     if model_id == "xgboost":
         return {"device": "cuda"}
-    if model_id == "lightgbm":
+    if model_id == "lightgbm" and runtime_execution_context.resolved_gpu_backend == "gpu_native":
         return {"device_type": "cuda"}
     if model_id == "catboost":
         return {"task_type": "GPU"}
@@ -237,6 +238,7 @@ def _build_lightgbm_regressor(
             "Install them with `uv sync --extra boosters`."
         ) from exc
 
+    runtime_execution_context = get_runtime_execution_context()
     params = {
         "colsample_bytree": 0.8,
         "learning_rate": 0.05,
@@ -248,7 +250,11 @@ def _build_lightgbm_regressor(
         **_resolve_booster_runtime_defaults("lightgbm"),
     }
     params = _merge_model_params(params, parameter_overrides)
-    return LGBMRegressor(**params), params
+    estimator = RepositoryLightGbmEstimator(
+        LGBMRegressor(**params),
+        requires_cuda_build=runtime_execution_context.resolved_gpu_backend == "gpu_native",
+    )
+    return estimator, params
 
 
 def _build_lightgbm_classifier(
@@ -263,6 +269,7 @@ def _build_lightgbm_classifier(
             "Install them with `uv sync --extra boosters`."
         ) from exc
 
+    runtime_execution_context = get_runtime_execution_context()
     params = {
         "colsample_bytree": 0.8,
         "learning_rate": 0.05,
@@ -274,7 +281,11 @@ def _build_lightgbm_classifier(
         **_resolve_booster_runtime_defaults("lightgbm"),
     }
     params = _merge_model_params(params, parameter_overrides)
-    return LGBMClassifier(**params), params
+    estimator = RepositoryLightGbmEstimator(
+        LGBMClassifier(**params),
+        requires_cuda_build=runtime_execution_context.resolved_gpu_backend == "gpu_native",
+    )
+    return estimator, params
 
 
 def _build_catboost_regressor(
