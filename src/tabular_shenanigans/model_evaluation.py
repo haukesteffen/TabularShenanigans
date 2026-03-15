@@ -187,6 +187,7 @@ def build_prepared_training_context(
         task_type=competition.task_type,
         model_id=config.resolved_model_registry_key,
         categorical_preprocessor_id=candidate.categorical_preprocessor,
+        runtime_execution_context=config.runtime_execution_context,
     )
     preprocessing_execution_plan = config.preprocessing_execution_plan
     uses_xgboost_gpu_native_inputs = (

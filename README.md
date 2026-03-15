@@ -163,7 +163,7 @@ Required top-level sections:
     | `xgboost` | `gpu_native` for `frequency + median|standardize`; `gpu_patch` for the remaining registered `ordinal` / `frequency` tuples; CPU fallback otherwise | sparse GPU-native inputs remain unsupported |
     | `catboost` | `gpu_native` for `categorical_preprocessor: native`; CPU fallback otherwise | preprocessing stays on `cpu_native_frame` |
     | `ridge`, `elasticnet` | `gpu_native` for `frequency + median|standardize`; CPU fallback otherwise | explicit cuML regressors stay on dense inputs only |
-    | `random_forest` | CPU fallback | no GPU path is registered yet |
+    | `random_forest` | `gpu_native` for `onehot + median|standardize|kbins` and `frequency + median|standardize`; CPU fallback otherwise | explicit cuML random forest stays on dense inputs only |
     | `extra_trees`, `hist_gradient_boosting` | CPU fallback | intentional fallback because no maintained official GPU backend is registered |
 
   - preprocessing backend selection is separate from model routing, so a GPU host can still resolve to explicit GPU preprocessing while the model backend falls back to CPU
@@ -176,11 +176,16 @@ Required top-level sections:
   - on GPU hosts, preprocessing can resolve to an explicit GPU backend even when the model backend falls back to CPU; GPU outputs are coerced back to CPU before fit in those hybrid cases
   - `gpu_cuml` is the current maintained explicit preprocessing backend and currently supports dense `categorical_preprocessor: onehot` with numeric `median`, `standardize`, or `kbins`
   - `gpu_patch` preprocessing currently keeps the existing sklearn/pandas constructors and runs them after RAPIDS hooks are installed when no explicit GPU preprocessing backend is selected
-  - `gpu_native_frequency` is currently the only explicit GPU preprocessing backend
+  - `gpu_native_frequency` is the explicit repo-owned `frequency` preprocessing backend
   - the RAPIDS-backed GPU path currently expects the project environment to be installed with `uv sync --extra boosters --extra gpu` on a Python 3.13 Linux `x86_64` CUDA 12 host
   - the LightGBM `gpu_native` path additionally expects a CUDA-enabled LightGBM source build; the repo ships `./scripts/install_lightgbm_cuda.sh` and `PYTHONPATH=src uv run python scripts/validate_lightgbm_cuda_build.py` for that contract
   - when runtime resolves to `gpu_native` for `ridge` or `elasticnet`, the repo builds explicit `cuml.Ridge` / `cuml.ElasticNet` estimators for the `frequency + median|standardize` slice and flattens predictions back to the repo's single-target 1D regression contract
   - the `gpu_native` ridge and elasticnet paths accept only the cuML-overlapping `model_params` subset; unsupported sklearn-only params fail with repo-owned errors
+  - when runtime resolves to `gpu_native` for `random_forest`, the repo builds explicit `cuml.RandomForestClassifier` / `cuml.RandomForestRegressor` estimators instead of relying on patch interception
+  - the `gpu_native` random_forest path supports `categorical_preprocessor: frequency` with `numeric_preprocessor: median|standardize` through `gpu_native_frequency`, plus `categorical_preprocessor: onehot` with `numeric_preprocessor: median|standardize|kbins` through dense `gpu_cuml` outputs
+  - `gpu_native` random_forest requires dense inputs only; when `categorical_preprocessor: onehot` is selected, that branch flips from its usual sparse CSR output to dense arrays only for the native random-forest path
+  - `gpu_native` random_forest normalizes `model_params.criterion` onto cuML's `split_criterion`, normalizes `model_params.max_leaf_nodes` onto `max_leaves`, rejects `model_params.n_jobs`, and only accepts the cuML-overlapping subset: `bootstrap`, `criterion`, `max_batch_size`, `max_depth`, `max_features`, `max_leaf_nodes`, `max_samples`, `min_impurity_decrease`, `min_samples_leaf`, `min_samples_split`, `n_bins`, `n_estimators`, `n_streams`, `oob_score`, `random_state`
+  - `gpu_native` random_forest does not support `model_params.max_depth: null`; omit `max_depth` to use cuML's default finite depth or set an explicit positive integer
   - when runtime resolves to `gpu_native` for the supported XGBoost slice, fold-local preprocessing remains per-CV-split, `frequency` preprocessing is performed by the repo-owned `cudf` path, and the first supported dense outputs stay GPU-resident through fit and predict
   - the current native XGBoost support matrix is intentionally narrow and aligned with the documented `gpu_native` tuples above
   - explicit cuML preprocessing currently stays on dense output only; sparse onehot paths continue to use `gpu_patch` or CPU fallback
@@ -211,8 +216,8 @@ Required top-level sections:
     - logistic regression Optuna trials fix `solver="saga"` and `max_iter=1000`
     - logistic regression Optuna trials tune `C`, `tol`, `class_weight`, and `l1_ratio`
   - `categorical_preprocessor: onehot` is an internal matrix-output decision, not a config knob:
-    - sparse CSR output: `ridge`, `elasticnet`, `logistic_regression`, `random_forest`, `extra_trees`, `lightgbm`, `catboost`, `xgboost`
-    - dense array output: `hist_gradient_boosting`
+    - sparse CSR output: `ridge`, `elasticnet`, `logistic_regression`, `extra_trees`, `lightgbm`, `catboost`, `xgboost`, and `random_forest` when runtime does not resolve to `gpu_native`
+    - dense array output: `hist_gradient_boosting`, plus `random_forest` when runtime resolves to `gpu_native`
     - `numeric_preprocessor: kbins` follows the same sparse-versus-dense decision when combined with `onehot`
     - when `model_family: xgboost` and runtime resolves to GPU, the sparse CSR branch is rejected before training because XGBoost does not support `cupyx` CSR inputs yet in this runtime
     - when `model_family: logistic_regression` and runtime resolves to GPU, only `categorical_preprocessor: frequency` is currently supported; the `onehot` sparse branch and the current `ordinal` branch are both rejected before training because the RAPIDS-hooked sklearn preprocessing path is not stable there yet in this runtime

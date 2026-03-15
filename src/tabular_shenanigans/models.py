@@ -16,7 +16,11 @@ from sklearn.ensemble import (
 from sklearn.linear_model import ElasticNet, LogisticRegression, Ridge
 
 from tabular_shenanigans.lightgbm_cuda_backend import RepositoryLightGbmEstimator
-from tabular_shenanigans.runtime_execution import get_runtime_execution_context
+from tabular_shenanigans.runtime_execution import (
+    NATIVE_GPU_BACKEND,
+    RuntimeExecutionContext,
+    get_runtime_execution_context,
+)
 
 ModelBuilder = Callable[[int, dict[str, object] | None], tuple[object, dict[str, object]]]
 FitKwargsBuilder = Callable[[object, list[str], list[str]], dict[str, object]]
@@ -29,6 +33,35 @@ GPU_NATIVE_ELASTICNET_SUPPORTED_PARAM_NAMES = frozenset(
 )
 GPU_NATIVE_ELASTICNET_SUPPORTED_SOLVERS = frozenset({"cd", "qn"})
 GPU_NATIVE_ELASTICNET_SUPPORTED_SELECTIONS = frozenset({"cyclic", "random"})
+GPU_NATIVE_RANDOM_FOREST_SUPPORTED_PARAM_NAMES = frozenset(
+    {
+        "bootstrap",
+        "criterion",
+        "max_batch_size",
+        "max_depth",
+        "max_features",
+        "max_leaf_nodes",
+        "max_samples",
+        "min_impurity_decrease",
+        "min_samples_leaf",
+        "min_samples_split",
+        "n_bins",
+        "n_estimators",
+        "n_streams",
+        "oob_score",
+        "random_state",
+    }
+)
+GPU_NATIVE_RANDOM_FOREST_MAX_FEATURE_KEYWORDS = frozenset({"auto", "log2", "sqrt"})
+GPU_NATIVE_RANDOM_FOREST_CLASSIFIER_CRITERION_MAP = {
+    "entropy": "entropy",
+    "gini": "gini",
+}
+GPU_NATIVE_RANDOM_FOREST_REGRESSOR_CRITERION_MAP = {
+    "mse": "mse",
+    "poisson": "poisson",
+    "squared_error": "mse",
+}
 
 
 @dataclass(frozen=True)
@@ -40,6 +73,7 @@ class ModelDefinition:
     tuning_space_builder: TuningSpaceBuilder | None = None
     supports_native_categorical_preprocessing: bool = False
     supports_sparse_preprocessed_input: bool = False
+    supports_gpu_native_dense_onehot_input: bool = False
 
 
 class BinaryLabelEncodingClassifier:
@@ -150,6 +184,25 @@ def _import_cuml_linear_model(
     model_class = getattr(cuml_linear_model, model_class_name, None)
     if model_class is None:
         raise ImportError(f"cuml.linear_model.{model_class_name} is unavailable in this environment.")
+    return model_class
+
+
+def _import_cuml_ensemble_model(
+    model_class_name: str,
+    *,
+    model_label: str,
+) -> type[object]:
+    try:
+        from cuml import ensemble as cuml_ensemble
+    except ImportError as exc:
+        raise ImportError(
+            f"gpu_native {model_label} requires the optional GPU dependencies. "
+            "Install them with `uv sync --extra boosters --extra gpu`."
+        ) from exc
+
+    model_class = getattr(cuml_ensemble, model_class_name, None)
+    if model_class is None:
+        raise ImportError(f"cuml.ensemble.{model_class_name} is unavailable in this environment.")
     return model_class
 
 
@@ -271,6 +324,250 @@ def _build_gpu_native_elasticnet_params(
     return _merge_model_params({}, resolved_overrides)
 
 
+def _normalize_gpu_native_random_forest_int_param(
+    *,
+    param_name: str,
+    value: object,
+    minimum_value: int,
+) -> int:
+    if not isinstance(value, (int, np.integer)) or isinstance(value, bool):
+        raise ValueError(f"gpu_native random_forest model_params.{param_name} must be an integer.")
+    int_value = int(value)
+    if int_value < minimum_value:
+        raise ValueError(
+            f"gpu_native random_forest model_params.{param_name} must be >= {minimum_value}."
+        )
+    return int_value
+
+
+def _normalize_gpu_native_random_forest_bool_param(
+    *,
+    param_name: str,
+    value: object,
+) -> bool:
+    if not isinstance(value, bool):
+        raise ValueError(f"gpu_native random_forest model_params.{param_name} must be a boolean.")
+    return value
+
+
+def _normalize_gpu_native_random_forest_non_negative_float_param(
+    *,
+    param_name: str,
+    value: object,
+) -> float:
+    if not _is_numeric_scalar_param(value):
+        raise ValueError(f"gpu_native random_forest model_params.{param_name} must be numeric.")
+    float_value = float(value)
+    if not np.isfinite(float_value) or float_value < 0.0:
+        raise ValueError(
+            f"gpu_native random_forest model_params.{param_name} must be finite and >= 0."
+        )
+    return float_value
+
+
+def _normalize_gpu_native_random_forest_count_or_fraction_param(
+    *,
+    param_name: str,
+    value: object,
+    minimum_count: int,
+) -> int | float:
+    if isinstance(value, bool):
+        raise ValueError(
+            f"gpu_native random_forest model_params.{param_name} must be an integer count "
+            "or a float fraction within (0, 1]."
+        )
+
+    if isinstance(value, (int, np.integer)):
+        int_value = int(value)
+        if int_value < minimum_count:
+            raise ValueError(
+                f"gpu_native random_forest model_params.{param_name} must be >= {minimum_count}."
+            )
+        return int_value
+
+    if not _is_numeric_scalar_param(value):
+        raise ValueError(
+            f"gpu_native random_forest model_params.{param_name} must be an integer count "
+            "or a float fraction within (0, 1]."
+        )
+
+    float_value = float(value)
+    if not np.isfinite(float_value):
+        raise ValueError(
+            f"gpu_native random_forest model_params.{param_name} must be finite."
+        )
+    if float_value.is_integer():
+        int_value = int(float_value)
+        if int_value < minimum_count:
+            raise ValueError(
+                f"gpu_native random_forest model_params.{param_name} must be >= {minimum_count}."
+            )
+        return int_value
+    if 0.0 < float_value <= 1.0:
+        return float_value
+    raise ValueError(
+        f"gpu_native random_forest model_params.{param_name} must be >= {minimum_count} "
+        "when passed as a count or within (0, 1] when passed as a fraction."
+    )
+
+
+def _normalize_gpu_native_random_forest_max_features(value: object) -> int | float | str:
+    if isinstance(value, bool):
+        raise ValueError(
+            "gpu_native random_forest model_params.max_features must be an integer, a float "
+            "within (0, 1], or one of ['auto', 'log2', 'sqrt']."
+        )
+
+    if isinstance(value, (int, np.integer)):
+        int_value = int(value)
+        if int_value <= 0:
+            raise ValueError("gpu_native random_forest model_params.max_features must be > 0.")
+        return int_value
+
+    if _is_numeric_scalar_param(value):
+        float_value = float(value)
+        if not np.isfinite(float_value):
+            raise ValueError("gpu_native random_forest model_params.max_features must be finite.")
+        if float_value.is_integer() and float_value > 0.0:
+            return int(float_value)
+        if 0.0 < float_value <= 1.0:
+            return float_value
+        raise ValueError(
+            "gpu_native random_forest model_params.max_features must be > 0 when passed "
+            "as a count or within (0, 1] when passed as a fraction."
+        )
+
+    if isinstance(value, str):
+        normalized_value = value.strip().lower()
+        if normalized_value in GPU_NATIVE_RANDOM_FOREST_MAX_FEATURE_KEYWORDS:
+            return normalized_value
+
+    raise ValueError(
+        "gpu_native random_forest model_params.max_features must be an integer, a float "
+        "within (0, 1], or one of ['auto', 'log2', 'sqrt']."
+    )
+
+
+def _normalize_gpu_native_random_forest_criterion(
+    *,
+    criterion_value: object,
+    criterion_map: Mapping[str, str],
+) -> str:
+    if not isinstance(criterion_value, str):
+        raise ValueError("gpu_native random_forest model_params.criterion must be a string.")
+
+    normalized_value = criterion_value.strip().lower()
+    normalized_criterion = criterion_map.get(normalized_value)
+    if normalized_criterion is None:
+        raise ValueError(
+            "gpu_native random_forest model_params.criterion must be one of "
+            f"{sorted(criterion_map)}."
+        )
+    return normalized_criterion
+
+
+def _build_gpu_native_random_forest_params(
+    *,
+    parameter_overrides: Mapping[str, object] | None,
+    random_state: int,
+    criterion_map: Mapping[str, str],
+) -> dict[str, object]:
+    raw_overrides = dict(parameter_overrides or {})
+    if "n_jobs" in raw_overrides:
+        raise ValueError(
+            "gpu_native random_forest does not support model_params.n_jobs. "
+            "Use model_params.n_streams or omit the override."
+        )
+
+    resolved_overrides = _resolve_supported_gpu_native_params(
+        model_label="random_forest",
+        parameter_overrides=raw_overrides,
+        supported_param_names=GPU_NATIVE_RANDOM_FOREST_SUPPORTED_PARAM_NAMES,
+    )
+
+    normalized_overrides: dict[str, object] = {}
+    for param_name, param_value in resolved_overrides.items():
+        if param_name == "criterion":
+            normalized_overrides["split_criterion"] = _normalize_gpu_native_random_forest_criterion(
+                criterion_value=param_value,
+                criterion_map=criterion_map,
+            )
+            continue
+        if param_name == "max_leaf_nodes":
+            normalized_overrides["max_leaves"] = _normalize_gpu_native_random_forest_int_param(
+                param_name="max_leaf_nodes",
+                value=param_value,
+                minimum_value=2,
+            )
+            continue
+        if param_name == "max_features":
+            normalized_overrides[param_name] = _normalize_gpu_native_random_forest_max_features(param_value)
+            continue
+        if param_name in {"bootstrap", "oob_score"}:
+            normalized_overrides[param_name] = _normalize_gpu_native_random_forest_bool_param(
+                param_name=param_name,
+                value=param_value,
+            )
+            continue
+        if param_name == "max_depth":
+            if param_value is None:
+                raise ValueError(
+                    "gpu_native random_forest model_params.max_depth does not support null. "
+                    "Set a positive integer or omit the override to use the cuML default depth."
+                )
+            normalized_overrides[param_name] = _normalize_gpu_native_random_forest_int_param(
+                param_name=param_name,
+                value=param_value,
+                minimum_value=1,
+            )
+            continue
+        if param_name in {"max_batch_size", "n_bins", "n_estimators", "n_streams", "random_state"}:
+            normalized_overrides[param_name] = _normalize_gpu_native_random_forest_int_param(
+                param_name=param_name,
+                value=param_value,
+                minimum_value=1,
+            )
+            continue
+        if param_name == "min_samples_split":
+            normalized_overrides[param_name] = _normalize_gpu_native_random_forest_count_or_fraction_param(
+                param_name=param_name,
+                value=param_value,
+                minimum_count=2,
+            )
+            continue
+        if param_name in {"max_samples", "min_samples_leaf"}:
+            normalized_overrides[param_name] = _normalize_gpu_native_random_forest_count_or_fraction_param(
+                param_name=param_name,
+                value=param_value,
+                minimum_count=1,
+            )
+            continue
+        if param_name == "min_impurity_decrease":
+            normalized_overrides[param_name] = _normalize_gpu_native_random_forest_non_negative_float_param(
+                param_name=param_name,
+                value=param_value,
+            )
+            continue
+        normalized_overrides[param_name] = param_value
+
+    resolved_bootstrap = normalized_overrides.get("bootstrap", True)
+    resolved_oob_score = normalized_overrides.get("oob_score", False)
+    if resolved_oob_score and not resolved_bootstrap:
+        raise ValueError(
+            "gpu_native random_forest model_params.oob_score requires bootstrap=True."
+        )
+    if "max_samples" in normalized_overrides and not resolved_bootstrap:
+        raise ValueError(
+            "gpu_native random_forest model_params.max_samples requires bootstrap=True."
+        )
+
+    default_params = {
+        "n_estimators": 500,
+        "random_state": random_state,
+    }
+    return _merge_model_params(default_params, normalized_overrides)
+
+
 def _build_ridge(random_state: int, parameter_overrides: dict[str, object] | None = None) -> tuple[object, dict[str, object]]:
     del random_state
     runtime_execution_context = get_runtime_execution_context()
@@ -301,7 +598,20 @@ def _build_elasticnet(
 def _build_random_forest_regressor(
     random_state: int,
     parameter_overrides: dict[str, object] | None = None,
-) -> tuple[RandomForestRegressor, dict[str, object]]:
+) -> tuple[object, dict[str, object]]:
+    runtime_execution_context = get_runtime_execution_context()
+    if runtime_execution_context.resolved_gpu_backend == NATIVE_GPU_BACKEND:
+        params = _build_gpu_native_random_forest_params(
+            parameter_overrides=parameter_overrides,
+            random_state=random_state,
+            criterion_map=GPU_NATIVE_RANDOM_FOREST_REGRESSOR_CRITERION_MAP,
+        )
+        estimator_class = _import_cuml_ensemble_model(
+            "RandomForestRegressor",
+            model_label="random_forest",
+        )
+        return SingleTargetRegressionAdapter(estimator_class(**params)), params
+
     params = _merge_model_params({"n_estimators": 500, "n_jobs": -1, "random_state": random_state}, parameter_overrides)
     return RandomForestRegressor(**params), params
 
@@ -390,7 +700,20 @@ def _build_gpu_native_logreg_params(
 def _build_random_forest_classifier(
     random_state: int,
     parameter_overrides: dict[str, object] | None = None,
-) -> tuple[RandomForestClassifier, dict[str, object]]:
+) -> tuple[object, dict[str, object]]:
+    runtime_execution_context = get_runtime_execution_context()
+    if runtime_execution_context.resolved_gpu_backend == NATIVE_GPU_BACKEND:
+        params = _build_gpu_native_random_forest_params(
+            parameter_overrides=parameter_overrides,
+            random_state=random_state,
+            criterion_map=GPU_NATIVE_RANDOM_FOREST_CLASSIFIER_CRITERION_MAP,
+        )
+        estimator_class = _import_cuml_ensemble_model(
+            "RandomForestClassifier",
+            model_label="random_forest",
+        )
+        return BinaryLabelEncodingClassifier(estimator_class(**params)), params
+
     params = _merge_model_params({"n_estimators": 500, "n_jobs": -1, "random_state": random_state}, parameter_overrides)
     return RandomForestClassifier(**params), params
 
@@ -803,6 +1126,7 @@ MODEL_REGISTRY: dict[str, dict[str, ModelDefinition]] = {
             builder=_build_random_forest_regressor,
             tuning_space_builder=_build_random_forest_tuning_space,
             supports_sparse_preprocessed_input=True,
+            supports_gpu_native_dense_onehot_input=True,
         ),
         "extra_trees": ModelDefinition(
             model_id="extra_trees",
@@ -855,6 +1179,7 @@ MODEL_REGISTRY: dict[str, dict[str, ModelDefinition]] = {
             builder=_build_random_forest_classifier,
             tuning_space_builder=_build_random_forest_tuning_space,
             supports_sparse_preprocessed_input=True,
+            supports_gpu_native_dense_onehot_input=True,
         ),
         "extra_trees": ModelDefinition(
             model_id="extra_trees",
@@ -958,10 +1283,18 @@ def resolve_model_matrix_output_kind(
     task_type: str,
     model_id: str,
     categorical_preprocessor_id: str,
+    runtime_execution_context: RuntimeExecutionContext | None = None,
 ) -> str:
     model_definition = get_model_definition(task_type, model_id)
     if categorical_preprocessor_id == "native":
         return "native_frame"
+    if (
+        categorical_preprocessor_id == "onehot"
+        and runtime_execution_context is not None
+        and runtime_execution_context.resolved_gpu_backend == NATIVE_GPU_BACKEND
+        and model_definition.supports_gpu_native_dense_onehot_input
+    ):
+        return "dense_array"
     if categorical_preprocessor_id == "onehot" and model_definition.supports_sparse_preprocessed_input:
         return "sparse_csr"
     return "dense_array"
