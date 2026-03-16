@@ -1,6 +1,7 @@
 from dataclasses import dataclass
 
 import pandas as pd
+from sklearn.preprocessing import KBinsDiscretizer as SklearnKBinsDiscretizer
 
 from tabular_shenanigans.preprocess import ResolvedFeatureSchema
 
@@ -49,7 +50,53 @@ class _ResolvedNumericGpuTransformers:
     post_imputer_transformer: object | None
 
 
+def _build_gpu_kbins_discretizer(kbins_discretizer_class: type[object]) -> object:
+    try:
+        return kbins_discretizer_class(
+            n_bins=5,
+            encode="onehot-dense",
+            strategy="quantile",
+            quantile_method="averaged_inverted_cdf",
+        )
+    except TypeError as exc:
+        if "quantile_method" not in str(exc):
+            raise
+        return kbins_discretizer_class(
+            n_bins=5,
+            encode="onehot-dense",
+            strategy="quantile",
+        )
+
+
+def _fit_kbins_transformer(imputed_numeric: object, kbins_discretizer_class: type[object]) -> tuple[object, object]:
+    post_imputer_transformer = _build_gpu_kbins_discretizer(kbins_discretizer_class)
+    try:
+        transformed_numeric = post_imputer_transformer.fit_transform(imputed_numeric)
+    except TypeError as exc:
+        if "Implicit conversion to a NumPy array is not allowed" not in str(exc):
+            raise
+        cpu_kbins = SklearnKBinsDiscretizer(
+            n_bins=5,
+            encode="onehot-dense",
+            strategy="quantile",
+            quantile_method="averaged_inverted_cdf",
+        )
+        cpu_input = imputed_numeric.to_pandas() if hasattr(imputed_numeric, "to_pandas") else imputed_numeric
+        transformed_numeric = cpu_kbins.fit_transform(cpu_input)
+        return cpu_kbins, transformed_numeric
+    return post_imputer_transformer, transformed_numeric
+
+
+def _transform_kbins_values(post_imputer_transformer: object, imputed_numeric: object) -> object:
+    if type(post_imputer_transformer).__module__.startswith("sklearn"):
+        cpu_input = imputed_numeric.to_pandas() if hasattr(imputed_numeric, "to_pandas") else imputed_numeric
+        return post_imputer_transformer.transform(cpu_input)
+    return post_imputer_transformer.transform(imputed_numeric)
+
+
 class GpuCumlDensePreprocessor:
+    CATEGORICAL_MISSING_VALUE = "__missing__"
+
     def __init__(
         self,
         feature_schema: ResolvedFeatureSchema,
@@ -60,7 +107,7 @@ class GpuCumlDensePreprocessor:
         self.numeric_preprocessor_id = numeric_preprocessor_id
         self.categorical_preprocessor_id = categorical_preprocessor_id
         self.numeric_transformers: _ResolvedNumericGpuTransformers | None = None
-        self.categorical_imputer: object | None = None
+        self.categorical_fill_values: dict[str, object] | None = None
         self.categorical_encoder: object | None = None
 
     def _fit_numeric(self, frame: pd.DataFrame) -> object | None:
@@ -77,13 +124,10 @@ class GpuCumlDensePreprocessor:
             post_imputer_transformer = StandardScaler()
             transformed_numeric = post_imputer_transformer.fit_transform(imputed_numeric)
         elif self.numeric_preprocessor_id == "kbins":
-            post_imputer_transformer = KBinsDiscretizer(
-                n_bins=5,
-                encode="onehot-dense",
-                strategy="quantile",
-                quantile_method="averaged_inverted_cdf",
+            post_imputer_transformer, transformed_numeric = _fit_kbins_transformer(
+                imputed_numeric,
+                KBinsDiscretizer,
             )
-            transformed_numeric = post_imputer_transformer.fit_transform(imputed_numeric)
 
         self.numeric_transformers = _ResolvedNumericGpuTransformers(
             imputer=numeric_imputer,
@@ -94,13 +138,24 @@ class GpuCumlDensePreprocessor:
     def _fit_categorical(self, frame: pd.DataFrame) -> object | None:
         if not self.feature_schema.categorical_columns:
             return None
-        _, cudf, SimpleImputer, _, OneHotEncoder, _ = _import_gpu_preprocessing_modules()
-        categorical_frame = cudf.from_pandas(frame.loc[:, self.feature_schema.categorical_columns])
-        categorical_imputer = SimpleImputer(strategy="most_frequent")
-        imputed_categorical = categorical_imputer.fit_transform(categorical_frame)
+        _, cudf, _, _, OneHotEncoder, _ = _import_gpu_preprocessing_modules()
+        categorical_fill_values: dict[str, object] = {}
+        filled_categorical_frame = frame.loc[:, self.feature_schema.categorical_columns].astype(object).copy()
+        for column in self.feature_schema.categorical_columns:
+            non_null_values = filled_categorical_frame[column].dropna()
+            fill_value = self.CATEGORICAL_MISSING_VALUE
+            if not non_null_values.empty:
+                fill_value = non_null_values.mode(dropna=True).iloc[0]
+            categorical_fill_values[column] = fill_value
+            filled_categorical_frame[column] = filled_categorical_frame[column].where(
+                filled_categorical_frame[column].notna(),
+                fill_value,
+            )
+
+        categorical_frame = cudf.from_pandas(filled_categorical_frame)
         categorical_encoder = OneHotEncoder(handle_unknown="ignore", sparse_output=False)
-        transformed_categorical = categorical_encoder.fit_transform(imputed_categorical)
-        self.categorical_imputer = categorical_imputer
+        transformed_categorical = categorical_encoder.fit_transform(categorical_frame)
+        self.categorical_fill_values = categorical_fill_values
         self.categorical_encoder = categorical_encoder
         return _to_cupy_dense(transformed_categorical)
 
@@ -118,18 +173,31 @@ class GpuCumlDensePreprocessor:
         numeric_frame = cudf.from_pandas(frame.loc[:, self.feature_schema.numeric_columns]).astype("float64")
         transformed_numeric = self.numeric_transformers.imputer.transform(numeric_frame)
         if self.numeric_transformers.post_imputer_transformer is not None:
-            transformed_numeric = self.numeric_transformers.post_imputer_transformer.transform(transformed_numeric)
+            if self.numeric_preprocessor_id == "kbins":
+                transformed_numeric = _transform_kbins_values(
+                    self.numeric_transformers.post_imputer_transformer,
+                    transformed_numeric,
+                )
+            else:
+                transformed_numeric = self.numeric_transformers.post_imputer_transformer.transform(
+                    transformed_numeric
+                )
         return _to_cupy_dense(transformed_numeric)
 
     def _transform_categorical(self, frame: pd.DataFrame) -> object | None:
         if not self.feature_schema.categorical_columns:
             return None
-        if self.categorical_imputer is None or self.categorical_encoder is None:
+        if self.categorical_fill_values is None or self.categorical_encoder is None:
             raise ValueError("Categorical GPU preprocessing must be fit before transform.")
         _, cudf, _, _, _, _ = _import_gpu_preprocessing_modules()
-        categorical_frame = cudf.from_pandas(frame.loc[:, self.feature_schema.categorical_columns])
-        transformed_categorical = self.categorical_imputer.transform(categorical_frame)
-        transformed_categorical = self.categorical_encoder.transform(transformed_categorical)
+        filled_categorical_frame = frame.loc[:, self.feature_schema.categorical_columns].astype(object).copy()
+        for column, fill_value in self.categorical_fill_values.items():
+            filled_categorical_frame[column] = filled_categorical_frame[column].where(
+                filled_categorical_frame[column].notna(),
+                fill_value,
+            )
+        categorical_frame = cudf.from_pandas(filled_categorical_frame)
+        transformed_categorical = self.categorical_encoder.transform(categorical_frame)
         return _to_cupy_dense(transformed_categorical)
 
     def transform(self, frame: pd.DataFrame):

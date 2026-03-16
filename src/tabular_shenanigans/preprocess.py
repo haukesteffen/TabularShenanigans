@@ -346,7 +346,7 @@ def _build_categorical_onehot_preprocessor(matrix_output_kind: MatrixOutputKind)
     sparse_output = matrix_output_kind == "sparse_csr"
     return Pipeline(
         steps=[
-            ("coerce_object", FunctionTransformer(_coerce_object, feature_names_out="one-to-one")),
+            ("coerce_object", FunctionTransformer(_coerce_object)),
             ("imputer", SimpleImputer(strategy="most_frequent")),
             ("onehot", OneHotEncoder(handle_unknown="ignore", sparse_output=sparse_output)),
         ]
@@ -357,7 +357,7 @@ def _build_categorical_ordinal_preprocessor(matrix_output_kind: MatrixOutputKind
     del matrix_output_kind
     return Pipeline(
         steps=[
-            ("coerce_object", FunctionTransformer(_coerce_object, feature_names_out="one-to-one")),
+            ("coerce_object", FunctionTransformer(_coerce_object)),
             ("imputer", SimpleImputer(strategy="most_frequent")),
             (
                 "ordinal",
