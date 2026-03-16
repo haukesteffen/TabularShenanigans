@@ -110,22 +110,6 @@ class PreparedTrainingContext:
     model_compute_target: str
 
 
-def _validate_gpu_native_matrix_output(
-    uses_xgboost_gpu_native_inputs: bool,
-    matrix_output_kind: str,
-) -> None:
-    if not uses_xgboost_gpu_native_inputs:
-        return
-    if matrix_output_kind != "sparse_csr":
-        return
-    raise ValueError(
-        "XGBoost GPU execution currently requires dense fold-local preprocessing output in this runtime. "
-        "The sparse CSR path produced by categorical_preprocessor='onehot' and related kbins compositions "
-        "cannot be promoted to a supported GPU-native XGBoost input because cupyx CSR is not supported yet. "
-        "Use categorical_preprocessor='ordinal' or 'frequency', or force CPU execution."
-    )
-
-
 def build_prepared_training_context(
     config: AppConfig,
     dataset_context: CompetitionDatasetContext,
@@ -194,10 +178,6 @@ def build_prepared_training_context(
         config.resolved_model_registry_key == "xgboost"
         and config.runtime_execution_context.resolved_compute_target == "gpu"
     )
-    _validate_gpu_native_matrix_output(
-        uses_xgboost_gpu_native_inputs=uses_xgboost_gpu_native_inputs,
-        matrix_output_kind=matrix_output_kind,
-    )
     return PreparedTrainingContext(
         id_column=id_column,
         label_column=label_column,
@@ -246,7 +226,7 @@ def _coerce_processed_matrix(
     return np.asarray(values)
 
 
-def _coerce_xgboost_gpu_input(values: object, matrix_output_kind: str) -> object:
+def _coerce_xgboost_gpu_input(values: object) -> object:
     try:
         import cudf
     except ImportError as exc:
@@ -262,11 +242,6 @@ def _coerce_xgboost_gpu_input(values: object, matrix_output_kind: str) -> object
             "XGBoost GPU-native inputs require the optional GPU dependencies. "
             "Install them with `uv sync --extra boosters --extra gpu`."
         ) from exc
-
-    if matrix_output_kind == "sparse_csr":
-        raise ValueError(
-            "XGBoost GPU execution currently does not support sparse CSR preprocessing output in this runtime."
-        )
 
     if _module_startswith(values, "cudf") or _module_startswith(values, "cupy"):
         return values
@@ -427,10 +402,10 @@ def _run_cv_evaluation(
 
         if uses_xgboost_gpu_native_inputs:
             # Convert fold-local preprocessing outputs to GPU-native inputs before XGBoost fit/predict.
-            x_fold_train_processed = _coerce_xgboost_gpu_input(x_fold_train_processed, matrix_output_kind)
-            x_fold_valid_processed = _coerce_xgboost_gpu_input(x_fold_valid_processed, matrix_output_kind)
+            x_fold_train_processed = _coerce_xgboost_gpu_input(x_fold_train_processed)
+            x_fold_valid_processed = _coerce_xgboost_gpu_input(x_fold_valid_processed)
             if x_test_processed is not None:
-                x_test_processed = _coerce_xgboost_gpu_input(x_test_processed, matrix_output_kind)
+                x_test_processed = _coerce_xgboost_gpu_input(x_test_processed)
         elif resolved_model_registry_key == "lightgbm":
             x_fold_train_processed = coerce_lightgbm_matrix_input(x_fold_train_processed)
             x_fold_valid_processed = coerce_lightgbm_matrix_input(x_fold_valid_processed)

@@ -18,6 +18,7 @@ from sklearn.linear_model import ElasticNet, LogisticRegression, Ridge
 from tabular_shenanigans.lightgbm_cuda_backend import RepositoryLightGbmEstimator
 from tabular_shenanigans.runtime_execution import (
     NATIVE_GPU_BACKEND,
+    PATCH_GPU_BACKEND,
     RuntimeExecutionContext,
     get_runtime_execution_context,
 )
@@ -1165,6 +1166,7 @@ MODEL_REGISTRY: dict[str, dict[str, ModelDefinition]] = {
             builder=_build_xgboost_regressor,
             tuning_space_builder=_build_xgboost_tuning_space,
             supports_sparse_preprocessed_input=True,
+            supports_gpu_native_dense_onehot_input=True,
         ),
     },
     "binary": {
@@ -1219,6 +1221,7 @@ MODEL_REGISTRY: dict[str, dict[str, ModelDefinition]] = {
             builder=_build_xgboost_classifier,
             tuning_space_builder=_build_xgboost_tuning_space,
             supports_sparse_preprocessed_input=True,
+            supports_gpu_native_dense_onehot_input=True,
         ),
     },
 }
@@ -1294,7 +1297,7 @@ def resolve_model_matrix_output_kind(
     if (
         categorical_preprocessor_id == "onehot"
         and runtime_execution_context is not None
-        and runtime_execution_context.resolved_gpu_backend == NATIVE_GPU_BACKEND
+        and runtime_execution_context.resolved_gpu_backend in (NATIVE_GPU_BACKEND, PATCH_GPU_BACKEND)
         and model_definition.supports_gpu_native_dense_onehot_input
     ):
         return "dense_array"

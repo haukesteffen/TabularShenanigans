@@ -252,8 +252,27 @@ def _default_cases() -> list[ValidationCase]:
             expected_preprocessing_backend="gpu_cuml",
             notes="Validates #205 — elasticnet onehot registered in GPU_SUPPORT_REGISTRY.",
         ),
-        # #206 xgboost+onehot cases intentionally omitted: registry entries will be removed
-        # in #209 (sparse CSR / XGBoost GPU incompatibility).
+        # #206/#209: xgboost+onehot on gpu_patch — densified to dense_array, routed through gpu_cuml preprocessing.
+        ValidationCase(
+            case_id="binary_xgboost_patch_onehot_standardize",
+            template_config_path=DEFAULT_BINARY_TEMPLATE_PATH,
+            model_family="xgboost",
+            numeric_preprocessor="standardize",
+            categorical_preprocessor="onehot",
+            gpu_backend="patch",
+            expected_preprocessing_backend="gpu_cuml",
+            notes="Validates #209 — xgboost onehot on gpu_patch densified to dense_array via gpu_cuml preprocessing.",
+        ),
+        ValidationCase(
+            case_id="regression_xgboost_patch_onehot_kbins",
+            template_config_path=DEFAULT_REGRESSION_TEMPLATE_PATH,
+            model_family="xgboost",
+            numeric_preprocessor="kbins",
+            categorical_preprocessor="onehot",
+            gpu_backend="patch",
+            expected_preprocessing_backend="gpu_cuml",
+            notes="Validates #209 — xgboost onehot on gpu_patch densified to dense_array via gpu_cuml preprocessing.",
+        ),
         # #212: frequency + kbins on gpu_native
         ValidationCase(
             case_id="regression_ridge_native_frequency_kbins",
