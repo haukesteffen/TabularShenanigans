@@ -70,6 +70,14 @@ def _build_gpu_support_registry() -> dict[tuple[str, str, str, str], tuple[str, 
     )
     _register_model_paths(
         registry,
+        task_types=("binary",),
+        model_family="logistic_regression",
+        numeric_preprocessors=("median", "standardize", "kbins"),
+        categorical_preprocessors=("ordinal",),
+        gpu_paths=(NATIVE_GPU_BACKEND,),
+    )
+    _register_model_paths(
+        registry,
         task_types=("regression",),
         model_family="ridge",
         numeric_preprocessors=("median", "standardize"),
@@ -79,8 +87,40 @@ def _build_gpu_support_registry() -> dict[tuple[str, str, str, str], tuple[str, 
     _register_model_paths(
         registry,
         task_types=("regression",),
+        model_family="ridge",
+        numeric_preprocessors=("median", "standardize", "kbins"),
+        categorical_preprocessors=("ordinal",),
+        gpu_paths=(NATIVE_GPU_BACKEND,),
+    )
+    _register_model_paths(
+        registry,
+        task_types=("regression",),
+        model_family="ridge",
+        numeric_preprocessors=("kbins",),
+        categorical_preprocessors=("frequency",),
+        gpu_paths=(NATIVE_GPU_BACKEND,),
+    )
+    _register_model_paths(
+        registry,
+        task_types=("regression",),
         model_family="elasticnet",
         numeric_preprocessors=("median", "standardize"),
+        categorical_preprocessors=("frequency",),
+        gpu_paths=(NATIVE_GPU_BACKEND,),
+    )
+    _register_model_paths(
+        registry,
+        task_types=("regression",),
+        model_family="elasticnet",
+        numeric_preprocessors=("median", "standardize", "kbins"),
+        categorical_preprocessors=("ordinal",),
+        gpu_paths=(NATIVE_GPU_BACKEND,),
+    )
+    _register_model_paths(
+        registry,
+        task_types=("regression",),
+        model_family="elasticnet",
+        numeric_preprocessors=("kbins",),
         categorical_preprocessors=("frequency",),
         gpu_paths=(NATIVE_GPU_BACKEND,),
     )
@@ -96,8 +136,16 @@ def _build_gpu_support_registry() -> dict[tuple[str, str, str, str], tuple[str, 
         registry,
         task_types=("binary", "regression"),
         model_family="random_forest",
-        numeric_preprocessors=("median", "standardize"),
+        numeric_preprocessors=("median", "standardize", "kbins"),
         categorical_preprocessors=("frequency",),
+        gpu_paths=(NATIVE_GPU_BACKEND,),
+    )
+    _register_model_paths(
+        registry,
+        task_types=("binary", "regression"),
+        model_family="random_forest",
+        numeric_preprocessors=("median", "standardize", "kbins"),
+        categorical_preprocessors=("ordinal",),
         gpu_paths=(NATIVE_GPU_BACKEND,),
     )
     _register_model_paths(
