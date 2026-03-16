@@ -24,13 +24,22 @@ AUDIT_CANDIDATE_MATRIX = [
     ("logistic_regression", "standardize", "frequency"),
     ("logistic_regression", "standardize", "onehot"),
     ("logistic_regression", "standardize", "ordinal"),
+    ("logistic_regression", "kbins",       "frequency"),
+    ("logistic_regression", "kbins",       "onehot"),
     ("random_forest",       "median",      "frequency"),
     ("random_forest",       "median",      "onehot"),
+    ("random_forest",       "kbins",       "frequency"),
+    ("random_forest",       "kbins",       "onehot"),
     ("lightgbm",            "median",      "frequency"),
     ("lightgbm",            "median",      "ordinal"),
+    ("lightgbm",            "kbins",       "frequency"),
+    ("lightgbm",            "kbins",       "ordinal"),
     ("xgboost",             "median",      "frequency"),
     ("xgboost",             "median",      "onehot"),
+    ("xgboost",             "kbins",       "frequency"),
+    ("xgboost",             "kbins",       "onehot"),
     ("catboost",            "median",      "native"),
+    ("catboost",            "kbins",       "native"),
 ]
 
 
