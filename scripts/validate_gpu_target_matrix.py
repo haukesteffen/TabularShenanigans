@@ -317,20 +317,21 @@ def _build_case_config(
     _set_nested(payload, ["experiment", "submit", "enabled"], False)
     _set_nested(payload, ["experiment", "runtime", "compute_target"], "gpu")
     _set_nested(payload, ["experiment", "runtime", "gpu_backend"], case.gpu_backend)
-    _set_nested(payload, ["experiment", "candidate", "candidate_type"], "model")
-    _set_nested(payload, ["experiment", "candidate", "model_family"], case.model_family)
     _set_nested(
         payload,
-        ["experiment", "candidate", "numeric_preprocessor"],
-        case.numeric_preprocessor,
+        ["experiment", "candidates"],
+        [
+            {
+                "candidate_type": "model",
+                "feature_recipe_id": "fr0",
+                "model_family": case.model_family,
+                "numeric_preprocessor": case.numeric_preprocessor,
+                "categorical_preprocessor": case.categorical_preprocessor,
+                "model_params": {},
+                "optimization": {"enabled": False},
+            }
+        ],
     )
-    _set_nested(
-        payload,
-        ["experiment", "candidate", "categorical_preprocessor"],
-        case.categorical_preprocessor,
-    )
-    _set_nested(payload, ["experiment", "candidate", "model_params"], {})
-    _set_nested(payload, ["experiment", "candidate", "optimization", "enabled"], False)
     return payload
 
 
