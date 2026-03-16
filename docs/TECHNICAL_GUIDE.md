@@ -4,25 +4,26 @@ Technical reference for the current repository design. Use GitHub issues and pul
 
 ## System Flow
 1. Enter the bootstrap entrypoint before importing runtime modules that depend on `pandas` or `sklearn`.
-2. Read `experiment.runtime.compute_target` and the optional advanced `experiment.runtime.gpu_backend` override from repository-root `config.yaml`, resolve hardware capability separately from tuple routing, resolve preprocessing backend selection separately from model routing, install RAPIDS hooks only when the registry resolves the current tuple to `gpu_patch`, and route GPU-capable booster families onto their GPU parameter paths.
+2. Read `experiment.runtime.compute_target` and the optional advanced `experiment.runtime.gpu_backend` override from repository-root `config.yaml`, resolve hardware capability separately from tuple routing, inspect the selected train candidates before importing the runtime stack, install RAPIDS hooks only when the selected train batch resolves entirely to `gpu_patch`, and route GPU-capable booster families onto their GPU parameter paths.
 3. Load and validate the repository-root `config.yaml`.
-4. Normalize and validate `competition.task_type`, `competition.primary_metric`, and the candidate contract.
+4. Normalize and validate `competition.task_type`, `competition.primary_metric`, and the full `experiment.candidates` contract.
 5. Resolve the MLflow tracking URI from `experiment.tracking.tracking_uri`.
 6. Download the competition zip into `data/<competition_slug>/` when it is missing.
 7. Load one shared dataset context from `train.csv`, `test.csv`, and `sample_submission.csv`.
 8. Resolve `id_column` and `label_column`, then prepare raw feature frames with the resolved ID column excluded from modeled features.
-9. For model candidates, apply the selected deterministic feature recipe.
-10. Build the competition fold assignments in memory from the configured CV settings.
-11. For model candidates, fit the selected preprocessing + model combination fold-locally and produce OOF/test predictions.
-12. For blend candidates, download compatible base candidates from the competition MLflow experiment, validate compatibility, and combine their saved predictions without retraining the base candidates.
-13. Stage the candidate bundle into a temp directory:
+9. For each selected configured candidate, resolve its candidate-specific runtime execution context.
+10. For model candidates, apply the selected deterministic feature recipe.
+11. Build the competition fold assignments in memory from the configured CV settings.
+12. For model candidates, fit the selected preprocessing + model combination fold-locally and produce OOF/test predictions.
+13. For blend candidates, download compatible base candidates from the competition MLflow experiment, validate compatibility, and combine their saved predictions without retraining the base candidates.
+14. Stage the candidate bundle into a temp directory:
     - `config/runtime_config.json`
     - `context/competition.json`
     - `context/folds.csv`
     - `candidate/*`
-14. Create one MLflow run for the candidate and upload the staged bundle.
-15. For real Kaggle submissions, download the candidate from MLflow, validate `test_predictions.csv` against `sample_submission.csv`, submit `submission.csv`, and append submission history artifacts back onto that same candidate run.
-16. For submission refresh, scan Kaggle submissions once, match `submit=<submission_event_id>` descriptions, and update candidate-run submission history plus scoreboard metrics in place.
+15. Create one MLflow run for the candidate and upload the staged bundle.
+16. For real Kaggle submissions, download the explicitly selected candidate from MLflow, validate `test_predictions.csv` against `sample_submission.csv`, submit `submission.csv`, and append submission history artifacts back onto that same candidate run.
+17. For submission refresh, scan Kaggle submissions once, match `submit=<submission_event_id>` descriptions, and update candidate-run submission history plus scoreboard metrics in place.
 
 ## Canonical Storage Model
 - MLflow is the canonical experiment store.
@@ -127,22 +128,28 @@ Submission artifacts on the same candidate run:
 - `submissions/<submission_event_id>/observations.json`
 
 ## CLI Stages
-- `uv run python main.py`: `fetch -> prepare -> train -> submit`
+- `uv run python main.py`: `fetch -> prepare -> train`
 - `uv run python main.py fetch`
 - `uv run python main.py prepare`
 - `uv run python main.py eda`
 - `uv run python main.py train`
-- `uv run python main.py submit`
+- `uv run python main.py train --candidate-id <candidate_id>`
+- `uv run python main.py train --index <n>`
+- `uv run python main.py train --skip-existing`
 - `uv run python main.py submit --candidate-id <candidate_id>`
+- `uv run python main.py submit --index <n>`
 - `uv run python main.py refresh-submissions`
 - `uv run python scripts/validate_gpu_target_matrix.py`
 
 Stage notes:
 - `main.py` keeps the existing user-facing command but now delegates into a bootstrap module before the runtime imports `pandas`- or `sklearn`-dependent modules.
-- bootstrap resolves `experiment.runtime.compute_target` and optional `experiment.runtime.gpu_backend` for the current machine and installs RAPIDS hooks only when the resolved backend is `gpu_patch`.
+- bootstrap resolves `experiment.runtime.compute_target` and optional `experiment.runtime.gpu_backend` for the current machine and installs RAPIDS hooks only when the selected train batch resolves entirely to `gpu_patch`.
+- mixed `gpu_patch` and non-`gpu_patch` train batches are rejected before import because RAPIDS hook installation is process-global; split those runs with `train --index <n>`
 - the GPU runtime contract assumes the environment was synced with `uv sync --extra boosters --extra gpu`; plain `uv run python main.py ...` is safe after that because the lockfile now pins the RAPIDS-compatible shared dependency range
 - `prepare` no longer persists canonical competition metadata. It only prepares the context in memory and writes EDA reports.
 - `train` is the only stage that creates candidate runs.
+- `train` drains `experiment.candidates` in order by default, reusing one dataset context per invocation.
+- `submit` requires `--candidate-id` or `--index`; the default pipeline no longer auto-submits.
 - `submit` and `refresh-submissions` mutate existing candidate runs by appending submission history and score metrics.
 
 ## Module Responsibilities
@@ -166,6 +173,7 @@ Stage notes:
 - [preprocess.py](/Users/hs/dev/TabularShenanigans/src/tabular_shenanigans/preprocess.py): raw feature-frame preparation and split preprocessing components.
 - [cv.py](/Users/hs/dev/TabularShenanigans/src/tabular_shenanigans/cv.py): splitters and task-aware metric scoring.
 - [train.py](/Users/hs/dev/TabularShenanigans/src/tabular_shenanigans/train.py): model training workflow, candidate manifest construction, temp bundle staging, MLflow candidate logging, and training-stage runtime profiling capture.
+- [training_orchestration.py](/Users/hs/dev/TabularShenanigans/src/tabular_shenanigans/training_orchestration.py): configured-candidate selection, sequential batch execution, optional skip-existing behavior, and batch summary reporting.
 - [blend.py](/Users/hs/dev/TabularShenanigans/src/tabular_shenanigans/blend.py): MLflow-backed base-candidate loading, compatibility checks, weighted blending, and blended candidate logging.
 - [tune.py](/Users/hs/dev/TabularShenanigans/src/tabular_shenanigans/tune.py): Optuna orchestration on top of the shared model-evaluation layer.
 - [submit.py](/Users/hs/dev/TabularShenanigans/src/tabular_shenanigans/submit.py): MLflow-backed candidate resolution, submission validation, Kaggle submit orchestration, and submission refresh.
@@ -200,8 +208,14 @@ Required top-level keys:
 `experiment` keys:
 - required `tracking`
 - optional `runtime`
-- required `candidate`
+- required `candidates`
 - optional `submit`
+
+`experiment.candidates`:
+- one or more candidate entries sharing the same competition, runtime, and tracking configuration
+- `train` runs the list in order unless narrowed with `--candidate-id` or `--index`
+- `submit --index <n>` resolves a 1-based entry from this list
+- deprecated migration path: `experiment.candidate` is still accepted as a one-entry list and emits a deprecation notice
 
 `experiment.tracking`:
 - `tracking_uri` only

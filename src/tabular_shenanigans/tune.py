@@ -118,13 +118,13 @@ def run_optimization(
     prepared_training_context: PreparedTrainingContext | None = None,
 ) -> OptimizationResult:
     if not config.is_model_candidate:
-        raise ValueError("Optimization only supports experiment.candidate.candidate_type=model.")
+        raise ValueError("Optimization only supports selected candidate_type=model.")
 
     competition = config.competition
     candidate = config.experiment.candidate
     optimization = candidate.optimization
     if not optimization.enabled:
-        raise ValueError("Optimization requires experiment.candidate.optimization.enabled=true in config.yaml.")
+        raise ValueError("Optimization requires candidate.optimization.enabled=true in config.yaml.")
 
     task_type = competition.task_type
     primary_metric = competition.primary_metric
