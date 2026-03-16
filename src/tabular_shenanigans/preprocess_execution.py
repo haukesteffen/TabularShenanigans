@@ -56,6 +56,16 @@ def resolve_preprocessing_execution_plan(
 
     if (
         gpu_available
+        and categorical_preprocessor_id == "ordinal"
+        and numeric_preprocessor_id in {"median", "standardize", "kbins"}
+    ):
+        return PreprocessingExecutionPlan(
+            preprocessing_backend=GPU_CUML_PREPROCESSING_BACKEND,
+            matrix_output_kind="dense_array",
+        )
+
+    if (
+        gpu_available
         and matrix_output_kind == "dense_array"
         and categorical_preprocessor_id == "onehot"
         and numeric_preprocessor_id in {"median", "standardize", "kbins"}
