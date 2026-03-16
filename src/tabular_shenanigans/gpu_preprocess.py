@@ -126,7 +126,11 @@ class GpuNativeFrequencyPreprocessor:
             imputed_frame = cudf.from_pandas(frame.loc[:, self.numeric_columns]).astype("float64")
             for column in self.numeric_columns:
                 imputed_frame[column] = imputed_frame[column].fillna(self.numeric_statistics.medians[column])
+            import cupy as cp
             kbins_result = transform_kbins_values(self.kbins_transformer, imputed_frame)
+            # sklearn fallback returns numpy; convert to cupy so cudf columns have valid bitmask type
+            if not type(kbins_result).__module__.startswith("cupy"):
+                kbins_result = cp.asarray(kbins_result)
             return cudf.DataFrame(kbins_result, index=imputed_frame.index)
 
         numeric_frame = self._normalize_numeric_frame(frame)
