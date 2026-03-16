@@ -1,6 +1,7 @@
 import argparse
 import json
 import platform
+import shutil
 import subprocess
 import sys
 import time
@@ -46,6 +47,16 @@ PACKAGE_VERSION_NAMES = (
     "lightgbm",
 )
 sys.path.insert(0, str(REPO_ROOT / "src"))
+
+
+def _find_uv() -> str:
+    uv_path = shutil.which("uv")
+    if uv_path:
+        return uv_path
+    for candidate in [Path.home() / ".local/bin/uv", Path("/usr/local/bin/uv")]:
+        if candidate.exists():
+            return str(candidate)
+    raise FileNotFoundError("uv not found on PATH or in ~/.local/bin. Install from https://docs.astral.sh/uv/")
 
 from tabular_shenanigans.config import load_config
 from tabular_shenanigans.runtime_execution import (
@@ -408,7 +419,7 @@ def _collect_environment_snapshot() -> dict[str, object]:
         },
         "runtime_capabilities": capabilities.to_dict(),
         "package_versions": {name: _package_version(name) for name in PACKAGE_VERSION_NAMES},
-        "uv_version": _capture_command(["uv", "--version"]),
+        "uv_version": _capture_command([_find_uv(), "--version"]),
         "uname": _capture_command(["uname", "-a"]),
         "os_release": {
             "path": "/etc/os-release",
@@ -813,7 +824,7 @@ def main() -> int:
             bootstrap_results.append(_build_bootstrap_result(step_id="uv_sync", skipped=True))
         else:
             sync_result = _run_command(
-                command=["uv", "sync", "--extra", "boosters", "--extra", "gpu"],
+                command=[_find_uv(), "sync", "--extra", "boosters", "--extra", "gpu"],
                 stdout_path=bootstrap_dir / "uv_sync.stdout.log",
                 stderr_path=bootstrap_dir / "uv_sync.stderr.log",
             )
@@ -868,7 +879,7 @@ def main() -> int:
                 started = time.perf_counter()
                 try:
                     command_result = _run_command(
-                        command=["uv", "run", "python", "main.py", "train"],
+                        command=[_find_uv(), "run", "python", "main.py", "train"],
                         stdout_path=case_dir / "train.stdout.log",
                         stderr_path=case_dir / "train.stderr.log",
                     )
