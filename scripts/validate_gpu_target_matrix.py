@@ -254,6 +254,27 @@ def _default_cases() -> list[ValidationCase]:
         ),
         # #206 xgboost+onehot cases intentionally omitted: registry entries will be removed
         # in #209 (sparse CSR / XGBoost GPU incompatibility).
+        # #212: frequency + kbins on gpu_native
+        ValidationCase(
+            case_id="regression_ridge_native_frequency_kbins",
+            template_config_path=DEFAULT_REGRESSION_TEMPLATE_PATH,
+            model_family="ridge",
+            numeric_preprocessor="kbins",
+            categorical_preprocessor="frequency",
+            gpu_backend="native",
+            expected_preprocessing_backend="gpu_native_frequency",
+            notes="Validates #212 — frequency+kbins on gpu_native routes to gpu_native_frequency.",
+        ),
+        ValidationCase(
+            case_id="binary_random_forest_native_frequency_kbins",
+            template_config_path=DEFAULT_BINARY_TEMPLATE_PATH,
+            model_family="random_forest",
+            numeric_preprocessor="kbins",
+            categorical_preprocessor="frequency",
+            gpu_backend="native",
+            expected_preprocessing_backend="gpu_native_frequency",
+            notes="Validates #212 — frequency+kbins on gpu_native for binary classification.",
+        ),
     ]
 
 

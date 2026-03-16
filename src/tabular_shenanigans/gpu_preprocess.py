@@ -2,9 +2,10 @@ from dataclasses import dataclass
 
 import pandas as pd
 
+from tabular_shenanigans.gpu_cuml_preprocess import fit_kbins_transformer, transform_kbins_values
 from tabular_shenanigans.preprocess import ResolvedFeatureSchema
 
-SUPPORTED_GPU_NATIVE_NUMERIC_PREPROCESSOR_IDS = frozenset({"median", "standardize"})
+SUPPORTED_GPU_NATIVE_NUMERIC_PREPROCESSOR_IDS = frozenset({"median", "standardize", "kbins"})
 SUPPORTED_GPU_NATIVE_CATEGORICAL_PREPROCESSOR_IDS = frozenset({"frequency"})
 
 
@@ -42,6 +43,7 @@ class GpuNativeFrequencyPreprocessor:
         self.numeric_preprocessor_id = numeric_preprocessor_id
         self.numeric_statistics = _ResolvedNumericStatistics(medians={}, means={}, scales={})
         self.category_frequencies: dict[str, dict[str, float]] = {}
+        self.kbins_transformer: object | None = None
 
     def _normalize_numeric_frame(self, frame: pd.DataFrame):
         cudf = _import_cudf()
@@ -82,6 +84,22 @@ class GpuNativeFrequencyPreprocessor:
                 means[column] = mean_float
                 scales[column] = scale_float
 
+        if self.numeric_preprocessor_id == "kbins" and self.numeric_columns:
+            try:
+                from cuml.preprocessing import KBinsDiscretizer
+            except ImportError as exc:
+                raise RuntimeError(
+                    "gpu_native kbins preprocessing requires the optional GPU dependencies. "
+                    "Install them with `uv sync --extra boosters --extra gpu`."
+                ) from exc
+            cudf = _import_cudf()
+            imputed_numeric_frame = cudf.from_pandas(
+                frame.loc[:, self.numeric_columns]
+            ).astype("float64")
+            for column in self.numeric_columns:
+                imputed_numeric_frame[column] = imputed_numeric_frame[column].fillna(medians[column])
+            self.kbins_transformer, _ = fit_kbins_transformer(imputed_numeric_frame, KBinsDiscretizer)
+
         categorical_frame = self._normalize_categorical_frame(frame)
         for column in self.categorical_columns:
             value_frequencies = categorical_frame[column].value_counts(normalize=True, dropna=False)
@@ -101,6 +119,15 @@ class GpuNativeFrequencyPreprocessor:
         cudf = _import_cudf()
         if not self.numeric_columns:
             return cudf.DataFrame(index=frame.index)
+
+        if self.numeric_preprocessor_id == "kbins":
+            if self.kbins_transformer is None:
+                raise ValueError("kbins preprocessor must be fit before transform.")
+            imputed_frame = cudf.from_pandas(frame.loc[:, self.numeric_columns]).astype("float64")
+            for column in self.numeric_columns:
+                imputed_frame[column] = imputed_frame[column].fillna(self.numeric_statistics.medians[column])
+            kbins_result = transform_kbins_values(self.kbins_transformer, imputed_frame)
+            return cudf.DataFrame(kbins_result, index=frame.index)
 
         numeric_frame = self._normalize_numeric_frame(frame)
         transformed_columns: dict[str, object] = {}

@@ -68,7 +68,7 @@ def resolve_preprocessing_execution_plan(
     if (
         gpu_available
         and categorical_preprocessor_id == "frequency"
-        and numeric_preprocessor_id in {"median", "standardize"}
+        and numeric_preprocessor_id in {"median", "standardize", "kbins"}
     ):
         return PreprocessingExecutionPlan(
             preprocessing_backend=GPU_NATIVE_FREQUENCY_PREPROCESSING_BACKEND,
