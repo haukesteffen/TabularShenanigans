@@ -109,6 +109,8 @@ class GpuCumlDensePreprocessor:
         self.numeric_transformers: _ResolvedNumericGpuTransformers | None = None
         self.categorical_fill_values: dict[str, object] | None = None
         self.categorical_encoder: object | None = None
+        self.ordinal_mode_fill_values: dict[str, str] = {}
+        self.ordinal_category_to_index: dict[str, dict[str, float]] = {}
 
     def _fit_numeric(self, frame: pd.DataFrame) -> object | None:
         if not self.feature_schema.numeric_columns:
@@ -139,6 +141,10 @@ class GpuCumlDensePreprocessor:
         if not self.feature_schema.categorical_columns:
             return None
         _, cudf, _, _, OneHotEncoder, _ = _import_gpu_preprocessing_modules()
+
+        if self.categorical_preprocessor_id == "ordinal":
+            return self._fit_categorical_ordinal(frame, cudf)
+
         categorical_fill_values: dict[str, object] = {}
         filled_categorical_frame = frame.loc[:, self.feature_schema.categorical_columns].astype(object).copy()
         for column in self.feature_schema.categorical_columns:
@@ -158,6 +164,24 @@ class GpuCumlDensePreprocessor:
         self.categorical_fill_values = categorical_fill_values
         self.categorical_encoder = categorical_encoder
         return _to_cupy_dense(transformed_categorical)
+
+    def _fit_categorical_ordinal(self, frame: pd.DataFrame, cudf: object) -> object:
+        cp, _, _, _, _, _ = _import_gpu_preprocessing_modules()
+        cudf_frame = cudf.from_pandas(frame.loc[:, self.feature_schema.categorical_columns].astype(str))
+        encoded_columns = []
+        for column in self.feature_schema.categorical_columns:
+            col = cudf_frame[column].fillna(self.CATEGORICAL_MISSING_VALUE)
+            # mode is computed on CPU from a small list of unique values
+            categories = sorted(col.unique().to_arrow().to_pylist())
+            mode = categories[0] if categories else self.CATEGORICAL_MISSING_VALUE
+            self.ordinal_mode_fill_values[column] = mode
+            self.ordinal_category_to_index[column] = {cat: float(i) for i, cat in enumerate(categories)}
+            encoded = col.map(self.ordinal_category_to_index[column]).fillna(-1.0).astype("float64")
+            encoded_columns.append(encoded)
+        result_frame = cudf.DataFrame(
+            {col: encoded_columns[i] for i, col in enumerate(self.feature_schema.categorical_columns)}
+        )
+        return _to_cupy_dense(result_frame.values)
 
     def fit(self, frame: pd.DataFrame) -> "GpuCumlDensePreprocessor":
         self._fit_numeric(frame)
@@ -187,9 +211,13 @@ class GpuCumlDensePreprocessor:
     def _transform_categorical(self, frame: pd.DataFrame) -> object | None:
         if not self.feature_schema.categorical_columns:
             return None
+        _, cudf, _, _, _, _ = _import_gpu_preprocessing_modules()
+
+        if self.categorical_preprocessor_id == "ordinal":
+            return self._transform_categorical_ordinal(frame, cudf)
+
         if self.categorical_fill_values is None or self.categorical_encoder is None:
             raise ValueError("Categorical GPU preprocessing must be fit before transform.")
-        _, cudf, _, _, _, _ = _import_gpu_preprocessing_modules()
         filled_categorical_frame = frame.loc[:, self.feature_schema.categorical_columns].astype(object).copy()
         for column, fill_value in self.categorical_fill_values.items():
             filled_categorical_frame[column] = filled_categorical_frame[column].where(
@@ -199,6 +227,21 @@ class GpuCumlDensePreprocessor:
         categorical_frame = cudf.from_pandas(filled_categorical_frame)
         transformed_categorical = self.categorical_encoder.transform(categorical_frame)
         return _to_cupy_dense(transformed_categorical)
+
+    def _transform_categorical_ordinal(self, frame: pd.DataFrame, cudf: object) -> object:
+        if not self.ordinal_category_to_index:
+            raise ValueError("Ordinal GPU preprocessing must be fit before transform.")
+        cudf_frame = cudf.from_pandas(frame.loc[:, self.feature_schema.categorical_columns].astype(str))
+        encoded_columns = []
+        for column in self.feature_schema.categorical_columns:
+            mode = self.ordinal_mode_fill_values.get(column, self.CATEGORICAL_MISSING_VALUE)
+            col = cudf_frame[column].fillna(mode)
+            encoded = col.map(self.ordinal_category_to_index[column]).fillna(-1.0).astype("float64")
+            encoded_columns.append(encoded)
+        result_frame = cudf.DataFrame(
+            {col: encoded_columns[i] for i, col in enumerate(self.feature_schema.categorical_columns)}
+        )
+        return _to_cupy_dense(result_frame.values)
 
     def transform(self, frame: pd.DataFrame):
         cp, _, _, _, _, _ = _import_gpu_preprocessing_modules()
@@ -226,9 +269,10 @@ def build_gpu_cuml_dense_preprocessor_from_schema(
     numeric_preprocessor_id: str,
     categorical_preprocessor_id: str,
 ) -> GpuCumlDensePreprocessor:
-    if categorical_preprocessor_id != "onehot":
+    if categorical_preprocessor_id not in {"onehot", "ordinal"}:
         raise ValueError(
-            "Explicit cuML dense preprocessing currently supports categorical_preprocessor='onehot' only. "
+            "Explicit cuML dense preprocessing currently supports categorical_preprocessor in "
+            "['onehot', 'ordinal'] only. "
             f"Got '{categorical_preprocessor_id}'."
         )
     if numeric_preprocessor_id not in {"median", "standardize", "kbins"}:
