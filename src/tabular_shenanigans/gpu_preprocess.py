@@ -127,7 +127,7 @@ class GpuNativeFrequencyPreprocessor:
             for column in self.numeric_columns:
                 imputed_frame[column] = imputed_frame[column].fillna(self.numeric_statistics.medians[column])
             kbins_result = transform_kbins_values(self.kbins_transformer, imputed_frame)
-            return cudf.DataFrame(kbins_result, index=frame.index)
+            return cudf.DataFrame(kbins_result, index=imputed_frame.index)
 
         numeric_frame = self._normalize_numeric_frame(frame)
         transformed_columns: dict[str, object] = {}
