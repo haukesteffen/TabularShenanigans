@@ -15,11 +15,11 @@ Config-driven Python workflows for semi-automated participation in tabular Kaggl
 - Infer the Playground-style submission schema from `train.csv`, `test.csv`, and `sample_submission.csv`, with optional config overrides for `id_column` and `label_column`.
 - Build deterministic competition-level fold assignments in memory from the configured CV settings.
 - Run deterministic feature recipes for model candidates.
-- Train one model candidate at a time with split numeric and categorical preprocessing.
-- Train one blend candidate at a time by downloading compatible base candidates from MLflow and combining their saved predictions.
+- Train one configured candidate or one ordered batch of configured candidates in a single process.
+- Train blend candidates by downloading compatible base candidates from MLflow and combining their saved predictions.
 - Run Optuna inside `train` for model candidates when optimization is enabled.
 - Validate prediction artifacts against `sample_submission.csv` before submission.
-- Submit a candidate to Kaggle from MLflow-backed candidate artifacts.
+- Submit an explicitly selected candidate to Kaggle from MLflow-backed candidate artifacts.
 - Refresh Kaggle submission outcomes back onto the same MLflow candidate runs.
 
 ## MLflow Canonical Model
@@ -73,15 +73,18 @@ Supported environment matrix:
 - The repository lockfile is now the source of truth for the RAPIDS-compatible `numpy` / `pandas` range, so `uv run python main.py ...` is safe after syncing the correct extras
 
 ## Stage Commands
-`uv run python main.py` runs the default pipeline: `fetch -> prepare -> train -> submit`.
+`uv run python main.py` runs the default pipeline: `fetch -> prepare -> train`.
 
 Available stage-specific commands:
 - `uv run python main.py fetch`
 - `uv run python main.py prepare`
 - `uv run python main.py eda`
 - `uv run python main.py train`
-- `uv run python main.py submit`
+- `uv run python main.py train --candidate-id <candidate_id>`
+- `uv run python main.py train --index <n>`
+- `uv run python main.py train --skip-existing`
 - `uv run python main.py submit --candidate-id <candidate_id>`
+- `uv run python main.py submit --index <n>`
 - `uv run python main.py refresh-submissions`
 - `uv run python scripts/benchmark_gpu_checkpoint.py`
 - `uv run python scripts/validate_gpu_target_matrix.py`
@@ -92,15 +95,15 @@ Stage behavior:
 - `fetch`: ensures the competition zip is present locally.
 - `prepare`: fetches if needed, materializes the competition context in memory, and writes EDA reports under `reports/<competition_slug>/`.
 - `eda`: writes EDA reports only.
-- `train`: trains one candidate and logs it to MLflow. Model candidates stage candidate artifacts in a temp bundle and upload them. Blend candidates download their base candidates from MLflow, materialize blended predictions, then upload the blended candidate run.
-- `submit`: downloads one candidate from MLflow, validates `test_predictions.csv` against `sample_submission.csv`, and when `experiment.submit.enabled=true` submits to Kaggle and records the submission event under that same candidate run.
+- `train`: trains all configured candidates sequentially by default, loading one shared dataset context per invocation. Use `--candidate-id` or `--index` to train one configured candidate. Model candidates stage candidate artifacts in a temp bundle and upload them. Blend candidates download their base candidates from MLflow, materialize blended predictions, then upload the blended candidate run.
+- `submit`: requires `--candidate-id` or `--index`, downloads that candidate from MLflow, validates `test_predictions.csv` against `sample_submission.csv`, and when `experiment.submit.enabled=true` submits to Kaggle and records the submission event under that same candidate run.
 - `refresh-submissions`: scans Kaggle submission history, matches `submit=<submission_event_id>` descriptions, and appends new score observations back onto the matching candidate runs.
 - `benchmark_gpu_checkpoint.py`: runs the `#183` CPU vs `gpu_patch` vs `gpu_native` checkpoint matrix, writes a timestamped report plus raw logs under `reports/benchmark_checkpoints/`, temporarily rewrites repository-root `config.yaml` during the session, and restores it at the end while using an isolated file-based MLflow store inside the benchmark output directory.
 - `validate_gpu_target_matrix.py`: runs the `#193` target-host GPU smoke matrix against the repo-owned host install path, validates the bootstrap steps plus representative `gpu_patch` / `gpu_native` model tuples, and writes a timestamped report plus per-case logs under `reports/gpu_target_validation/`. This is the target-machine confirmation step, not the broader parity/performance audit tracked in `#182`. See `docs/TARGET_GPU_SMOKE_VALIDATION.md`.
 - `validate_lightgbm_cuda_build.py`: runs the repo-owned LightGBM CUDA probe and exits non-zero when the installed LightGBM build does not satisfy `device_type="cuda"` on the current host.
 - `install_lightgbm_cuda.sh`: reinstalls LightGBM from source with `USE_CUDA=ON` in the project virtualenv, then runs the validation probe.
 
-`submit` defaults to the derived `candidate_id` for the current config. Use `--candidate-id` when you want to submit another existing candidate for the same competition experiment.
+The default pipeline no longer auto-submits because `submit` requires an explicit selector.
 
 ## Config Overview
 Tracked example configs:
@@ -131,8 +134,14 @@ Required top-level sections:
 `experiment` keys:
 - required `tracking`
 - optional `runtime`
-- required `candidate`
+- required `candidates`
 - optional `submit`
+
+`experiment.candidates`:
+- one or more candidate entries under the shared competition, runtime, and tracking config
+- `train` drains the list in order unless you pass `--candidate-id` or `--index`
+- `submit --index <n>` uses a 1-based index into this configured list
+- deprecated migration path: `experiment.candidate` is still accepted as a one-item list and prints a deprecation notice
 
 `experiment.tracking` keys:
 - `tracking_uri`: MLflow tracking URI. This is required.
@@ -199,7 +208,7 @@ Required top-level sections:
   - the `gpu_native` logistic regression path currently supports `categorical_preprocessor: frequency` with `numeric_preprocessor: standardize` only
   - the `gpu_native` CatBoost path currently supports `categorical_preprocessor: native` only, uses CatBoost's own GPU mode rather than the RAPIDS patch layer, and keeps preprocessing on the existing `cpu_native_frame` path
 
-`experiment.candidate` keys:
+Each `experiment.candidates` entry uses one of these shapes:
 - shared:
   - `candidate_type`: `model` or `blend`
 - model candidate:
@@ -304,12 +313,12 @@ Preferred targets:
 - `playground-series-s5e10`: regression smoke test
 
 Suggested checks:
-- run `uv run python main.py train` and confirm one MLflow candidate run appears under the competition experiment
-- inspect the candidate run and confirm `logs/`, `candidate/`, `config/`, and `context/` artifacts exist
+- run `uv run python main.py train` and confirm one MLflow candidate run appears per configured candidate under the competition experiment
+- inspect a candidate run and confirm `logs/`, `candidate/`, `config/`, and `context/` artifacts exist
 - trigger one intentionally failing candidate run and confirm the MLflow run is marked failed but still has `logs/runtime.log`
 - rerun the exact same candidate config and confirm `uv run python main.py train` fails because it derives the same `candidate_id`
 - train one blend candidate and confirm it downloads base candidates from MLflow instead of reading local artifact directories
-- run `uv run python main.py submit` with `experiment.submit.enabled: false` and confirm dry-run validation succeeds without creating local candidate artifacts or submission ledgers
+- run `uv run python main.py submit --index 1` with `experiment.submit.enabled: false` and confirm dry-run validation succeeds without creating local candidate artifacts or submission ledgers
 - run `uv run python main.py refresh-submissions` after at least one real Kaggle submission and confirm candidate-run submission metrics update in MLflow
 
 ## Current Limits

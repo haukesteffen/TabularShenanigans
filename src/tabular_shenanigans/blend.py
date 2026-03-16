@@ -666,7 +666,7 @@ def run_blend_training(
     dataset_context: CompetitionDatasetContext,
 ) -> CandidateRunRef:
     if not config.is_blend_candidate:
-        raise ValueError("Blend training requires experiment.candidate.candidate_type=blend.")
+        raise ValueError("Blend training requires selected candidate_type=blend.")
 
     competition = config.competition
     features = competition.features

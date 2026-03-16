@@ -34,6 +34,7 @@ from tabular_shenanigans.model_evaluation import (
     build_prepared_training_context,
     evaluate_model_spec,
 )
+from tabular_shenanigans.runtime_execution import use_runtime_execution_context
 from tabular_shenanigans.runtime_logging import (
     append_runtime_log_message,
     build_runtime_log_path,
@@ -234,7 +235,7 @@ def run_training(
     prepared_training_context: PreparedTrainingContext | None = None,
 ) -> CandidateRunRef:
     if not config.is_model_candidate:
-        raise ValueError("run_training only supports experiment.candidate.candidate_type=model.")
+        raise ValueError("run_training only supports selected candidate_type=model.")
 
     competition = config.competition
     candidate = config.experiment.candidate
@@ -328,89 +329,90 @@ def run_training_workflow(
     config: AppConfig,
     dataset_context: CompetitionDatasetContext,
 ) -> CandidateRunRef:
-    competition = config.competition
-    if config.is_blend_candidate:
-        from tabular_shenanigans.blend import run_blend_training
+    with use_runtime_execution_context(config.runtime_execution_context):
+        competition = config.competition
+        if config.is_blend_candidate:
+            from tabular_shenanigans.blend import run_blend_training
 
-        return run_blend_training(config=config, dataset_context=dataset_context)
+            return run_blend_training(config=config, dataset_context=dataset_context)
 
-    optimization = config.experiment.candidate.optimization
-    candidate = config.experiment.candidate
-    candidate_run = create_candidate_run(
-        config=config,
-        candidate_id=config.resolved_candidate_id,
-        candidate_type=candidate.candidate_type,
-    )
-    run_status = "FAILED"
+        optimization = config.experiment.candidate.optimization
+        candidate = config.experiment.candidate
+        candidate_run = create_candidate_run(
+            config=config,
+            candidate_id=config.resolved_candidate_id,
+            candidate_type=candidate.candidate_type,
+        )
+        run_status = "FAILED"
 
-    with tempfile.TemporaryDirectory(prefix="tabular-shenanigans-candidate-") as temp_dir:
-        bundle_root = Path(temp_dir)
-        log_path = build_runtime_log_path(bundle_root)
-        log_uploaded = False
-        try:
-            with capture_runtime_log(log_path):
-                emit_runtime_log_header(
-                    stage_name="train",
-                    competition_slug=competition.slug,
-                    candidate_id=candidate_run.candidate_id,
-                    mlflow_run_id=candidate_run.run_id,
-                )
-                try:
-                    if not optimization.enabled:
-                        run_training(
-                            config=config,
-                            dataset_context=dataset_context,
-                            candidate_run=candidate_run,
-                            bundle_root=bundle_root,
-                        )
-                    else:
-                        from tabular_shenanigans.tune import run_optimization
+        with tempfile.TemporaryDirectory(prefix="tabular-shenanigans-candidate-") as temp_dir:
+            bundle_root = Path(temp_dir)
+            log_path = build_runtime_log_path(bundle_root)
+            log_uploaded = False
+            try:
+                with capture_runtime_log(log_path):
+                    emit_runtime_log_header(
+                        stage_name="train",
+                        competition_slug=competition.slug,
+                        candidate_id=candidate_run.candidate_id,
+                        mlflow_run_id=candidate_run.run_id,
+                    )
+                    try:
+                        if not optimization.enabled:
+                            run_training(
+                                config=config,
+                                dataset_context=dataset_context,
+                                candidate_run=candidate_run,
+                                bundle_root=bundle_root,
+                            )
+                        else:
+                            from tabular_shenanigans.tune import run_optimization
 
-                        prepared_training_context = build_prepared_training_context(
-                            config=config,
-                            dataset_context=dataset_context,
-                        )
-                        optimization_result = run_optimization(
-                            config=config,
-                            dataset_context=dataset_context,
-                            prepared_training_context=prepared_training_context,
-                        )
-                        run_training(
-                            config=config,
-                            dataset_context=dataset_context,
-                            candidate_run=candidate_run,
-                            bundle_root=bundle_root,
-                            model_spec=optimization_result.best_model_spec,
-                            tuning_provenance=optimization_result.tuning_provenance,
-                            optimization_artifacts=OptimizationArtifacts(
-                                summary=optimization_result.optimization_summary,
-                                trials_df=optimization_result.trials_df,
-                            ),
-                            prepared_training_context=prepared_training_context,
-                        )
-                        print(
-                            f"Optimization complete: best_trial={optimization_result.best_trial_number}, "
-                            f"best_{competition.primary_metric}={optimization_result.best_value:.6f}, "
-                            f"candidate={candidate_run.candidate_id}"
-                        )
-                except Exception:
-                    append_runtime_log_message(log_path, "stderr", traceback.format_exc())
-                    raise
-            upload_run_log(
-                config=config,
-                run_id=candidate_run.run_id,
-                log_path=log_path,
-            )
-            log_uploaded = True
-            run_status = "FINISHED"
-            return candidate_run
-        except Exception:
-            if log_path.exists() and not log_uploaded:
+                            prepared_training_context = build_prepared_training_context(
+                                config=config,
+                                dataset_context=dataset_context,
+                            )
+                            optimization_result = run_optimization(
+                                config=config,
+                                dataset_context=dataset_context,
+                                prepared_training_context=prepared_training_context,
+                            )
+                            run_training(
+                                config=config,
+                                dataset_context=dataset_context,
+                                candidate_run=candidate_run,
+                                bundle_root=bundle_root,
+                                model_spec=optimization_result.best_model_spec,
+                                tuning_provenance=optimization_result.tuning_provenance,
+                                optimization_artifacts=OptimizationArtifacts(
+                                    summary=optimization_result.optimization_summary,
+                                    trials_df=optimization_result.trials_df,
+                                ),
+                                prepared_training_context=prepared_training_context,
+                            )
+                            print(
+                                f"Optimization complete: best_trial={optimization_result.best_trial_number}, "
+                                f"best_{competition.primary_metric}={optimization_result.best_value:.6f}, "
+                                f"candidate={candidate_run.candidate_id}"
+                            )
+                    except Exception:
+                        append_runtime_log_message(log_path, "stderr", traceback.format_exc())
+                        raise
                 upload_run_log(
                     config=config,
                     run_id=candidate_run.run_id,
                     log_path=log_path,
                 )
-            raise
-        finally:
-            terminate_run(config=config, run_id=candidate_run.run_id, status=run_status)
+                log_uploaded = True
+                run_status = "FINISHED"
+                return candidate_run
+            except Exception:
+                if log_path.exists() and not log_uploaded:
+                    upload_run_log(
+                        config=config,
+                        run_id=candidate_run.run_id,
+                        log_path=log_path,
+                    )
+                raise
+            finally:
+                terminate_run(config=config, run_id=candidate_run.run_id, status=run_status)

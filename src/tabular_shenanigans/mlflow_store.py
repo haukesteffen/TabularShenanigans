@@ -159,6 +159,17 @@ def ensure_candidate_run_absent(config: AppConfig, candidate_id: str) -> None:
         )
 
 
+def candidate_run_exists(config: AppConfig, candidate_id: str) -> bool:
+    client = _client(config)
+    experiment_id = _experiment_id(config)
+    runs = client.search_runs(
+        experiment_ids=[experiment_id],
+        filter_string=_candidate_search_filter(candidate_id),
+        max_results=1,
+    )
+    return bool(runs)
+
+
 def _base_candidate_tags(config: AppConfig, candidate_id: str, candidate_type: str) -> dict[str, object]:
     runtime_execution_context = config.runtime_execution_context
     tags: dict[str, object] = {

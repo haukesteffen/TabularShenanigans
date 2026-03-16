@@ -2,6 +2,8 @@ import importlib
 import os
 import platform
 from collections.abc import Callable
+from contextlib import contextmanager
+from contextvars import ContextVar
 from dataclasses import dataclass, replace
 from functools import lru_cache
 from pathlib import Path
@@ -20,6 +22,10 @@ CUDA_VISIBLE_DEVICES_ENV = "CUDA_VISIBLE_DEVICES"
 CPU_GPU_BACKEND = "cpu"
 PATCH_GPU_BACKEND = "gpu_patch"
 NATIVE_GPU_BACKEND = "gpu_native"
+_RUNTIME_EXECUTION_CONTEXT_OVERRIDE: ContextVar["RuntimeExecutionContext | None"] = ContextVar(
+    "runtime_execution_context_override",
+    default=None,
+)
 
 
 @dataclass(frozen=True)
@@ -159,10 +165,12 @@ def detect_runtime_capabilities() -> RuntimeCapabilitySnapshot:
 def resolve_runtime_execution(
     requested_compute_target: str,
     requested_gpu_backend: str = "auto",
+    capabilities: RuntimeCapabilitySnapshot | None = None,
 ) -> RuntimeExecutionContext:
     normalized_target = _validate_compute_target(requested_compute_target)
     normalized_backend = _validate_gpu_backend(requested_gpu_backend)
-    capabilities = detect_runtime_capabilities()
+    if capabilities is None:
+        capabilities = detect_runtime_capabilities()
 
     if normalized_target == "cpu":
         return RuntimeExecutionContext(
@@ -344,10 +352,26 @@ def get_exported_runtime_execution_context() -> RuntimeExecutionContext | None:
     return _parse_exported_runtime_execution_context()
 
 
+def get_runtime_execution_context_override() -> RuntimeExecutionContext | None:
+    return _RUNTIME_EXECUTION_CONTEXT_OVERRIDE.get()
+
+
+@contextmanager
+def use_runtime_execution_context(context: RuntimeExecutionContext):
+    token = _RUNTIME_EXECUTION_CONTEXT_OVERRIDE.set(context)
+    try:
+        yield context
+    finally:
+        _RUNTIME_EXECUTION_CONTEXT_OVERRIDE.reset(token)
+
+
 def get_runtime_execution_context(
     requested_compute_target: str = "auto",
     requested_gpu_backend: str = "auto",
 ) -> RuntimeExecutionContext:
+    override_context = get_runtime_execution_context_override()
+    if override_context is not None:
+        return override_context
     exported_context = get_exported_runtime_execution_context()
     if exported_context is not None:
         return exported_context

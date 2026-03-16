@@ -39,47 +39,44 @@ experiment:
     # Advanced/transitional override. Leave on auto for normal use.
     # gpu_backend: auto
 
-  candidate:
-    candidate_type: model
-    feature_recipe_id: fr0
-    model_family: logistic_regression
-    numeric_preprocessor: standardize
-    categorical_preprocessor: onehot
-    model_params: {}
-    # For logistic_regression, use l1_ratio only:
-    # model_params:
-    #   C: 1.0
-    #   tol: 0.001
-    #   l1_ratio: 0.0
-    #   class_weight: balanced
+  candidates:
+    # Remove entries you do not want to include in the current train batch.
+    - candidate_type: model
+      feature_recipe_id: fr0
+      model_family: logistic_regression
+      numeric_preprocessor: standardize
+      categorical_preprocessor: onehot
+      model_params: {}
+      # For logistic_regression, use l1_ratio only:
+      # model_params:
+      #   C: 1.0
+      #   tol: 0.001
+      #   l1_ratio: 0.0
+      #   class_weight: balanced
+      optimization:
+        enabled: false
+        # method: optuna
+        # n_trials: 25
+        # timeout_seconds: 3600
+        # random_state: 42
 
-    # Alternative binary model candidates:
-    # numeric_preprocessor: kbins
-    # categorical_preprocessor: onehot
-    # model_family: logistic_regression
-    # numeric_preprocessor: median
-    # categorical_preprocessor: ordinal
-    # model_family: lightgbm
-    # numeric_preprocessor: median
-    # categorical_preprocessor: native
-    # model_family: catboost
+    - candidate_type: model
+      feature_recipe_id: fr0
+      model_family: lightgbm
+      numeric_preprocessor: median
+      categorical_preprocessor: ordinal
+      model_params: {}
+      optimization:
+        enabled: false
 
-    # Alternative blend candidate shape:
-    # candidate_type: blend
-    # base_candidate_ids:
-    #   - existing_candidate_a
-    #   - existing_candidate_b
-    # weights:
-    #   - 0.5
-    #   - 0.5
-
-    # Optional tuning settings for `uv run python main.py train`.
-    optimization:
-      enabled: false
-      # method: optuna
-      # n_trials: 25
-      # timeout_seconds: 3600
-      # random_state: 42
+    # Optional blend candidate shape:
+    # - candidate_type: blend
+    #   base_candidate_ids:
+    #     - existing_candidate_a
+    #     - existing_candidate_b
+    #   weights:
+    #     - 0.5
+    #     - 0.5
 
   submit:
     enabled: false

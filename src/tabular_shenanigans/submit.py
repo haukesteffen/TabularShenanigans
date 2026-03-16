@@ -339,16 +339,15 @@ def _build_submission_event(
 
 def run_submission(
     config: AppConfig,
-    candidate_id: str | None = None,
+    candidate_id: str,
 ) -> SubmissionRunResult:
     submit_config = config.experiment.submit
-    resolved_candidate_id = candidate_id or config.resolved_candidate_id
 
     with tempfile.TemporaryDirectory(prefix="tabular-shenanigans-submit-") as temp_dir:
         temp_root = Path(temp_dir)
         submission_context = _load_submission_context(
             config=config,
-            candidate_id=resolved_candidate_id,
+            candidate_id=candidate_id,
             destination_dir=temp_root / "candidate",
         )
         submission_path = _prepare_submission_file_from_context(
