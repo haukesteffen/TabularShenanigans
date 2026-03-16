@@ -135,6 +135,7 @@ Submission artifacts on the same candidate run:
 - `uv run python main.py submit`
 - `uv run python main.py submit --candidate-id <candidate_id>`
 - `uv run python main.py refresh-submissions`
+- `uv run python scripts/validate_gpu_target_matrix.py`
 
 Stage notes:
 - `main.py` keeps the existing user-facing command but now delegates into a bootstrap module before the runtime imports `pandas`- or `sklearn`-dependent modules.
@@ -171,6 +172,7 @@ Stage notes:
 - [submission_history.py](/Users/hs/dev/TabularShenanigans/src/tabular_shenanigans/submission_history.py): candidate-run submission event/observation models and Kaggle refresh helpers.
 - [mlflow_store.py](/Users/hs/dev/TabularShenanigans/src/tabular_shenanigans/mlflow_store.py): MLflow experiment/run lookup, candidate-run creation, candidate download, artifact upload, and submission-history persistence.
 - [benchmark_gpu_checkpoint.py](/Users/hs/dev/TabularShenanigans/scripts/benchmark_gpu_checkpoint.py): issue-scoped benchmark harness for the early CPU vs `gpu_patch` vs `gpu_native` checkpoint, using a temporary file-based MLflow store and timestamped reports under `reports/benchmark_checkpoints/`.
+- [validate_gpu_target_matrix.py](/Users/hs/dev/TabularShenanigans/scripts/validate_gpu_target_matrix.py): issue-scoped target-host smoke harness for `#193`, using a temporary file-based MLflow store, bootstrap/install validation, and timestamped reports under `reports/gpu_target_validation/`.
 - [validate_lightgbm_cuda_build.py](/Users/hs/dev/TabularShenanigans/scripts/validate_lightgbm_cuda_build.py): repo-owned validation probe for the installed LightGBM CUDA build on the current host.
 - [install_lightgbm_cuda.sh](/Users/hs/dev/TabularShenanigans/scripts/install_lightgbm_cuda.sh): source-build helper that reinstalls LightGBM with `USE_CUDA=ON` into the project virtualenv and immediately runs the validation probe.
 

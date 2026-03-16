@@ -84,6 +84,7 @@ Available stage-specific commands:
 - `uv run python main.py submit --candidate-id <candidate_id>`
 - `uv run python main.py refresh-submissions`
 - `uv run python scripts/benchmark_gpu_checkpoint.py`
+- `uv run python scripts/validate_gpu_target_matrix.py`
 - `PYTHONPATH=src uv run python scripts/validate_lightgbm_cuda_build.py`
 - `./scripts/install_lightgbm_cuda.sh`
 
@@ -95,6 +96,7 @@ Stage behavior:
 - `submit`: downloads one candidate from MLflow, validates `test_predictions.csv` against `sample_submission.csv`, and when `experiment.submit.enabled=true` submits to Kaggle and records the submission event under that same candidate run.
 - `refresh-submissions`: scans Kaggle submission history, matches `submit=<submission_event_id>` descriptions, and appends new score observations back onto the matching candidate runs.
 - `benchmark_gpu_checkpoint.py`: runs the `#183` CPU vs `gpu_patch` vs `gpu_native` checkpoint matrix, writes a timestamped report plus raw logs under `reports/benchmark_checkpoints/`, temporarily rewrites repository-root `config.yaml` during the session, and restores it at the end while using an isolated file-based MLflow store inside the benchmark output directory.
+- `validate_gpu_target_matrix.py`: runs the `#193` target-host GPU smoke matrix against the repo-owned host install path, validates the bootstrap steps plus representative `gpu_patch` / `gpu_native` model tuples, and writes a timestamped report plus per-case logs under `reports/gpu_target_validation/`. This is the target-machine confirmation step, not the broader parity/performance audit tracked in `#182`. See `docs/TARGET_GPU_SMOKE_VALIDATION.md`.
 - `validate_lightgbm_cuda_build.py`: runs the repo-owned LightGBM CUDA probe and exits non-zero when the installed LightGBM build does not satisfy `device_type="cuda"` on the current host.
 - `install_lightgbm_cuda.sh`: reinstalls LightGBM from source with `USE_CUDA=ON` in the project virtualenv, then runs the validation probe.
 
