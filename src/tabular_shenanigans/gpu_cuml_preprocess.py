@@ -50,7 +50,7 @@ class _ResolvedNumericGpuTransformers:
     post_imputer_transformer: object | None
 
 
-def _build_gpu_kbins_discretizer(kbins_discretizer_class: type[object]) -> object:
+def build_gpu_kbins_discretizer(kbins_discretizer_class: type[object]) -> object:
     try:
         return kbins_discretizer_class(
             n_bins=5,
@@ -68,8 +68,8 @@ def _build_gpu_kbins_discretizer(kbins_discretizer_class: type[object]) -> objec
         )
 
 
-def _fit_kbins_transformer(imputed_numeric: object, kbins_discretizer_class: type[object]) -> tuple[object, object]:
-    post_imputer_transformer = _build_gpu_kbins_discretizer(kbins_discretizer_class)
+def fit_kbins_transformer(imputed_numeric: object, kbins_discretizer_class: type[object]) -> tuple[object, object]:
+    post_imputer_transformer = build_gpu_kbins_discretizer(kbins_discretizer_class)
     try:
         transformed_numeric = post_imputer_transformer.fit_transform(imputed_numeric)
     except TypeError as exc:
@@ -87,7 +87,7 @@ def _fit_kbins_transformer(imputed_numeric: object, kbins_discretizer_class: typ
     return post_imputer_transformer, transformed_numeric
 
 
-def _transform_kbins_values(post_imputer_transformer: object, imputed_numeric: object) -> object:
+def transform_kbins_values(post_imputer_transformer: object, imputed_numeric: object) -> object:
     if type(post_imputer_transformer).__module__.startswith("sklearn"):
         cpu_input = imputed_numeric.to_pandas() if hasattr(imputed_numeric, "to_pandas") else imputed_numeric
         return post_imputer_transformer.transform(cpu_input)
@@ -124,7 +124,7 @@ class GpuCumlDensePreprocessor:
             post_imputer_transformer = StandardScaler()
             transformed_numeric = post_imputer_transformer.fit_transform(imputed_numeric)
         elif self.numeric_preprocessor_id == "kbins":
-            post_imputer_transformer, transformed_numeric = _fit_kbins_transformer(
+            post_imputer_transformer, transformed_numeric = fit_kbins_transformer(
                 imputed_numeric,
                 KBinsDiscretizer,
             )
@@ -174,7 +174,7 @@ class GpuCumlDensePreprocessor:
         transformed_numeric = self.numeric_transformers.imputer.transform(numeric_frame)
         if self.numeric_transformers.post_imputer_transformer is not None:
             if self.numeric_preprocessor_id == "kbins":
-                transformed_numeric = _transform_kbins_values(
+                transformed_numeric = transform_kbins_values(
                     self.numeric_transformers.post_imputer_transformer,
                     transformed_numeric,
                 )
