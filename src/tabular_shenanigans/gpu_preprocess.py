@@ -128,8 +128,12 @@ class GpuNativeFrequencyPreprocessor:
                 imputed_frame[column] = imputed_frame[column].fillna(self.numeric_statistics.medians[column])
             import cupy as cp
             kbins_result = transform_kbins_values(self.kbins_transformer, imputed_frame)
-            # sklearn fallback returns numpy; convert to cupy before column-wise cudf construction
-            if not type(kbins_result).__module__.startswith("cupy"):
+            # cuML returns cudf DataFrame; sklearn fallback returns numpy — normalize to cupy
+            if type(kbins_result).__module__.startswith("cupy"):
+                pass
+            elif hasattr(kbins_result, "to_cupy"):
+                kbins_result = kbins_result.to_cupy()
+            else:
                 kbins_result = cp.asarray(kbins_result, dtype="float64")
             # cudf.DataFrame rejects 2D cupy arrays; build from 1D cupy columns instead
             n_cols = kbins_result.shape[1]
