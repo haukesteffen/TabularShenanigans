@@ -1113,12 +1113,14 @@ MODEL_REGISTRY: dict[str, dict[str, ModelDefinition]] = {
             model_name="Ridge",
             builder=_build_ridge,
             supports_sparse_preprocessed_input=True,
+            supports_gpu_native_dense_onehot_input=True,
         ),
         "elasticnet": ModelDefinition(
             model_id="elasticnet",
             model_name="ElasticNet",
             builder=_build_elasticnet,
             supports_sparse_preprocessed_input=True,
+            supports_gpu_native_dense_onehot_input=True,
         ),
         "random_forest": ModelDefinition(
             model_id="random_forest",
@@ -1172,6 +1174,7 @@ MODEL_REGISTRY: dict[str, dict[str, ModelDefinition]] = {
             builder=_build_logreg,
             tuning_space_builder=_build_logreg_tuning_space,
             supports_sparse_preprocessed_input=True,
+            supports_gpu_native_dense_onehot_input=True,
         ),
         "random_forest": ModelDefinition(
             model_id="random_forest",
