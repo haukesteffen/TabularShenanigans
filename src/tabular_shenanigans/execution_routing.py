@@ -256,13 +256,6 @@ def resolve_model_candidate_runtime_execution(
             rapids_hooks_installed=False,
         )
 
-    if requested_compute_target == "gpu":
-        raise RuntimeError(
-            "Configured experiment.runtime.compute_target='gpu' but no supported GPU implementation is "
-            f"registered for {format_model_execution_routing_key(routing_key)}. "
-            f"Reason: {describe_missing_gpu_implementation(routing_key)}"
-        )
-
     return RuntimeExecutionContext(
         requested_compute_target=requested_compute_target,
         resolved_compute_target="cpu",
