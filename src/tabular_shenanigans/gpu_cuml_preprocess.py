@@ -158,7 +158,7 @@ class GpuCumlDensePreprocessor:
                 fill_value,
             )
 
-        categorical_frame = cudf.from_pandas(filled_categorical_frame)
+        categorical_frame = cudf.from_pandas(filled_categorical_frame.astype(str))
         categorical_encoder = OneHotEncoder(handle_unknown="ignore", sparse_output=False)
         transformed_categorical = categorical_encoder.fit_transform(categorical_frame)
         self.categorical_fill_values = categorical_fill_values
@@ -224,7 +224,7 @@ class GpuCumlDensePreprocessor:
                 filled_categorical_frame[column].notna(),
                 fill_value,
             )
-        categorical_frame = cudf.from_pandas(filled_categorical_frame)
+        categorical_frame = cudf.from_pandas(filled_categorical_frame.astype(str))
         transformed_categorical = self.categorical_encoder.transform(categorical_frame)
         return _to_cupy_dense(transformed_categorical)
 
