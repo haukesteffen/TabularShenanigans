@@ -43,25 +43,33 @@ def fetch_candidate_runs(client, experiment_name):
         filter_string="tags.run_kind = 'candidate'",
         max_results=10000,
     )
+    # Only keep runs that have runtime routing params recorded (i.e. from this sweep,
+    # not older runs that predate the GPU routing implementation).
+    runs = [r for r in runs if "runtime__resolved_compute_target" in r.data.params]
     return runs
 
 
 def summarize(runs):
-    # model_family -> {compute_target -> count}
+    # model_family -> {compute_target -> count} — only auto-routed runs
     by_model = defaultdict(lambda: defaultdict(int))
     fallbacks = []
 
     for run in runs:
         params = run.data.params
-        tags = run.data.tags
         model = params.get("model_family", "unknown")
         compute = params.get("runtime__resolved_compute_target", "unknown")
         backend = params.get("runtime__acceleration_backend", "unknown")
         fallback_reason = params.get("runtime__fallback_reason", None)
+        requested = params.get("runtime__requested_compute_target", "auto")
+
+        # Only include auto-routed runs in the summary table and assertions.
+        # Runs with explicit compute_target (e.g. parity audit) are counted separately.
+        if requested != "auto":
+            continue
 
         by_model[model][compute] += 1
 
-        # Flag unexpected CPU fallback: model is GPU-capable but resolved to CPU
+        # Flag unexpected CPU fallback: model is GPU-capable but resolved to CPU.
         if model in GPU_MODELS and compute == "cpu":
             fallbacks.append(
                 {
