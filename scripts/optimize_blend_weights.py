@@ -5,10 +5,14 @@ filters to those whose CV config matches the current config.yaml, downloads only
 their oof_predictions.csv artifacts, then hill-climbs to find weights that
 maximize blended OOF AUC.
 
+OOF data is cached to .oof_cache/ in the repo root after the first download so
+reruns skip the network entirely.
+
 Prints an optimization trace and emits a ready-to-paste config.yaml snippet.
 
 Usage:
     uv run python scripts/optimize_blend_weights.py [--step-size 0.05] [--threshold 1e-5]
+    uv run python scripts/optimize_blend_weights.py --refresh-cache   # re-download all OOF data
 """
 
 import argparse
@@ -27,6 +31,7 @@ from sklearn.metrics import roc_auc_score
 
 
 CONFIG_PATH = REPO_ROOT / "config.yaml"
+OOF_CACHE_DIR = REPO_ROOT / ".oof_cache"
 
 
 def load_config():
@@ -61,11 +66,39 @@ def fetch_finished_model_runs(client, experiment_id, cv_n_splits, cv_shuffle, cv
     return matching, mismatched
 
 
+def cache_path_for(run_id):
+    return OOF_CACHE_DIR / f"{run_id}.npz"
+
+
+def load_from_cache(run_id):
+    p = cache_path_for(run_id)
+    if not p.exists():
+        return None, None
+    data = np.load(p)
+    return data["y_pred"], data["y_true"]
+
+
+def save_to_cache(run_id, y_pred, y_true):
+    OOF_CACHE_DIR.mkdir(exist_ok=True)
+    np.savez(cache_path_for(run_id), y_pred=y_pred, y_true=y_true)
+
+
 def download_oof(client, run_id, dst_dir):
     path = client.download_artifacts(run_id, "candidate/oof_predictions.csv", dst_dir)
     df = pd.read_csv(path)
     df = df.sort_values("row_idx").reset_index(drop=True)
     return df["y_pred"].to_numpy(dtype=float), df["y_true"].to_numpy()
+
+
+def load_oof(client, run_id, tmp_dir, refresh_cache):
+    if not refresh_cache:
+        y_pred, y_true = load_from_cache(run_id)
+        if y_pred is not None:
+            return y_pred, y_true, "cache"
+
+    y_pred, y_true = download_oof(client, run_id, tmp_dir)
+    save_to_cache(run_id, y_pred, y_true)
+    return y_pred, y_true, "download"
 
 
 def hill_climb(oof_matrix, y_true, step_size=0.05, threshold=1e-5):
@@ -88,6 +121,7 @@ def hill_climb(oof_matrix, y_true, step_size=0.05, threshold=1e-5):
 
     round_num = 0
     while step_size >= 1e-6:
+        score_before_round = best_score
         accepted = 0
         for i in range(n):
             for delta in (+step_size, -step_size):
@@ -105,9 +139,10 @@ def hill_climb(oof_matrix, y_true, step_size=0.05, threshold=1e-5):
                     accepted += 1
 
         round_num += 1
-        if accepted > 0:
-            print(f"  round {round_num}: accepted {accepted} perturbation(s), AUC = {best_score:.6f}")
-        else:
+        round_gain = best_score - score_before_round
+        print(f"  round {round_num}: accepted {accepted}, gain={round_gain:.2e}, AUC={best_score:.6f}, step={step_size:.2e}")
+        # halve step_size if no improvement or the round's total gain was negligible
+        if accepted == 0 or round_gain < threshold:
             step_size /= 2
 
     print(f"  converged after {round_num} rounds. Final OOF AUC = {best_score:.6f}")
@@ -140,9 +175,11 @@ def emit_config_snippet(candidate_ids, weights):
 
 
 def main():
+    sys.stdout.reconfigure(line_buffering=True)  # flush on every newline even when piped
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--step-size", type=float, default=0.05)
     parser.add_argument("--threshold", type=float, default=1e-5)
+    parser.add_argument("--refresh-cache", action="store_true", help="Re-download all OOF data even if cached")
     args = parser.parse_args()
 
     cfg = load_config()
@@ -164,6 +201,7 @@ def main():
     print(f"MLflow: {tracking_uri}")
     print(f"Experiment: {competition_slug}")
     print(f"CV filter: n_splits={cv_n_splits}, shuffle={cv_shuffle}, random_state={cv_random_state}")
+    print(f"OOF cache: {OOF_CACHE_DIR}")
 
     runs, mismatched = fetch_finished_model_runs(
         client, experiment.experiment_id, cv_n_splits, cv_shuffle, cv_random_state
@@ -178,21 +216,28 @@ def main():
     # Sort by cv_score_mean descending so weights[0] starts with the best candidate
     runs.sort(key=lambda r: float(r.data.metrics.get("cv_score_mean", 0.0)), reverse=True)
 
-    print(f"Downloading OOF predictions for {len(runs)} candidates...")
+    print(f"Loading OOF predictions for {len(runs)} candidates...")
     candidate_ids = []
     cv_scores = []
     oof_arrays = []
     y_true_ref = None
+    n_cached = 0
+    n_downloaded = 0
 
     with tempfile.TemporaryDirectory(prefix="tabular-shenanigans-oof-") as tmp:
         for i, run in enumerate(runs):
             cid = run.data.tags.get("candidate_id", run.info.run_id)
             cv_score = float(run.data.metrics.get("cv_score_mean", 0.0))
             try:
-                y_pred, y_true = download_oof(client, run.info.run_id, tmp)
+                y_pred, y_true, source = load_oof(client, run.info.run_id, tmp, args.refresh_cache)
             except Exception as e:
                 print(f"  SKIP {cid}: {e}")
                 continue
+
+            if source == "cache":
+                n_cached += 1
+            else:
+                n_downloaded += 1
 
             if y_true_ref is None:
                 y_true_ref = y_true
@@ -204,12 +249,12 @@ def main():
             cv_scores.append(cv_score)
             oof_arrays.append(y_pred)
             if (i + 1) % 20 == 0:
-                print(f"  {i + 1}/{len(runs)} downloaded...")
+                print(f"  {i + 1}/{len(runs)} loaded (cached={n_cached}, downloaded={n_downloaded})...")
 
-    print(f"  {len(candidate_ids)} candidates loaded successfully.")
+    print(f"  {len(candidate_ids)} candidates loaded (cached={n_cached}, downloaded={n_downloaded}).")
 
     if not candidate_ids:
-        print("No usable candidates after download. Exiting.")
+        print("No usable candidates after loading. Exiting.")
         sys.exit(1)
 
     oof_matrix = np.vstack(oof_arrays)  # (n_candidates, n_rows)
