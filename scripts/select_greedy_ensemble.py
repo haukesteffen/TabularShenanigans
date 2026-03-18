@@ -13,9 +13,14 @@ reruns skip the network entirely.
 
 Prints an optimization trace and emits a ready-to-paste config.yaml snippet.
 
+Optional anti-overfitting features:
+  --correlation-threshold T  Drop candidates with pairwise OOF Pearson correlation > T before selection.
+  --n-bags N                 Run greedy selection on N bootstrap-sampled OOF subsets and average weights.
+
 Usage:
     uv run python scripts/select_greedy_ensemble.py [--n-rounds 100]
     uv run python scripts/select_greedy_ensemble.py --refresh-cache   # re-download all OOF data
+    uv run python scripts/select_greedy_ensemble.py --n-bags 10 --correlation-threshold 0.98
 """
 
 import argparse
@@ -207,6 +212,73 @@ def greedy_select(oof_matrix, y_true_series, task_type, primary_metric, positive
     return weights, current_score
 
 
+def filter_correlated_candidates(oof_matrix, candidate_ids, threshold):
+    """Drop candidates whose pairwise OOF Pearson correlation exceeds threshold.
+
+    Iteratively removes the candidate with the highest mean correlation to all
+    remaining candidates until no pair exceeds the threshold.
+
+    Returns filtered (oof_matrix, candidate_ids) and the list of dropped ids.
+    """
+    matrix = oof_matrix.copy()
+    ids = list(candidate_ids)
+    dropped = []
+
+    while True:
+        corr = np.corrcoef(matrix)  # (n, n)
+        np.fill_diagonal(corr, 0.0)
+        if corr.max() <= threshold:
+            break
+        # Drop the candidate with the highest mean absolute correlation to others.
+        mean_corr = np.abs(corr).mean(axis=1)
+        drop_idx = int(np.argmax(mean_corr))
+        max_pair_corr = float(np.abs(corr[drop_idx]).max())
+        print(f"  drop '{ids[drop_idx]}' (max pairwise corr={max_pair_corr:.4f}, {len(ids) - 1} remaining)")
+        dropped.append(ids[drop_idx])
+        matrix = np.delete(matrix, drop_idx, axis=0)
+        ids.pop(drop_idx)
+
+    return matrix, ids, dropped
+
+
+def bagged_greedy_select(oof_matrix, y_true_series, task_type, primary_metric, positive_label, n_rounds, higher_better, n_bags):
+    """Run greedy_select on N bootstrap-sampled OOF subsets and average the weight vectors.
+
+    Each bag samples n_rows rows with replacement. Final weights are the mean of
+    per-bag weight vectors (each already sums to 1). Reports per-bag scores and
+    the final blended score on the full OOF matrix.
+    """
+    rng = np.random.default_rng(42)
+    n_rows = oof_matrix.shape[1]
+    all_weights = []
+    bag_scores = []
+
+    for bag in range(n_bags):
+        print(f"\n=== Bag {bag + 1}/{n_bags} ===")
+        idx = rng.integers(0, n_rows, size=n_rows)
+        bag_matrix = oof_matrix[:, idx]
+        bag_y_true = y_true_series.iloc[idx].reset_index(drop=True)
+        weights, score = greedy_select(
+            bag_matrix, bag_y_true, task_type, primary_metric, positive_label, n_rounds, higher_better
+        )
+        all_weights.append(weights)
+        bag_scores.append(score)
+        print(f"  Bag {bag + 1} {primary_metric} = {score:.6f}")
+
+    averaged_weights = np.mean(all_weights, axis=0)
+
+    print(f"\nPer-bag {primary_metric}: {[f'{s:.6f}' for s in bag_scores]}")
+    print(f"Mean={np.mean(bag_scores):.6f}  Std={np.std(bag_scores):.6f}")
+
+    # Evaluate averaged weights on the full OOF matrix.
+    fast_score = build_fast_scorer(task_type, primary_metric, y_true_series, positive_label)
+    full_blend = oof_matrix.T @ averaged_weights
+    final_score = fast_score(full_blend)
+    print(f"\nFull-OOF {primary_metric} with averaged weights = {final_score:.6f}")
+
+    return averaged_weights, final_score
+
+
 def print_component_table(candidate_ids, cv_scores, weights, primary_metric):
     nonzero = [(cid, cv, w) for cid, cv, w in zip(candidate_ids, cv_scores, weights) if w > 0]
     nonzero.sort(key=lambda x: -x[2])
@@ -237,6 +309,9 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--n-rounds", type=int, default=100, help="Number of greedy selection rounds (default: 100)")
     parser.add_argument("--refresh-cache", action="store_true", help="Re-download all OOF data even if cached")
+    parser.add_argument("--n-bags", type=int, default=1, help="Bootstrap bags for ensemble selection (default: 1 = no bagging)")
+    parser.add_argument("--correlation-threshold", type=float, default=None, metavar="T",
+                        help="Drop candidates with pairwise OOF Pearson correlation > T before selection")
     args = parser.parse_args()
 
     cfg = load_config()
@@ -326,10 +401,30 @@ def main():
 
     oof_matrix = np.vstack(oof_arrays)  # (n_candidates, n_rows)
 
-    weights, final_score = greedy_select(
-        oof_matrix, y_true_series, task_type, primary_metric, positive_label,
-        n_rounds=args.n_rounds, higher_better=higher,
-    )
+    # Step 1: optionally filter correlated candidates.
+    if args.correlation_threshold is not None:
+        print(f"\nFiltering candidates with pairwise correlation > {args.correlation_threshold}...")
+        cv_score_by_id = dict(zip(candidate_ids, cv_scores))
+        oof_matrix, candidate_ids, dropped = filter_correlated_candidates(
+            oof_matrix, candidate_ids, args.correlation_threshold
+        )
+        cv_scores = [cv_score_by_id[cid] for cid in candidate_ids]
+        print(f"  {len(dropped)} dropped, {len(candidate_ids)} remaining.")
+        if len(candidate_ids) < 2:
+            print("Fewer than 2 candidates remain after correlation filtering. Exiting.")
+            sys.exit(1)
+
+    # Step 2: run selection (bagged or single pass).
+    if args.n_bags > 1:
+        weights, final_score = bagged_greedy_select(
+            oof_matrix, y_true_series, task_type, primary_metric, positive_label,
+            n_rounds=args.n_rounds, higher_better=higher, n_bags=args.n_bags,
+        )
+    else:
+        weights, final_score = greedy_select(
+            oof_matrix, y_true_series, task_type, primary_metric, positive_label,
+            n_rounds=args.n_rounds, higher_better=higher,
+        )
 
     print_component_table(candidate_ids, cv_scores, weights, primary_metric)
     emit_config_snippet(candidate_ids, weights)
