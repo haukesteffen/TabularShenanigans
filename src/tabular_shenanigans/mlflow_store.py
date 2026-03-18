@@ -318,6 +318,48 @@ def _candidate_run_metrics(
     return metrics
 
 
+def log_trial_run(
+    config: AppConfig,
+    candidate_run: CandidateRunRef,
+    trial_number: int,
+    model_family: str,
+    hyperparams: dict[str, object],
+    model_params: dict[str, object] | None,
+    cv_score_mean: float | None,
+    cv_score_std: float | None,
+    duration_seconds: float | None,
+    trial_state: str,  # "COMPLETE" | "FAIL"
+) -> None:
+    client = _client(config)
+    run = client.create_run(
+        experiment_id=candidate_run.experiment_id,
+        run_name=f"trial_{trial_number}",
+        tags={
+            "run_kind": "optimization_trial",
+            "mlflow.parentRunId": candidate_run.run_id,
+            "candidate_id": candidate_run.candidate_id,
+            "trial_state": trial_state,
+            "model_family": model_family,
+        },
+    )
+    trial_run_id = run.info.run_id
+    params: dict[str, object] = {"trial_number": trial_number}
+    for key, value in hyperparams.items():
+        params[f"hp__{key}"] = value
+    if isinstance(model_params, dict):
+        for key, value in model_params.items():
+            params[f"mp__{key}"] = value
+    _log_params(client, trial_run_id, params)
+    if trial_state == "COMPLETE":
+        _log_metrics(client, trial_run_id, {
+            "cv_score_mean": cv_score_mean,
+            "cv_score_std": cv_score_std,
+            "duration_seconds": duration_seconds,
+        })
+    status = "FINISHED" if trial_state == "COMPLETE" else "FAILED"
+    client.set_terminated(trial_run_id, status=status)
+
+
 def log_candidate_run(
     config: AppConfig,
     candidate_run: CandidateRunRef,

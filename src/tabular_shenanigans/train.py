@@ -375,6 +375,7 @@ def run_training_workflow(
                             optimization_result = run_optimization(
                                 config=config,
                                 dataset_context=dataset_context,
+                                candidate_run=candidate_run,
                                 prepared_training_context=prepared_training_context,
                             )
                             run_training(

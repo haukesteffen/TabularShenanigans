@@ -1,4 +1,5 @@
 import json
+import time
 from dataclasses import dataclass
 from datetime import datetime, timezone
 
@@ -15,6 +16,7 @@ from tabular_shenanigans.model_evaluation import (
     build_prepared_training_context,
     score_model_spec,
 )
+from tabular_shenanigans.mlflow_store import CandidateRunRef, log_trial_run
 from tabular_shenanigans.models import build_tuning_space, get_model_definition
 
 
@@ -115,6 +117,7 @@ def _build_optimization_summary(
 def run_optimization(
     config: AppConfig,
     dataset_context: CompetitionDatasetContext,
+    candidate_run: CandidateRunRef,
     prepared_training_context: PreparedTrainingContext | None = None,
 ) -> OptimizationResult:
     if not config.is_model_candidate:
@@ -152,21 +155,50 @@ def run_optimization(
 
     def objective(trial: optuna.Trial) -> float:
         parameter_overrides = build_tuning_space(task_type, tuning_model_spec.model_registry_key, trial)
-        cv_evaluation = score_model_spec(
-            task_type=task_type,
-            primary_metric=primary_metric,
-            model_spec=TrainingModelSpec(
-                model_registry_key=tuning_model_spec.model_registry_key,
-                parameter_overrides=parameter_overrides,
-            ),
-            training_context=training_context,
-            cv_random_state=competition.cv.random_state,
-        )
+        trial_start = time.time()
+        try:
+            cv_evaluation = score_model_spec(
+                task_type=task_type,
+                primary_metric=primary_metric,
+                model_spec=TrainingModelSpec(
+                    model_registry_key=tuning_model_spec.model_registry_key,
+                    parameter_overrides=parameter_overrides,
+                ),
+                training_context=training_context,
+                cv_random_state=competition.cv.random_state,
+            )
+        except Exception:
+            log_trial_run(
+                config=config,
+                candidate_run=candidate_run,
+                trial_number=trial.number,
+                model_family=tuning_model_spec.model_registry_key,
+                hyperparams=parameter_overrides,
+                model_params=None,
+                cv_score_mean=None,
+                cv_score_std=None,
+                duration_seconds=time.time() - trial_start,
+                trial_state="FAIL",
+            )
+            raise
+        duration_seconds = time.time() - trial_start
         metric_mean = cv_evaluation.model_result.cv_summary.metric_mean
         metric_std = cv_evaluation.model_result.cv_summary.metric_std
         trial.set_user_attr("metric_std", metric_std)
         trial.set_user_attr("parameter_overrides", json_ready(parameter_overrides))
         trial.set_user_attr("model_params", json_ready(cv_evaluation.model_result.model_params))
+        log_trial_run(
+            config=config,
+            candidate_run=candidate_run,
+            trial_number=trial.number,
+            model_family=tuning_model_spec.model_registry_key,
+            hyperparams=parameter_overrides,
+            model_params=cv_evaluation.model_result.model_params,
+            cv_score_mean=metric_mean,
+            cv_score_std=metric_std,
+            duration_seconds=duration_seconds,
+            trial_state="COMPLETE",
+        )
         print(
             f"Trial {trial.number}: {primary_metric}={metric_mean:.6f} "
             f"(std={metric_std:.6f}) params={parameter_overrides}"
