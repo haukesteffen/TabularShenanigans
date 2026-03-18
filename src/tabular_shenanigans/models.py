@@ -1086,7 +1086,6 @@ def _build_catboost_tuning_space(trial: object) -> dict[str, object]:
         "learning_rate": trial.suggest_float("learning_rate", 0.01, 0.2, log=True),
         "min_data_in_leaf": trial.suggest_int("min_data_in_leaf", 10, 100),
         "random_strength": trial.suggest_float("random_strength", 1e-10, 10.0, log=True),
-        "rsm": trial.suggest_float("rsm", 0.5, 1.0),
     }
 
 
