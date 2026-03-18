@@ -31,6 +31,9 @@ from pathlib import Path
 REPO_ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(REPO_ROOT / "src"))
 
+from dotenv import load_dotenv
+load_dotenv(REPO_ROOT / ".env")
+
 import mlflow
 import numpy as np
 import pandas as pd
