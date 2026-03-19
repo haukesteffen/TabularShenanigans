@@ -64,7 +64,6 @@ class CompetitionConfig(BaseModel):
 class CandidateOptimizationConfig(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
-    enabled: bool = False
     method: Literal["optuna"] = "optuna"
     n_trials: int | None = Field(default=None, ge=1)
     timeout_seconds: int | None = Field(default=None, ge=1)
@@ -94,7 +93,7 @@ class ModelCandidateConfig(BaseCandidateConfig):
         "xgboost",
     ]
     model_params: dict[str, object] = Field(default_factory=dict)
-    optimization: CandidateOptimizationConfig = Field(default_factory=CandidateOptimizationConfig)
+    optimization: CandidateOptimizationConfig | None = None
 
     @model_validator(mode="before")
     @classmethod
@@ -108,10 +107,10 @@ class ModelCandidateConfig(BaseCandidateConfig):
 
     @model_validator(mode="after")
     def validate_model_candidate(self) -> "ModelCandidateConfig":
-        if self.model_params and self.optimization.enabled:
+        if self.model_params and self.optimization is not None:
             raise ValueError(
-                "The current runtime does not support combining candidate.model_params "
-                "with enabled candidate.optimization."
+                "candidate.model_params and candidate.optimization are mutually exclusive. "
+                "Use model_params for fixed training or optimization for tuning, not both."
             )
 
         if self.numeric_preprocessor is None or self.categorical_preprocessor is None:
@@ -295,8 +294,8 @@ class AppConfig(BaseModel):
                         model_id=resolved_model_registry_key,
                         parameter_overrides=candidate.model_params,
                     )
-                    optimization = candidate.optimization
-                    if optimization.enabled:
+                    if candidate.optimization is not None:
+                        optimization = candidate.optimization
                         if optimization.n_trials is None and optimization.timeout_seconds is None:
                             raise ValueError(
                                 "At least one candidate.optimization stopping condition is required. "
@@ -497,8 +496,8 @@ class AppConfig(BaseModel):
         competition = self.competition
         candidate = self.get_candidate(candidate_index)
         if isinstance(candidate, ModelCandidateConfig):
-            optimization_payload: dict[str, object] = {"enabled": False}
-            if candidate.optimization.enabled:
+            optimization_payload: dict[str, object] | None = None
+            if candidate.optimization is not None:
                 optimization_payload = candidate.optimization.model_dump(mode="python")
             runtime_execution_context = self.runtime_execution_context_for_index(candidate_index)
             preprocessing_execution_plan = self.preprocessing_execution_plan_for_index(candidate_index)

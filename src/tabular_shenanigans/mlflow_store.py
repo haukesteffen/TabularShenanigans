@@ -255,15 +255,15 @@ def _candidate_run_params(config: AppConfig, manifest: dict[str, object]) -> dic
             for key, value in model_params.items():
                 params[f"model__{key}"] = value
         optimization = candidate.optimization
-        params.update(
-            {
-                "opt__enabled": optimization.enabled,
-                "opt__method": optimization.method,
-                "opt__n_trials": optimization.n_trials,
-                "opt__timeout_seconds": optimization.timeout_seconds,
-                "opt__random_state": optimization.random_state,
-            }
-        )
+        if optimization is not None:
+            params.update(
+                {
+                    "opt__method": optimization.method,
+                    "opt__n_trials": optimization.n_trials,
+                    "opt__timeout_seconds": optimization.timeout_seconds,
+                    "opt__random_state": optimization.random_state,
+                }
+            )
         return params
 
     params["blend__base_candidate_ids_json"] = candidate.base_candidate_ids

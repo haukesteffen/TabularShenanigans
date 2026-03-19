@@ -102,7 +102,7 @@ Each candidate run is named with `candidate_id`.
   - `model_family`
   - `model_registry_key`
   - `model__*` for resolved model params
-  - `opt__*` for optimization settings
+  - `opt__*` for optimization settings (logged only when optimization block is present)
 - blend candidates:
   - `blend__base_candidate_ids_json`
   - `blend__configured_weights_json`

@@ -41,12 +41,12 @@ experiment:
       numeric_preprocessor: standardize
       categorical_preprocessor: onehot
       model_params: {}
-      optimization:
-        enabled: false
-        # method: optuna
-        # n_trials: 25
-        # timeout_seconds: 3600
-        # random_state: 42
+      # To enable optimization, replace model_params with an optimization block:
+      # optimization:
+      #   method: optuna
+      #   n_trials: 25
+      #   timeout_seconds: 3600
+      #   random_state: 42
 
     - candidate_type: model
       feature_recipe_id: fr0
@@ -54,8 +54,6 @@ experiment:
       numeric_preprocessor: median
       categorical_preprocessor: ordinal
       model_params: {}
-      optimization:
-        enabled: false
 
     # Optional blend candidate shape:
     # - candidate_type: blend
