@@ -50,8 +50,8 @@ def build_parser() -> argparse.ArgumentParser:
         help="Fetch Kaggle submission outcomes for candidate runs tracked in MLflow.",
     )
 
-    submit_parser = subparsers.add_parser("submit", help="Prepare or submit from an MLflow candidate run.")
-    submit_selector_group = submit_parser.add_mutually_exclusive_group(required=True)
+    submit_parser = subparsers.add_parser("submit", help="Validate or submit a candidate to Kaggle.")
+    submit_selector_group = submit_parser.add_mutually_exclusive_group()
     submit_selector_group.add_argument(
         "--candidate-id",
         help="Existing candidate_id in the current competition MLflow experiment.",
@@ -59,7 +59,16 @@ def build_parser() -> argparse.ArgumentParser:
     submit_selector_group.add_argument(
         "--index",
         type=int,
-        help="1-based configured candidate index from config.yaml.",
+        help="1-based configured candidate index from config.yaml. Defaults to 1 when no selector is given.",
+    )
+    submit_parser.add_argument(
+        "--execute",
+        action="store_true",
+        help="Execute a real Kaggle submission. Without this flag, submit performs dry-run validation only.",
+    )
+    submit_parser.add_argument(
+        "--message-prefix",
+        help="Optional prefix for the Kaggle submission description. Only used with --execute.",
     )
 
     return parser
@@ -186,8 +195,9 @@ def _resolve_submit_candidate_id(
     if candidate_id is not None:
         return candidate_id
 
+    effective_index = index if index is not None else 1
     selected_candidate_indices = config.resolve_candidate_indices(
-        index=index,
+        index=effective_index,
         require_explicit=True,
     )
     return config.with_candidate_index(selected_candidate_indices[0]).resolved_candidate_id
@@ -197,6 +207,8 @@ def _run_submit_stage(
     config: AppConfig,
     candidate_id: str | None = None,
     index: int | None = None,
+    execute: bool = False,
+    message_prefix: str | None = None,
 ):
     resolved_candidate_id = _resolve_submit_candidate_id(
         config=config,
@@ -207,6 +219,8 @@ def _run_submit_stage(
     submission_result = run_submission(
         config=config,
         candidate_id=resolved_candidate_id,
+        execute=execute,
+        message_prefix=message_prefix,
     )
     print(
         "Submission stage complete: "
@@ -300,6 +314,8 @@ def main(argv: list[str] | None = None) -> None:
             config=config,
             candidate_id=args.candidate_id,
             index=args.index,
+            execute=args.execute,
+            message_prefix=args.message_prefix,
         )
         return
 

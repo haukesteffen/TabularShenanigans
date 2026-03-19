@@ -77,8 +77,6 @@ Required top-level sections: `competition`, `experiment`.
 | `runtime.compute_target` | no | `auto` (default), `cpu`, or `gpu` |
 | `runtime.gpu_backend` | no | `auto` (default), `patch`, or `native`; advanced override |
 | `candidates` | yes | one or more candidate entries (see below) |
-| `submit.enabled` | no | |
-| `submit.message_prefix` | no | |
 
 `train` drains `experiment.candidates` in order unless narrowed with `--candidate-id` or `--index`. `submit --index <n>` uses a 1-based index into this list.
 
@@ -126,11 +124,14 @@ Hard-invalid: `categorical_preprocessor: native` with any `model_family` other t
 | `uv run python main.py train --candidate-id <id>` | train one candidate by ID |
 | `uv run python main.py train --index <n>` | train one candidate by 1-based index |
 | `uv run python main.py train --skip-existing` | skip candidates that already exist in MLflow |
-| `uv run python main.py submit --candidate-id <id>` | submit a candidate by ID |
-| `uv run python main.py submit --index <n>` | submit a candidate by 1-based index |
+| `uv run python main.py submit` | dry-run validation for the first configured candidate |
+| `uv run python main.py submit --candidate-id <id>` | dry-run validation for a candidate by ID |
+| `uv run python main.py submit --index <n>` | dry-run validation for a candidate by 1-based index |
+| `uv run python main.py submit --candidate-id <id> --execute` | real Kaggle submission |
+| `uv run python main.py submit --candidate-id <id> --execute --message-prefix <prefix>` | real Kaggle submission with a description prefix |
 | `uv run python main.py refresh-submissions` | refresh Kaggle submission scores onto MLflow runs |
 
-The default pipeline no longer auto-submits; `submit` requires an explicit selector.
+The default pipeline stops after `train`; `submit` is always a separate explicit command. Without `--execute`, `submit` performs dry-run validation only.
 
 ### Utility Scripts
 
@@ -147,7 +148,7 @@ The default pipeline no longer auto-submits; `submit` requires an explicit selec
 - **prepare**: fetches if needed, materializes the competition context in memory, and writes EDA reports under `reports/<competition_slug>/`.
 - **eda**: writes EDA reports only.
 - **train**: trains all configured candidates sequentially by default, loading one shared dataset context per invocation. Use `--candidate-id` or `--index` to train one configured candidate. Model candidates stage artifacts in a temp bundle and upload to MLflow. Blend candidates download their base candidates from MLflow, materialize blended predictions, then upload the blended candidate run.
-- **submit**: downloads the candidate from MLflow, validates `test_predictions.csv` against `sample_submission.csv`, and when `experiment.submit.enabled=true` submits to Kaggle and records the submission event on the candidate run.
+- **submit**: downloads the candidate from MLflow and validates `test_predictions.csv` against `sample_submission.csv`. With `--execute`, submits to Kaggle and records the submission event on the candidate run. Without `--execute`, performs dry-run validation only.
 - **refresh-submissions**: scans Kaggle submission history, matches `submit=<submission_event_id>` descriptions, and appends new score observations onto matching candidate runs.
 
 ## Outputs
@@ -193,7 +194,7 @@ Suggested checks:
 - Trigger one intentionally failing candidate and confirm the run is marked failed but still has `logs/runtime.log`.
 - Rerun the same candidate config and confirm a hard-fail on duplicate `candidate_id`.
 - Train a blend candidate and confirm it downloads base candidates from MLflow.
-- Run `uv run python main.py submit --index 1` with `submit.enabled: false` and confirm dry-run validation succeeds.
+- Run `uv run python main.py submit --index 1` and confirm dry-run validation succeeds.
 - Run `uv run python main.py refresh-submissions` after a real submission and confirm MLflow metrics update.
 
 ### Current Limits
