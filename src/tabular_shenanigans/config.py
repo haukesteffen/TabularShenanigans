@@ -192,13 +192,6 @@ ExperimentCandidateConfig = Annotated[
 ]
 
 
-class ExperimentSubmitConfig(BaseModel):
-    model_config = ConfigDict(extra="forbid")
-
-    enabled: bool = False
-    message_prefix: str | None = None
-
-
 class ExperimentTrackingConfig(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
@@ -217,7 +210,6 @@ class ExperimentConfig(BaseModel):
 
     candidates: list[ExperimentCandidateConfig] = Field(min_length=1)
     runtime: ExperimentRuntimeConfig = Field(default_factory=ExperimentRuntimeConfig)
-    submit: ExperimentSubmitConfig = Field(default_factory=ExperimentSubmitConfig)
     tracking: ExperimentTrackingConfig = Field(default_factory=ExperimentTrackingConfig)
     active_candidate_index: int = Field(default=0, exclude=True, repr=False, ge=0)
     legacy_candidate_contract_used: bool = Field(default=False, exclude=True, repr=False)

@@ -75,7 +75,3 @@ experiment:
     #   weights:
     #     - 0.5
     #     - 0.5
-
-  submit:
-    enabled: false
-    # message_prefix: s5e12-baseline

@@ -340,9 +340,9 @@ def _build_submission_event(
 def run_submission(
     config: AppConfig,
     candidate_id: str,
+    execute: bool = False,
+    message_prefix: str | None = None,
 ) -> SubmissionRunResult:
-    submit_config = config.experiment.submit
-
     with tempfile.TemporaryDirectory(prefix="tabular-shenanigans-submit-") as temp_dir:
         temp_root = Path(temp_dir)
         submission_context = _load_submission_context(
@@ -355,12 +355,12 @@ def run_submission(
             output_dir=temp_root,
         )
 
-        if submit_config.enabled:
+        if execute:
             submission_event_id = make_submission_event_id()
             submission_message = _build_submission_message_from_context(
                 submission_context,
                 submission_event_id=submission_event_id,
-                submit_message_prefix=submit_config.message_prefix,
+                submit_message_prefix=message_prefix,
             )
             completed = subprocess.run(
                 [
