@@ -8,20 +8,12 @@ Usage:
 import sys
 import yaml
 
+from tabular_shenanigans.models import MODEL_REGISTRY
+
 FEATURE_RECIPES = ["fr0", "fr1", "fr2", "fr3"]
 
 NUMERIC_OPTIONS = ["median", "standardize", "kbins"]
 CATEGORICAL_OPTIONS = ["onehot", "ordinal", "frequency"]
-
-# Models that support all categorical options (onehot/ordinal/frequency)
-GPU_MODELS = ["logistic_regression", "random_forest", "lightgbm", "xgboost"]
-
-# CatBoost uses native categorical handling only
-CATBOOST_MODELS = ["catboost"]
-
-# CPU-only models
-CPU_MODELS = ["extra_trees", "hist_gradient_boosting"]
-
 
 def build_candidate(recipe, model, numeric, categorical):
     return {
@@ -30,18 +22,35 @@ def build_candidate(recipe, model, numeric, categorical):
         "model_family": model,
         "numeric_preprocessor": numeric,
         "categorical_preprocessor": categorical,
-        "optimization": {"enabled": False},
     }
 
 
+def get_binary_model_groups():
+    gpu_models = []
+    cpu_models = []
+    native_categorical_models = []
+
+    for model_id, model_definition in MODEL_REGISTRY["binary"].items():
+        if model_definition.supports_native_categorical_preprocessing:
+            native_categorical_models.append(model_id)
+            continue
+        if model_definition.gpu_routing_rules:
+            gpu_models.append(model_id)
+            continue
+        cpu_models.append(model_id)
+
+    return gpu_models, cpu_models, native_categorical_models
+
+
 def generate_candidates():
+    gpu_models, cpu_models, native_categorical_models = get_binary_model_groups()
     candidates = []
     for recipe in FEATURE_RECIPES:
-        for model in GPU_MODELS + CPU_MODELS:
+        for model in gpu_models + cpu_models:
             for numeric in NUMERIC_OPTIONS:
                 for categorical in CATEGORICAL_OPTIONS:
                     candidates.append(build_candidate(recipe, model, numeric, categorical))
-        for model in CATBOOST_MODELS:
+        for model in native_categorical_models:
             for numeric in NUMERIC_OPTIONS:
                 candidates.append(build_candidate(recipe, model, numeric, "native"))
     return candidates
