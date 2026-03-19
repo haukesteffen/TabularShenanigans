@@ -11,6 +11,9 @@ from sklearn.ensemble import (
     RandomForestRegressor,
 )
 from sklearn.linear_model import ElasticNet, LogisticRegression, Ridge
+from sklearn.naive_bayes import GaussianNB
+from sklearn.neighbors import KNeighborsClassifier, KNeighborsRegressor
+from sklearn.svm import SVC, SVR
 
 from tabular_shenanigans._model_types import (
     BinaryLabelEncodingClassifier,
@@ -110,6 +113,63 @@ def import_cuml_ensemble_model(
     model_class = getattr(cuml_ensemble, model_class_name, None)
     if model_class is None:
         raise ImportError(f"cuml.ensemble.{model_class_name} is unavailable in this environment.")
+    return model_class
+
+
+def import_cuml_neighbors_model(
+    model_class_name: str,
+    *,
+    model_label: str,
+) -> type[object]:
+    try:
+        from cuml import neighbors as cuml_neighbors
+    except ImportError as exc:
+        raise ImportError(
+            f"gpu_native {model_label} requires the optional GPU dependencies. "
+            "Install them with `uv sync --extra boosters --extra gpu`."
+        ) from exc
+
+    model_class = getattr(cuml_neighbors, model_class_name, None)
+    if model_class is None:
+        raise ImportError(f"cuml.neighbors.{model_class_name} is unavailable in this environment.")
+    return model_class
+
+
+def import_cuml_svm_model(
+    model_class_name: str,
+    *,
+    model_label: str,
+) -> type[object]:
+    try:
+        from cuml import svm as cuml_svm
+    except ImportError as exc:
+        raise ImportError(
+            f"gpu_native {model_label} requires the optional GPU dependencies. "
+            "Install them with `uv sync --extra boosters --extra gpu`."
+        ) from exc
+
+    model_class = getattr(cuml_svm, model_class_name, None)
+    if model_class is None:
+        raise ImportError(f"cuml.svm.{model_class_name} is unavailable in this environment.")
+    return model_class
+
+
+def import_cuml_naive_bayes_model(
+    model_class_name: str,
+    *,
+    model_label: str,
+) -> type[object]:
+    try:
+        from cuml import naive_bayes as cuml_naive_bayes
+    except ImportError as exc:
+        raise ImportError(
+            f"gpu_native {model_label} requires the optional GPU dependencies. "
+            "Install them with `uv sync --extra boosters --extra gpu`."
+        ) from exc
+
+    model_class = getattr(cuml_naive_bayes, model_class_name, None)
+    if model_class is None:
+        raise ImportError(f"cuml.naive_bayes.{model_class_name} is unavailable in this environment.")
     return model_class
 
 
@@ -639,6 +699,90 @@ def build_hist_gradient_boosting_classifier(
     return HistGradientBoostingClassifier(**params), params
 
 
+def build_knn_regressor(
+    random_state: int,
+    parameter_overrides: dict[str, object] | None = None,
+) -> tuple[object, dict[str, object]]:
+    del random_state
+    runtime_execution_context = get_runtime_execution_context()
+    if runtime_execution_context.resolved_gpu_backend == "gpu_native":
+        params = merge_model_params({}, parameter_overrides)
+        estimator_class = import_cuml_neighbors_model("KNeighborsRegressor", model_label="knn")
+        return SingleTargetRegressionAdapter(estimator_class(**params)), params
+
+    params = merge_model_params({}, parameter_overrides)
+    return KNeighborsRegressor(**params), params
+
+
+def build_knn_classifier(
+    random_state: int,
+    parameter_overrides: dict[str, object] | None = None,
+) -> tuple[object, dict[str, object]]:
+    del random_state
+    runtime_execution_context = get_runtime_execution_context()
+    if runtime_execution_context.resolved_gpu_backend == "gpu_native":
+        params = merge_model_params({}, parameter_overrides)
+        estimator_class = import_cuml_neighbors_model("KNeighborsClassifier", model_label="knn")
+        return BinaryLabelEncodingClassifier(estimator_class(**params)), params
+
+    params = merge_model_params({}, parameter_overrides)
+    estimator = KNeighborsClassifier(**params)
+    if runtime_execution_context.resolved_gpu_backend == "gpu_patch":
+        return BinaryLabelEncodingClassifier(estimator), params
+    return estimator, params
+
+
+def build_svm_regressor(
+    random_state: int,
+    parameter_overrides: dict[str, object] | None = None,
+) -> tuple[object, dict[str, object]]:
+    del random_state
+    runtime_execution_context = get_runtime_execution_context()
+    if runtime_execution_context.resolved_gpu_backend == "gpu_native":
+        params = merge_model_params({"kernel": "rbf"}, parameter_overrides)
+        estimator_class = import_cuml_svm_model("SVR", model_label="svm")
+        return SingleTargetRegressionAdapter(estimator_class(**params)), params
+
+    params = merge_model_params({"kernel": "rbf"}, parameter_overrides)
+    return SVR(**params), params
+
+
+def build_svm_classifier(
+    random_state: int,
+    parameter_overrides: dict[str, object] | None = None,
+) -> tuple[object, dict[str, object]]:
+    del random_state
+    runtime_execution_context = get_runtime_execution_context()
+    if runtime_execution_context.resolved_gpu_backend == "gpu_native":
+        params = merge_model_params({"kernel": "rbf", "probability": True}, parameter_overrides)
+        estimator_class = import_cuml_svm_model("SVC", model_label="svm")
+        return BinaryLabelEncodingClassifier(estimator_class(**params)), params
+
+    params = merge_model_params({"kernel": "rbf", "probability": True}, parameter_overrides)
+    estimator = SVC(**params)
+    if runtime_execution_context.resolved_gpu_backend == "gpu_patch":
+        return BinaryLabelEncodingClassifier(estimator), params
+    return estimator, params
+
+
+def build_naive_bayes_classifier(
+    random_state: int,
+    parameter_overrides: dict[str, object] | None = None,
+) -> tuple[object, dict[str, object]]:
+    del random_state
+    runtime_execution_context = get_runtime_execution_context()
+    if runtime_execution_context.resolved_gpu_backend == "gpu_native":
+        params = merge_model_params({}, parameter_overrides)
+        estimator_class = import_cuml_naive_bayes_model("GaussianNB", model_label="naive_bayes")
+        return BinaryLabelEncodingClassifier(estimator_class(**params)), params
+
+    params = merge_model_params({}, parameter_overrides)
+    estimator = GaussianNB(**params)
+    if runtime_execution_context.resolved_gpu_backend == "gpu_patch":
+        return BinaryLabelEncodingClassifier(estimator), params
+    return estimator, params
+
+
 def build_realmlp_regressor(
     random_state: int,
     parameter_overrides: dict[str, object] | None = None,
@@ -875,6 +1019,45 @@ def build_realmlp_tuning_space(trial: object) -> dict[str, object]:
         ),
         "p_drop": trial.suggest_float("p_drop", 0.0, 0.5),
         "wd": trial.suggest_float("wd", 1e-6, 1e-2, log=True),
+    }
+
+
+def build_knn_tuning_space(trial: object) -> dict[str, object]:
+    params: dict[str, object] = {
+        "n_neighbors": trial.suggest_int("n_neighbors", 3, 50),
+        "weights": trial.suggest_categorical("weights", ["uniform", "distance"]),
+        "metric": trial.suggest_categorical("metric", ["euclidean", "manhattan", "minkowski"]),
+    }
+    if params["metric"] == "minkowski":
+        params["p"] = trial.suggest_int("p", 1, 5)
+    return params
+
+
+def build_svm_regressor_tuning_space(trial: object) -> dict[str, object]:
+    use_scale_gamma = trial.suggest_categorical("use_scale_gamma", [True, False])
+    gamma = "scale" if use_scale_gamma else trial.suggest_float("gamma", 1e-4, 1.0, log=True)
+    return {
+        "C": trial.suggest_float("C", 1e-3, 100, log=True),
+        "epsilon": trial.suggest_float("epsilon", 1e-3, 1.0, log=True),
+        "gamma": gamma,
+        "kernel": "rbf",
+    }
+
+
+def build_svm_classifier_tuning_space(trial: object) -> dict[str, object]:
+    use_scale_gamma = trial.suggest_categorical("use_scale_gamma", [True, False])
+    gamma = "scale" if use_scale_gamma else trial.suggest_float("gamma", 1e-4, 1.0, log=True)
+    return {
+        "C": trial.suggest_float("C", 1e-3, 100, log=True),
+        "gamma": gamma,
+        "kernel": "rbf",
+        "probability": True,
+    }
+
+
+def build_naive_bayes_tuning_space(trial: object) -> dict[str, object]:
+    return {
+        "var_smoothing": trial.suggest_float("var_smoothing", 1e-12, 1e-2, log=True),
     }
 
 
