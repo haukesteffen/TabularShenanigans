@@ -106,6 +106,7 @@ class PreparedTrainingContext:
     preprocessing_scheme_id: str
     matrix_output_kind: str
     uses_xgboost_gpu_native_inputs: bool
+    preserves_gpu_preprocessed_inputs: bool
     preprocessing_backend: str
     model_compute_target: str
 
@@ -197,6 +198,7 @@ def build_prepared_training_context(
         preprocessing_scheme_id=candidate.preprocessing_scheme_id,
         matrix_output_kind=preprocessing_execution_plan.matrix_output_kind,
         uses_xgboost_gpu_native_inputs=uses_xgboost_gpu_native_inputs,
+        preserves_gpu_preprocessed_inputs=uses_xgboost_gpu_native_inputs,
         preprocessing_backend=preprocessing_execution_plan.preprocessing_backend,
         model_compute_target=config.runtime_execution_context.resolved_compute_target,
     )
@@ -205,9 +207,9 @@ def build_prepared_training_context(
 def _coerce_processed_matrix(
     values: object,
     matrix_output_kind: str,
-    model_compute_target: str,
+    preserves_gpu_preprocessed_inputs: bool,
 ) -> object:
-    if model_compute_target != "gpu":
+    if not preserves_gpu_preprocessed_inputs:
         if _module_startswith(values, "cupy"):
             import cupy as cp
 
@@ -343,6 +345,7 @@ def _run_cv_evaluation(
     preprocessing_scheme_id = training_context.preprocessing_scheme_id
     matrix_output_kind = training_context.matrix_output_kind
     uses_xgboost_gpu_native_inputs = training_context.uses_xgboost_gpu_native_inputs
+    preserves_gpu_preprocessed_inputs = training_context.preserves_gpu_preprocessed_inputs
     preprocessing_backend = training_context.preprocessing_backend
     model_compute_target = training_context.model_compute_target
 
@@ -386,18 +389,18 @@ def _run_cv_evaluation(
         x_fold_train_processed = _coerce_processed_matrix(
             x_fold_train_processed,
             matrix_output_kind,
-            model_compute_target,
+            preserves_gpu_preprocessed_inputs,
         )
         x_fold_valid_processed = _coerce_processed_matrix(
             x_fold_valid_processed,
             matrix_output_kind,
-            model_compute_target,
+            preserves_gpu_preprocessed_inputs,
         )
         if x_test_processed is not None:
             x_test_processed = _coerce_processed_matrix(
                 x_test_processed,
                 matrix_output_kind,
-                model_compute_target,
+                preserves_gpu_preprocessed_inputs,
             )
 
         if uses_xgboost_gpu_native_inputs:
