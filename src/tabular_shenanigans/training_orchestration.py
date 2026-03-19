@@ -72,27 +72,26 @@ def run_training_batch(
             f"candidate_type={candidate.candidate_type}"
         )
 
-        if skip_existing and candidate_run_exists(candidate_config, resolved_candidate_id):
-            print(
-                "Candidate skipped: "
-                f"candidate_index={candidate_index + 1}, "
-                f"candidate_id={resolved_candidate_id}, "
-                "reason=existing_mlflow_run"
-            )
-            results.append(
-                CandidateBatchResult(
-                    candidate_index=candidate_index + 1,
-                    candidate_id=resolved_candidate_id,
-                    candidate_type=candidate.candidate_type,
-                    status="skipped",
-                    run_id=None,
-                    wall_seconds=0.0,
-                )
-            )
-            continue
-
         started = time.perf_counter()
         try:
+            if skip_existing and candidate_run_exists(candidate_config, resolved_candidate_id):
+                print(
+                    "Candidate skipped: "
+                    f"candidate_index={candidate_index + 1}, "
+                    f"candidate_id={resolved_candidate_id}, "
+                    "reason=existing_mlflow_run"
+                )
+                results.append(
+                    CandidateBatchResult(
+                        candidate_index=candidate_index + 1,
+                        candidate_id=resolved_candidate_id,
+                        candidate_type=candidate.candidate_type,
+                        status="skipped",
+                        run_id=None,
+                        wall_seconds=0.0,
+                    )
+                )
+                continue
             candidate_run = run_training_workflow(
                 config=candidate_config,
                 dataset_context=dataset_context,

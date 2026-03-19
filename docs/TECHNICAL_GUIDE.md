@@ -24,17 +24,20 @@ For setup, commands, and config reference, see [USAGE.md](/USAGE.md).
     - `context/competition.json`
     - `context/folds.csv`
     - `candidate/*`
-15. Create one MLflow run for the candidate and upload the staged bundle.
-16. For real Kaggle submissions, download the explicitly selected candidate from MLflow, validate `test_predictions.csv` against `sample_submission.csv`, submit `submission.csv`, and append submission history artifacts back onto that same candidate run.
-17. For submission refresh, scan Kaggle submissions once, match `submit=<submission_event_id>` descriptions, and update candidate-run submission history plus scoreboard metrics in place.
+15. Create one MLflow run attempt for the candidate and upload the staged bundle.
+16. Treat only a `FINISHED` MLflow run with the full candidate artifact contract as the canonical run for that `candidate_id`.
+17. For real Kaggle submissions, download the explicitly selected candidate from MLflow, validate `test_predictions.csv` against `sample_submission.csv`, submit `submission.csv`, and append submission history artifacts back onto that same candidate run.
+18. For submission refresh, scan Kaggle submissions once, match `submit=<submission_event_id>` descriptions, recover missing submission events from `candidate=<candidate_id>` metadata when needed, and update candidate-run submission history plus scoreboard metrics in place.
 
 ## Runtime Invariants
 
 - MLflow is required. The runtime does not support a no-tracking mode.
 - Candidate state is canonical in MLflow, not on local disk.
-- Reusing an existing derived `candidate_id` within a competition experiment is a hard error.
+- A completed run with the full candidate artifact contract is canonical for a `candidate_id`.
+- Failed or incomplete candidate attempts are non-canonical and may remain in MLflow until cleaned up.
+- Starting a new attempt while another run for the same `candidate_id` is still active is a hard error.
 - `prepare` is not a persisted source of truth anymore.
-- `train` and `blend` must produce exactly one candidate run keyed by `candidate_id`.
+- `train` and `blend` must produce exactly one canonical candidate run keyed by `candidate_id`.
 - Candidate runs should upload `logs/runtime.log` on both success and failure once the run exists.
 - `submit` resolves candidates from MLflow, not from local artifact directories.
 - `refresh-submissions` updates existing candidate runs and does not create standalone tracking runs.
@@ -49,7 +52,8 @@ For setup, commands, and config reference, see [USAGE.md](/USAGE.md).
 
 - MLflow is the canonical experiment store.
 - One MLflow experiment per `competition.slug`.
-- One top-level MLflow run per `candidate_id`.
+- One canonical top-level MLflow run per `candidate_id`.
+- Failed or incomplete retry attempts may coexist as non-canonical top-level runs for the same `candidate_id`.
 - There are no stage-specific MLflow runs.
 - There are no local canonical candidate directories or local submission ledgers.
 
@@ -186,6 +190,7 @@ Refresh behavior:
 - scan Kaggle submissions once
 - extract `submission_event_id` from the Kaggle description
 - match it to candidate-run submission history
+- when `submission_event_id` is missing from MLflow history but the Kaggle description includes `candidate=<candidate_id>`, recover the submission event onto that canonical candidate run
 - append only new observations
 - update candidate-run score metrics in place
 

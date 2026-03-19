@@ -26,6 +26,7 @@ from tabular_shenanigans.submission_history import (
     SubmissionRefreshResult,
     SubmissionScoreObservation,
     build_submission_score_metrics,
+    extract_candidate_id,
     extract_submission_event_id,
     iter_kaggle_submissions,
     make_submission_event_id,
@@ -337,6 +338,36 @@ def _build_submission_event(
     )
 
 
+def _build_recovered_submission_event(
+    submission_context: SubmissionContext,
+    submission_event_id: str,
+    kaggle_submitted_at: str,
+    kaggle_file_name: str,
+    kaggle_description: str,
+) -> SubmissionEvent:
+    return SubmissionEvent(
+        submission_event_id=submission_event_id,
+        submitted_at_utc=kaggle_submitted_at or utc_now_iso(),
+        competition_slug=submission_context.competition_slug,
+        candidate_id=submission_context.candidate_id,
+        candidate_type=submission_context.candidate_type,
+        config_fingerprint=submission_context.config_fingerprint,
+        feature_recipe_id=submission_context.feature_recipe_id,
+        preprocessing_scheme_id=submission_context.preprocessing_scheme_id,
+        model_registry_key=submission_context.model_registry_key,
+        estimator_name=submission_context.estimator_name,
+        cv_metric_name=submission_context.cv_metric_name,
+        cv_metric_mean=submission_context.cv_metric_mean,
+        cv_metric_std=submission_context.cv_metric_std,
+        submission_file_name=kaggle_file_name or "submission.csv",
+        submit_message=kaggle_description,
+        submit_response_message=(
+            "Recovered by refresh-submissions from Kaggle metadata after the original "
+            "post-submit MLflow write did not complete."
+        ),
+    )
+
+
 def run_submission(
     config: AppConfig,
     candidate_id: str,
@@ -469,31 +500,29 @@ def run_submission_refresh(
 
     histories_by_run_id: dict[str, CandidateSubmissionHistory] = {}
     event_to_candidate_run: dict[str, CandidateRunRef] = {}
+    candidate_run_by_candidate_id: dict[str, CandidateRunRef] = {}
+    submission_contexts_by_run_id: dict[str, SubmissionContext] = {}
 
     with tempfile.TemporaryDirectory(prefix="tabular-shenanigans-refresh-submissions-") as temp_dir:
         temp_root = Path(temp_dir)
         for candidate_run in candidate_runs:
             if target_candidate_ids is not None and candidate_run.candidate_id not in target_candidate_ids:
                 continue
+            candidate_run_by_candidate_id[candidate_run.candidate_id] = candidate_run
             history = download_submission_history(
                 config=config,
                 run_id=candidate_run.run_id,
                 destination_dir=temp_root / candidate_run.candidate_id,
             )
-            if not history.events:
-                continue
-
+            histories_by_run_id[candidate_run.run_id] = history
             relevant_event_ids = {
                 event.submission_event_id
                 for event in history.events
                 if target_submission_event_ids is None or event.submission_event_id in target_submission_event_ids
             }
-            if not relevant_event_ids:
-                continue
-
-            tracked_candidate_count += 1
-            tracked_submission_event_count += len(relevant_event_ids)
-            histories_by_run_id[candidate_run.run_id] = history
+            if relevant_event_ids:
+                tracked_candidate_count += 1
+                tracked_submission_event_count += len(relevant_event_ids)
             for submission_event_id in relevant_event_ids:
                 if submission_event_id in event_to_candidate_run:
                     existing_candidate_id = event_to_candidate_run[submission_event_id].candidate_id
@@ -504,7 +533,7 @@ def run_submission_refresh(
                     )
                 event_to_candidate_run[submission_event_id] = candidate_run
 
-        if not event_to_candidate_run:
+        if not histories_by_run_id:
             return SubmissionRefreshResult(
                 competition_slug=config.competition.slug,
                 tracked_candidate_count=tracked_candidate_count,
@@ -517,14 +546,78 @@ def run_submission_refresh(
             )
 
         observations_by_run_id: dict[str, list[SubmissionScoreObservation]] = {}
+        updated_submission_event_ids_by_run_id: dict[str, set[str]] = {}
         for remote_submission in iter_kaggle_submissions(config.competition.slug):
             scanned_remote_submission_count += 1
             submission_event_id = extract_submission_event_id(remote_submission.kaggle_description)
             if submission_event_id is None:
                 continue
-            candidate_run = event_to_candidate_run.get(submission_event_id)
-            if candidate_run is None:
+            if target_submission_event_ids is not None and submission_event_id not in target_submission_event_ids:
                 continue
+
+            candidate_id = extract_candidate_id(remote_submission.kaggle_description)
+            candidate_run = event_to_candidate_run.get(submission_event_id)
+            if candidate_run is not None:
+                if target_candidate_ids is not None and candidate_run.candidate_id not in target_candidate_ids:
+                    continue
+                if candidate_id is not None and candidate_id != candidate_run.candidate_id:
+                    raise ValueError(
+                        "Kaggle submission metadata did not match the tracked MLflow candidate. "
+                        f"submission_event_id={submission_event_id}, "
+                        f"kaggle_candidate_id={candidate_id}, "
+                        f"tracked_candidate_id={candidate_run.candidate_id}"
+                    )
+            else:
+                if target_candidate_ids is not None and candidate_id not in target_candidate_ids:
+                    continue
+                if candidate_id is None:
+                    print(
+                        "Submission refresh could not recover orphaned Kaggle submission: "
+                        f"submission_event_id={submission_event_id}, "
+                        "reason=missing_candidate_id_in_kaggle_description"
+                    )
+                    continue
+                candidate_run = candidate_run_by_candidate_id.get(candidate_id)
+                if candidate_run is None:
+                    print(
+                        "Submission refresh could not recover orphaned Kaggle submission: "
+                        f"candidate_id={candidate_id}, "
+                        f"submission_event_id={submission_event_id}, "
+                        "reason=no_canonical_candidate_run"
+                    )
+                    continue
+
+                history = histories_by_run_id[candidate_run.run_id]
+                if history.get_event(submission_event_id) is None:
+                    submission_context = submission_contexts_by_run_id.get(candidate_run.run_id)
+                    if submission_context is None:
+                        submission_context = _load_submission_context(
+                            config=config,
+                            candidate_id=candidate_run.candidate_id,
+                            destination_dir=temp_root / "recovered-events" / candidate_run.candidate_id,
+                        )
+                        submission_contexts_by_run_id[candidate_run.run_id] = submission_context
+
+                    history = history.with_submission_event(
+                        _build_recovered_submission_event(
+                            submission_context=submission_context,
+                            submission_event_id=submission_event_id,
+                            kaggle_submitted_at=remote_submission.kaggle_submitted_at,
+                            kaggle_file_name=remote_submission.kaggle_file_name,
+                            kaggle_description=remote_submission.kaggle_description,
+                        )
+                    )
+                    histories_by_run_id[candidate_run.run_id] = history
+                    event_to_candidate_run[submission_event_id] = candidate_run
+                    updated_submission_event_ids_by_run_id.setdefault(candidate_run.run_id, set()).add(
+                        submission_event_id
+                    )
+                    print(
+                        "Recovered orphaned Kaggle submission onto candidate run: "
+                        f"candidate_id={candidate_run.candidate_id}, "
+                        f"submission_event_id={submission_event_id}, "
+                        f"mlflow_run_id={candidate_run.run_id}"
+                    )
 
             matched_submission_event_ids.add(submission_event_id)
             observations_by_run_id.setdefault(candidate_run.run_id, []).append(
@@ -540,20 +633,20 @@ def run_submission_refresh(
                     observation_source=observation_source,
                 )
             )
+            updated_submission_event_ids_by_run_id.setdefault(candidate_run.run_id, set()).add(submission_event_id)
 
-        for run_id, observations in observations_by_run_id.items():
-            history = histories_by_run_id[run_id]
+        for run_id, history in histories_by_run_id.items():
+            observations = observations_by_run_id.get(run_id, [])
             updated_history, appended_count = history.with_submission_observations(observations)
-            if appended_count == 0:
+            updated_submission_event_ids = sorted(updated_submission_event_ids_by_run_id.get(run_id, set()))
+            if appended_count == 0 and not updated_submission_event_ids:
                 continue
 
             upload_submission_history(
                 config=config,
                 run_id=run_id,
                 history=updated_history,
-                updated_submission_event_ids=sorted(
-                    {observation.submission_event_id for observation in observations}
-                ),
+                updated_submission_event_ids=updated_submission_event_ids,
             )
             update_submission_metrics(
                 config=config,

@@ -107,7 +107,7 @@ Hard-invalid: `categorical_preprocessor: native` with any `model_family` other t
 `candidate_id` is derived automatically:
 - model: `<feature_recipe_id>--<preprocessing_scheme_id>--<model_registry_key>--<hash8>`
 - blend: `blend__<hash8>`
-- rerunning the same spec derives the same ID and hard-fails if that run already exists in MLflow
+- rerunning the same spec derives the same ID and hard-fails only when a canonical completed run for that `candidate_id` already exists in MLflow
 
 ## Commands
 
@@ -149,7 +149,7 @@ The default pipeline stops after `train`; `submit` is always a separate explicit
 - **eda**: writes EDA reports only.
 - **train**: trains all configured candidates sequentially by default, loading one shared dataset context per invocation. Use `--candidate-id` or `--index` to train one configured candidate. Model candidates stage artifacts in a temp bundle and upload to MLflow. Blend candidates download their base candidates from MLflow, materialize blended predictions, then upload the blended candidate run.
 - **submit**: downloads the candidate from MLflow and validates `test_predictions.csv` against `sample_submission.csv`. With `--execute`, submits to Kaggle and records the submission event on the candidate run. Without `--execute`, performs dry-run validation only.
-- **refresh-submissions**: scans Kaggle submission history, matches `submit=<submission_event_id>` descriptions, and appends new score observations onto matching candidate runs.
+- **refresh-submissions**: scans Kaggle submission history, matches `submit=<submission_event_id>` descriptions, and can recover missing MLflow submission events from `candidate=<candidate_id>` metadata before appending score observations.
 
 ## Outputs
 
@@ -162,7 +162,8 @@ The default pipeline stops after `train`; `submit` is always a separate explicit
 ### MLflow
 
 - One MLflow experiment per `competition.slug`.
-- One top-level MLflow run per `candidate_id`.
+- One canonical top-level MLflow run per `candidate_id`.
+- Failed or incomplete retry attempts may coexist as non-canonical top-level runs for the same `candidate_id`.
 - There are no stage-specific MLflow runs for `prepare`, `submit`, or `refresh-submissions`.
 - There is no local canonical `artifacts/` workflow.
 
@@ -192,14 +193,14 @@ Suggested checks:
 - Run `uv run python main.py train` and confirm one MLflow run appears per configured candidate.
 - Inspect a candidate run and confirm `logs/`, `candidate/`, `config/`, and `context/` artifacts exist.
 - Trigger one intentionally failing candidate and confirm the run is marked failed but still has `logs/runtime.log`.
-- Rerun the same candidate config and confirm a hard-fail on duplicate `candidate_id`.
+- Rerun the same candidate config after a failed attempt and confirm training retries without manual MLflow cleanup.
 - Train a blend candidate and confirm it downloads base candidates from MLflow.
 - Run `uv run python main.py submit --index 1` and confirm dry-run validation succeeds.
-- Run `uv run python main.py refresh-submissions` after a real submission and confirm MLflow metrics update.
+- Run `uv run python main.py refresh-submissions` after a real submission and confirm MLflow metrics update, including recovery when the post-submit MLflow write was interrupted.
 
 ### Current Limits
 
 - Kaggle authentication must be preconfigured.
 - RAPIDS acceleration is Linux-only; macOS stays on CPU.
 - LightGBM GPU routing requires a CUDA-enabled source build.
-- Candidate lookup is keyed by derived `candidate_id`; reusing the same spec without deleting the existing run is a hard error.
+- Candidate lookup is keyed by derived `candidate_id`; reusing the same spec while a canonical completed run already exists is a hard error.

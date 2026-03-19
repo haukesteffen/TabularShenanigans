@@ -8,6 +8,7 @@ from uuid import uuid4
 from tabular_shenanigans.cv import is_higher_better
 
 SUBMISSION_EVENT_ID_PATTERN = re.compile(r"(?:^|\s\|\s)submit=(?P<submission_event_id>[a-z0-9_-]+)(?:\s\|\s|$)")
+CANDIDATE_ID_PATTERN = re.compile(r"(?:^|\s\|\s)candidate=(?P<candidate_id>[^|]+?)(?:\s\|\s|$)")
 
 
 @dataclass(frozen=True)
@@ -246,10 +247,18 @@ def make_submission_event_id() -> str:
 
 
 def extract_submission_event_id(kaggle_description: str) -> str | None:
-    match = SUBMISSION_EVENT_ID_PATTERN.search(kaggle_description)
-    if match is None:
+    matches = list(SUBMISSION_EVENT_ID_PATTERN.finditer(kaggle_description))
+    if not matches:
         return None
-    return match.group("submission_event_id")
+    return matches[-1].group("submission_event_id")
+
+
+def extract_candidate_id(kaggle_description: str) -> str | None:
+    matches = list(CANDIDATE_ID_PATTERN.finditer(kaggle_description))
+    if not matches:
+        return None
+    candidate_id = matches[-1].group("candidate_id").strip()
+    return candidate_id or None
 
 
 def _parse_optional_float(raw_value: object) -> float | None:
