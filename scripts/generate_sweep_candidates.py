@@ -9,6 +9,7 @@ import sys
 import yaml
 
 from tabular_shenanigans.models import MODEL_REGISTRY
+from tabular_shenanigans.runtime_execution import CPU_GPU_BACKEND
 
 FEATURE_RECIPES = ["fr0", "fr1", "fr2", "fr3"]
 
@@ -34,7 +35,13 @@ def get_binary_model_groups():
         if model_definition.supports_native_categorical_preprocessing:
             native_categorical_models.append(model_id)
             continue
-        if model_definition.gpu_routing_rules:
+        gpu_backends = {
+            backend
+            for gpu_routing_rule in model_definition.gpu_routing_rules
+            for backend in gpu_routing_rule.gpu_backends
+        }
+        has_accelerated_gpu_path = any(backend != CPU_GPU_BACKEND for backend in gpu_backends)
+        if has_accelerated_gpu_path:
             gpu_models.append(model_id)
             continue
         cpu_models.append(model_id)

@@ -15,6 +15,9 @@ from tabular_shenanigans._model_builders import (
     build_lightgbm_tuning_space,
     build_logreg,
     build_logreg_tuning_space,
+    build_realmlp_classifier,
+    build_realmlp_regressor,
+    build_realmlp_tuning_space,
     build_random_forest_classifier,
     build_random_forest_regressor,
     build_random_forest_tuning_space,
@@ -24,7 +27,12 @@ from tabular_shenanigans._model_builders import (
     build_xgboost_tuning_space,
 )
 from tabular_shenanigans._model_types import GpuRoutingRule, ModelDefinition
-from tabular_shenanigans.runtime_execution import NATIVE_GPU_BACKEND, PATCH_GPU_BACKEND, RuntimeExecutionContext
+from tabular_shenanigans.runtime_execution import (
+    CPU_GPU_BACKEND,
+    NATIVE_GPU_BACKEND,
+    PATCH_GPU_BACKEND,
+    RuntimeExecutionContext,
+)
 
 ALL_NUMERIC_PREPROCESSORS = ("median", "standardize", "kbins")
 ALL_NON_NATIVE_CATEGORICAL_PREPROCESSORS = ("onehot", "ordinal", "frequency")
@@ -129,6 +137,19 @@ MODEL_REGISTRY: dict[str, dict[str, ModelDefinition]] = {
             tuning_space_builder=build_hist_gradient_boosting_tuning_space,
             is_cpu_only=True,
         ),
+        "realmlp": ModelDefinition(
+            model_id="realmlp",
+            model_name="RealMLP_TD_Regressor",
+            builder=build_realmlp_regressor,
+            tuning_space_builder=build_realmlp_tuning_space,
+            gpu_routing_rules=(
+                gpu_routing_rule(
+                    numeric_preprocessors=ALL_NUMERIC_PREPROCESSORS,
+                    categorical_preprocessors=ALL_NON_NATIVE_CATEGORICAL_PREPROCESSORS,
+                    gpu_backends=(CPU_GPU_BACKEND,),
+                ),
+            ),
+        ),
         "lightgbm": ModelDefinition(
             model_id="lightgbm",
             model_name="LGBMRegressor",
@@ -215,6 +236,19 @@ MODEL_REGISTRY: dict[str, dict[str, ModelDefinition]] = {
             builder=build_hist_gradient_boosting_classifier,
             tuning_space_builder=build_hist_gradient_boosting_tuning_space,
             is_cpu_only=True,
+        ),
+        "realmlp": ModelDefinition(
+            model_id="realmlp",
+            model_name="RealMLP_TD_Classifier",
+            builder=build_realmlp_classifier,
+            tuning_space_builder=build_realmlp_tuning_space,
+            gpu_routing_rules=(
+                gpu_routing_rule(
+                    numeric_preprocessors=ALL_NUMERIC_PREPROCESSORS,
+                    categorical_preprocessors=ALL_NON_NATIVE_CATEGORICAL_PREPROCESSORS,
+                    gpu_backends=(CPU_GPU_BACKEND,),
+                ),
+            ),
         ),
         "lightgbm": ModelDefinition(
             model_id="lightgbm",

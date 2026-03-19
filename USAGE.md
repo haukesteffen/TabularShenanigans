@@ -15,6 +15,10 @@ CPU and local development:
 uv sync
 # or, with booster model families (LightGBM, CatBoost, XGBoost):
 uv sync --extra boosters
+# or, with RealMLP:
+uv sync --extra neural
+# or, with both booster and neural model families:
+uv sync --extra boosters --extra neural
 ```
 
 Linux GPU hosts (RAPIDS acceleration, Python 3.13, `x86_64`, CUDA 12):
@@ -88,8 +92,8 @@ Deprecated: `experiment.candidate` (singular) is still accepted as a one-entry l
 - `candidate_type: model`
 - `feature_recipe_id`: `fr0`, `fr1`, `fr2`, `fr3`, or the `fr2_ablate_*`/`fr3_ablate_*` study variants
 - `model_family`:
-  - regression: `ridge`, `elasticnet`, `random_forest`, `extra_trees`, `hist_gradient_boosting`, `lightgbm`, `catboost`, `xgboost`
-  - binary: `logistic_regression`, `random_forest`, `extra_trees`, `hist_gradient_boosting`, `lightgbm`, `catboost`, `xgboost`
+  - regression: `ridge`, `elasticnet`, `random_forest`, `extra_trees`, `hist_gradient_boosting`, `realmlp`, `lightgbm`, `catboost`, `xgboost`
+  - binary: `logistic_regression`, `random_forest`, `extra_trees`, `hist_gradient_boosting`, `realmlp`, `lightgbm`, `catboost`, `xgboost`
 - `numeric_preprocessor`: `median`, `standardize`, or `kbins`
 - `categorical_preprocessor`: `onehot`, `ordinal`, `frequency`, or `native`
 - optional `model_params`: manual estimator overrides
@@ -179,6 +183,7 @@ candidate=<candidate_id> | submit=<submission_event_id> | <metric>=<value>
 - `compute_target: auto` picks the best registered GPU implementation per model/preprocessing tuple, falling back to CPU when nothing is registered.
 - `compute_target: gpu` requires a registered GPU implementation and fails fast otherwise.
 - `extra_trees` and `hist_gradient_boosting` always fall back to CPU; no GPU backend is registered.
+- `realmlp` uses the standard CPU preprocessing path and can still train on PyTorch CUDA internally when model routing resolves `compute_target` to GPU.
 - Mixed `gpu_patch` and non-`gpu_patch` batches are rejected because RAPIDS hook installation is process-global; split with `train --index <n>`.
 - GPU preprocessing can resolve independently from model routing; hybrid CPU-model + GPU-preprocessing cases coerce outputs back to CPU before fit.
 
