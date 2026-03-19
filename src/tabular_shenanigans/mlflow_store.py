@@ -8,6 +8,7 @@ from typing import Any
 
 from tabular_shenanigans.candidate_artifacts import (
     CANDIDATE_ARTIFACT_DIRNAME,
+    CANDIDATE_MANIFEST_FILENAME,
     CONTEXT_ARTIFACT_DIRNAME,
     json_ready,
     load_candidate_manifest,
@@ -18,6 +19,18 @@ from tabular_shenanigans.submission_history import CandidateSubmissionHistory
 TRACKING_SCHEMA_VERSION = "3"
 RUN_KIND_CANDIDATE = "candidate"
 SUBMISSION_HISTORY_ARTIFACT_PATH = "submissions/history.json"
+CANDIDATE_BUNDLE_REQUIRED_ARTIFACT_PATHS = (
+    "logs/runtime.log",
+    "config/runtime_config.json",
+    "context/competition.json",
+    "context/folds.csv",
+    "candidate/candidate.json",
+    "candidate/fold_metrics.csv",
+    "candidate/oof_predictions.csv",
+    "candidate/test_predictions.csv",
+)
+CANDIDATE_BUNDLE_ROOT_PATHS = ("logs", "config", "context", "candidate")
+ACTIVE_MLFLOW_RUN_STATUSES = {"RUNNING", "SCHEDULED"}
 
 
 @dataclass(frozen=True)
@@ -34,6 +47,37 @@ class DownloadedCandidateBundle:
     candidate_id: str
     candidate_artifact_dir: Path
     manifest: dict[str, object]
+
+
+@dataclass(frozen=True)
+class CandidateRunAssessment:
+    run_ref: CandidateRunRef
+    run_status: str
+    missing_artifact_paths: tuple[str, ...]
+    bundle_error: str | None
+
+    @property
+    def is_canonical(self) -> bool:
+        return (
+            self.run_status == "FINISHED"
+            and not self.missing_artifact_paths
+            and self.bundle_error is None
+        )
+
+    @property
+    def is_active(self) -> bool:
+        return self.run_status in ACTIVE_MLFLOW_RUN_STATUSES
+
+
+@dataclass(frozen=True)
+class CandidateRunLookup:
+    candidate_id: str
+    matching_runs: tuple[CandidateRunAssessment, ...]
+    canonical_run: CandidateRunRef | None
+
+    @property
+    def has_active_runs(self) -> bool:
+        return any(run.is_active for run in self.matching_runs)
 
 
 def _load_mlflow():
@@ -118,56 +162,204 @@ def _candidate_search_filter(candidate_id: str) -> str:
     )
 
 
-def find_candidate_run(config: AppConfig, candidate_id: str) -> CandidateRunRef:
-    client = _client(config)
-    experiment_id = _experiment_id(config)
-    runs = client.search_runs(
-        experiment_ids=[experiment_id],
-        filter_string=_candidate_search_filter(candidate_id),
-        max_results=10,
-    )
-    if not runs:
-        raise ValueError(
-            f"Candidate '{candidate_id}' was not found in MLflow experiment '{config.competition.slug}'."
-        )
-    if len(runs) > 1:
-        run_ids = [run.info.run_id for run in runs]
-        raise ValueError(
-            "Candidate id must map to exactly one MLflow run. "
-            f"Candidate '{candidate_id}' matched runs: {run_ids}"
-        )
-    run = runs[0]
+def _candidate_run_ref_from_run(run) -> CandidateRunRef:
+    candidate_id = run.data.tags.get("candidate_id")
+    if candidate_id is None:
+        raise ValueError(f"Candidate run {run.info.run_id} is missing tag 'candidate_id'.")
     return CandidateRunRef(
         run_id=run.info.run_id,
         experiment_id=run.info.experiment_id,
-        candidate_id=candidate_id,
+        candidate_id=str(candidate_id),
     )
 
 
-def ensure_candidate_run_absent(config: AppConfig, candidate_id: str) -> None:
+def _collect_candidate_bundle_artifact_paths(client, run_id: str) -> set[str]:
+    artifact_paths: set[str] = set()
+    pending_paths = list(CANDIDATE_BUNDLE_ROOT_PATHS)
+    visited_paths: set[str] = set()
+
+    while pending_paths:
+        current_path = pending_paths.pop()
+        if current_path in visited_paths:
+            continue
+        visited_paths.add(current_path)
+        for artifact in client.list_artifacts(run_id, current_path):
+            artifact_paths.add(artifact.path)
+            if artifact.is_dir:
+                pending_paths.append(artifact.path)
+    return artifact_paths
+
+
+def _download_json_artifact(
+    client,
+    run_id: str,
+    artifact_path: str,
+    destination_dir: Path,
+) -> dict[str, object]:
+    local_path = Path(
+        client.download_artifacts(
+            run_id=run_id,
+            path=artifact_path,
+            dst_path=str(destination_dir),
+        )
+    )
+    payload = json.loads(local_path.read_text(encoding="utf-8"))
+    if not isinstance(payload, dict):
+        raise ValueError(f"Artifact '{artifact_path}' for run '{run_id}' must contain a JSON object.")
+    return payload
+
+
+def _required_candidate_artifact_paths(manifest: Mapping[str, object] | None = None) -> list[str]:
+    required_paths = list(CANDIDATE_BUNDLE_REQUIRED_ARTIFACT_PATHS)
+    if manifest is None:
+        return required_paths
+
+    probability_artifact_path = manifest.get("binary_accuracy_test_probability_path")
+    if probability_artifact_path is not None:
+        required_paths.append(f"{CANDIDATE_ARTIFACT_DIRNAME}/{probability_artifact_path}")
+    return required_paths
+
+
+def _assess_candidate_run(
+    client,
+    run,
+    destination_dir: Path,
+) -> CandidateRunAssessment:
+    run_ref = _candidate_run_ref_from_run(run)
+    artifact_paths = _collect_candidate_bundle_artifact_paths(client, run_ref.run_id)
+    required_paths = _required_candidate_artifact_paths()
+    bundle_error = None
+
+    manifest_artifact_path = f"{CANDIDATE_ARTIFACT_DIRNAME}/{CANDIDATE_MANIFEST_FILENAME}"
+    if manifest_artifact_path in artifact_paths:
+        try:
+            manifest = _download_json_artifact(
+                client=client,
+                run_id=run_ref.run_id,
+                artifact_path=manifest_artifact_path,
+                destination_dir=destination_dir,
+            )
+        except Exception as exc:
+            bundle_error = str(exc)
+        else:
+            required_paths = _required_candidate_artifact_paths(manifest)
+
+    missing_artifact_paths = tuple(sorted(path for path in required_paths if path not in artifact_paths))
+    return CandidateRunAssessment(
+        run_ref=run_ref,
+        run_status=str(run.info.status),
+        missing_artifact_paths=missing_artifact_paths,
+        bundle_error=bundle_error,
+    )
+
+
+def _format_candidate_run_assessment(assessment: CandidateRunAssessment) -> str:
+    parts = [
+        f"run_id={assessment.run_ref.run_id}",
+        f"status={assessment.run_status}",
+    ]
+    if assessment.missing_artifact_paths:
+        parts.append(f"missing_artifacts={list(assessment.missing_artifact_paths)}")
+    if assessment.bundle_error is not None:
+        parts.append(f"bundle_error={assessment.bundle_error}")
+    return ", ".join(parts)
+
+
+def _candidate_run_guidance(lookup: CandidateRunLookup) -> str:
+    if lookup.has_active_runs:
+        return "Wait for the active run to finish or terminate it before retrying."
+    return "Retry training to create a fresh canonical run or repair/delete the broken runs."
+
+
+def _build_candidate_lookup_from_runs(
+    candidate_id: str,
+    client,
+    runs: list[Any],
+) -> CandidateRunLookup:
+    with tempfile.TemporaryDirectory(prefix="tabular-shenanigans-candidate-lookup-") as temp_dir:
+        temp_root = Path(temp_dir)
+        assessments = tuple(
+            _assess_candidate_run(
+                client=client,
+                run=run,
+                destination_dir=temp_root / run.info.run_id,
+            )
+            for run in runs
+        )
+
+    canonical_runs = [assessment.run_ref for assessment in assessments if assessment.is_canonical]
+    if len(canonical_runs) > 1:
+        matching_runs = "; ".join(_format_candidate_run_assessment(assessment) for assessment in assessments)
+        raise ValueError(
+            "Candidate id resolved to multiple completed MLflow runs with the required artifact bundle. "
+            f"Candidate '{candidate_id}' matched runs: {matching_runs}. Manual cleanup is required."
+        )
+
+    return CandidateRunLookup(
+        candidate_id=candidate_id,
+        matching_runs=assessments,
+        canonical_run=canonical_runs[0] if canonical_runs else None,
+    )
+
+
+def _candidate_run_lookup(config: AppConfig, candidate_id: str) -> CandidateRunLookup:
     client = _client(config)
     experiment_id = _experiment_id(config)
     runs = client.search_runs(
         experiment_ids=[experiment_id],
         filter_string=_candidate_search_filter(candidate_id),
-        max_results=1,
+        max_results=100,
     )
-    if runs:
+    return _build_candidate_lookup_from_runs(
+        candidate_id=candidate_id,
+        client=client,
+        runs=runs,
+    )
+
+
+def find_candidate_run(config: AppConfig, candidate_id: str) -> CandidateRunRef:
+    lookup = _candidate_run_lookup(config=config, candidate_id=candidate_id)
+    if not lookup.matching_runs:
+        raise ValueError(
+            f"Candidate '{candidate_id}' was not found in MLflow experiment '{config.competition.slug}'."
+        )
+    if lookup.canonical_run is None:
+        matching_runs = "; ".join(_format_candidate_run_assessment(assessment) for assessment in lookup.matching_runs)
+        raise ValueError(
+            "Candidate did not resolve to a completed MLflow run with the required artifact bundle. "
+            f"Candidate '{candidate_id}' matched runs: {matching_runs}. "
+            f"{_candidate_run_guidance(lookup)}"
+        )
+    return lookup.canonical_run
+
+
+def ensure_candidate_run_absent(config: AppConfig, candidate_id: str) -> None:
+    lookup = _candidate_run_lookup(config=config, candidate_id=candidate_id)
+    if lookup.canonical_run is not None:
         raise ValueError(
             "Candidate already exists in MLflow for this competition. "
-            f"Change the candidate config so it derives a new candidate_id or delete candidate '{candidate_id}'."
+            f"Candidate '{candidate_id}' resolved to canonical run '{lookup.canonical_run.run_id}'. "
+            "Change the candidate config so it derives a new candidate_id or delete the canonical candidate run."
+        )
+    if lookup.has_active_runs:
+        matching_runs = "; ".join(_format_candidate_run_assessment(assessment) for assessment in lookup.matching_runs)
+        raise ValueError(
+            "Candidate has an active MLflow run and cannot be retried safely yet. "
+            f"Candidate '{candidate_id}' matched runs: {matching_runs}. "
+            "Wait for the active run to finish or terminate it before retrying."
         )
 
 
 def candidate_run_exists(config: AppConfig, candidate_id: str) -> bool:
-    client = _client(config)
-    experiment_id = _experiment_id(config)
-    runs = client.search_runs(
-        experiment_ids=[experiment_id],
-        filter_string=_candidate_search_filter(candidate_id),
-        max_results=1,
-    )
-    return bool(runs)
+    lookup = _candidate_run_lookup(config=config, candidate_id=candidate_id)
+    if lookup.has_active_runs:
+        matching_runs = "; ".join(_format_candidate_run_assessment(assessment) for assessment in lookup.matching_runs)
+        raise ValueError(
+            "Candidate has an active MLflow run and cannot be resolved for --skip-existing yet. "
+            f"Candidate '{candidate_id}' matched runs: {matching_runs}. "
+            "Wait for the active run to finish or terminate it before retrying."
+        )
+    return lookup.canonical_run is not None
 
 
 def _base_candidate_tags(config: AppConfig, candidate_id: str, candidate_type: str) -> dict[str, object]:
@@ -400,6 +592,49 @@ def upload_run_log(
     _client(config).log_artifact(run_id, str(log_path), artifact_dir)
 
 
+def download_candidate_manifest(
+    config: AppConfig,
+    run_id: str,
+    destination_dir: Path,
+) -> dict[str, object]:
+    client = _client(config)
+    return _download_json_artifact(
+        client=client,
+        run_id=run_id,
+        artifact_path=f"{CANDIDATE_ARTIFACT_DIRNAME}/{CANDIDATE_MANIFEST_FILENAME}",
+        destination_dir=destination_dir,
+    )
+
+
+def _validate_downloaded_candidate_artifact_dir(
+    candidate_id: str,
+    run_id: str,
+    candidate_artifact_dir: Path,
+    manifest: Mapping[str, object],
+) -> None:
+    required_filenames = [
+        CANDIDATE_MANIFEST_FILENAME,
+        "fold_metrics.csv",
+        "oof_predictions.csv",
+        "test_predictions.csv",
+    ]
+    probability_artifact_path = manifest.get("binary_accuracy_test_probability_path")
+    if probability_artifact_path is not None:
+        required_filenames.append(str(probability_artifact_path))
+
+    missing_files = sorted(
+        filename
+        for filename in required_filenames
+        if not (candidate_artifact_dir / filename).exists()
+    )
+    if missing_files:
+        raise ValueError(
+            "Candidate bundle is incomplete after download. "
+            f"Candidate '{candidate_id}' resolved to run '{run_id}' but candidate artifacts were missing: "
+            f"{missing_files}"
+        )
+
+
 def download_candidate_bundle(
     config: AppConfig,
     candidate_id: str,
@@ -415,6 +650,12 @@ def download_candidate_bundle(
         )
     )
     manifest = load_candidate_manifest(candidate_artifact_dir=candidate_dir_path)
+    _validate_downloaded_candidate_artifact_dir(
+        candidate_id=candidate_id,
+        run_id=candidate_run.run_id,
+        candidate_artifact_dir=candidate_dir_path,
+        manifest=manifest,
+    )
     return DownloadedCandidateBundle(
         run_id=candidate_run.run_id,
         experiment_id=candidate_run.experiment_id,
@@ -503,11 +744,21 @@ def search_candidate_runs(config: AppConfig) -> list[CandidateRunRef]:
         filter_string=f"tags.run_kind = '{RUN_KIND_CANDIDATE}'",
         max_results=1000,
     )
-    return [
-        CandidateRunRef(
-            run_id=run.info.run_id,
-            experiment_id=run.info.experiment_id,
-            candidate_id=str(run.data.tags.get("candidate_id")),
+    runs_by_candidate_id: dict[str, list[Any]] = {}
+    for run in runs:
+        candidate_id = run.data.tags.get("candidate_id")
+        if candidate_id is None:
+            continue
+        runs_by_candidate_id.setdefault(str(candidate_id), []).append(run)
+
+    resolved_runs: list[CandidateRunRef] = []
+    for candidate_id, candidate_id_runs in sorted(runs_by_candidate_id.items()):
+        lookup = _build_candidate_lookup_from_runs(
+            candidate_id=candidate_id,
+            client=client,
+            runs=candidate_id_runs,
         )
-        for run in runs
-    ]
+        if lookup.canonical_run is None:
+            continue
+        resolved_runs.append(lookup.canonical_run)
+    return resolved_runs
