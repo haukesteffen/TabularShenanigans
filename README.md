@@ -2,14 +2,15 @@
 
 Config-driven Python workflows for semi-automated participation in tabular Kaggle competitions.
 
-## Project Overview
+## Scope
+
 - Focus area: tabular machine learning competitions.
 - Primary target: Kaggle Playground Series tabular competitions.
 - Task scope: regression and binary classification.
 - Canonical experiment store: MLflow.
-- Local persistent outputs: downloaded competition data under `data/<competition_slug>/` and optional EDA reports under `reports/<competition_slug>/`.
 
 ## Current Capabilities
+
 - Load and validate one repository-root `config.yaml`.
 - Fetch Kaggle competition data into `data/<competition_slug>/` when the zip is missing.
 - Infer the Playground-style submission schema from `train.csv`, `test.csv`, and `sample_submission.csv`, with optional config overrides for `id_column` and `label_column`.
@@ -22,310 +23,33 @@ Config-driven Python workflows for semi-automated participation in tabular Kaggl
 - Submit an explicitly selected candidate to Kaggle from MLflow-backed candidate artifacts.
 - Refresh Kaggle submission outcomes back onto the same MLflow candidate runs.
 
-## MLflow Canonical Model
-- One MLflow experiment per `competition.slug`.
-- One top-level MLflow run per `candidate_id`.
-- Candidate runs are the source of truth for:
-  - candidate manifest
-  - OOF/test predictions
-  - blend metadata
-  - optimization metadata
-  - submission event history
-  - submission score observations
-- There are no stage-specific MLflow runs for `prepare`, `submit`, or `refresh-submissions`.
-- There is no local canonical `artifacts/` workflow anymore.
+## Quickstart
+
+```bash
+uv sync --extra boosters
+cp config.binary.example.yaml config.yaml
+# edit config.yaml: set experiment.tracking.tracking_uri
+uv run python main.py
+```
+
+See [USAGE.md](USAGE.md) for prerequisites, full setup, and command reference.
+
+## Core Assumptions
+
+- Kaggle CLI authentication is preconfigured.
+- An MLflow tracking server is available.
+- `config.yaml` is the only runtime config source and is Git-ignored.
+- RAPIDS GPU acceleration is a Linux-only concern; macOS runs stay on CPU.
 
 ## Tooling
+
 - Python for orchestration
 - Kaggle CLI for competition data and submissions
 - Optuna for hyperparameter tuning
 - MLflow for canonical run metadata and artifact storage
-- `gh` CLI for repository management
 - `uv` for environment management
 
-## Quickstart
-1. Ensure Kaggle CLI access is already configured for your user.
-2. Ensure an MLflow tracking server is available and note its tracking URI.
-3. Install dependencies with `uv sync`.
-4. If you want LightGBM, CatBoost, or XGBoost model recipes, install the optional booster dependencies with `uv sync --extra boosters`.
-5. If you want RAPIDS-backed GPU execution on a Linux `x86_64` CUDA 12 host, install the GPU extra with `uv sync --extra boosters --extra gpu`.
-6. Copy a tracked example config to repository-root `config.yaml`.
-7. Set `experiment.tracking.tracking_uri` in `config.yaml`.
-8. Run `uv run python main.py`.
+## Documentation
 
-```bash
-cp config.binary.example.yaml config.yaml
-# or
-cp config.regression.example.yaml config.yaml
-```
-
-`config.yaml` is the only runtime config source. It is intentionally ignored by Git.
-
-`main.py` is a thin wrapper around a bootstrap module. The bootstrap runs before the
-runtime imports application modules that depend on `pandas` or `sklearn`, so GPU
-setups can install RAPIDS acceleration hooks before the training stack loads.
-
-Supported environment matrix:
-- CPU and local development: `uv sync` or `uv sync --extra boosters`
-- Linux GPU hosts: `uv sync --extra boosters --extra gpu`
-- LightGBM `gpu_native` on Linux GPU hosts also requires a CUDA-enabled source build; run `./scripts/install_lightgbm_cuda.sh` inside the synced repo environment on the target machine
-- RAPIDS GPU support currently targets Python 3.13 on Linux `x86_64` CUDA 12 hosts with NVIDIA-visible devices
-- The repository lockfile is now the source of truth for the RAPIDS-compatible `numpy` / `pandas` range, so `uv run python main.py ...` is safe after syncing the correct extras
-
-## Stage Commands
-`uv run python main.py` runs the default pipeline: `fetch -> prepare -> train`.
-
-Available stage-specific commands:
-- `uv run python main.py fetch`
-- `uv run python main.py prepare`
-- `uv run python main.py eda`
-- `uv run python main.py train`
-- `uv run python main.py train --candidate-id <candidate_id>`
-- `uv run python main.py train --index <n>`
-- `uv run python main.py train --skip-existing`
-- `uv run python main.py submit --candidate-id <candidate_id>`
-- `uv run python main.py submit --index <n>`
-- `uv run python main.py refresh-submissions`
-- `uv run python scripts/benchmark_gpu_checkpoint.py`
-- `uv run python scripts/validate_gpu_target_matrix.py`
-- `PYTHONPATH=src uv run python scripts/validate_lightgbm_cuda_build.py`
-- `./scripts/install_lightgbm_cuda.sh`
-
-Stage behavior:
-- `fetch`: ensures the competition zip is present locally.
-- `prepare`: fetches if needed, materializes the competition context in memory, and writes EDA reports under `reports/<competition_slug>/`.
-- `eda`: writes EDA reports only.
-- `train`: trains all configured candidates sequentially by default, loading one shared dataset context per invocation. Use `--candidate-id` or `--index` to train one configured candidate. Model candidates stage candidate artifacts in a temp bundle and upload them. Blend candidates download their base candidates from MLflow, materialize blended predictions, then upload the blended candidate run.
-- `submit`: requires `--candidate-id` or `--index`, downloads that candidate from MLflow, validates `test_predictions.csv` against `sample_submission.csv`, and when `experiment.submit.enabled=true` submits to Kaggle and records the submission event under that same candidate run.
-- `refresh-submissions`: scans Kaggle submission history, matches `submit=<submission_event_id>` descriptions, and appends new score observations back onto the matching candidate runs.
-- `benchmark_gpu_checkpoint.py`: runs the `#183` CPU vs `gpu_patch` vs `gpu_native` checkpoint matrix, writes a timestamped report plus raw logs under `reports/benchmark_checkpoints/`, temporarily rewrites repository-root `config.yaml` during the session, and restores it at the end while using an isolated file-based MLflow store inside the benchmark output directory.
-- `validate_gpu_target_matrix.py`: runs the `#193` target-host GPU smoke matrix against the repo-owned host install path, validates the bootstrap steps plus representative `gpu_patch` / `gpu_native` model tuples, and writes a timestamped report plus per-case logs under `reports/gpu_target_validation/`. This is the target-machine confirmation step, not the broader parity/performance audit tracked in `#182`. See `docs/TARGET_GPU_SMOKE_VALIDATION.md`.
-- `validate_lightgbm_cuda_build.py`: runs the repo-owned LightGBM CUDA probe and exits non-zero when the installed LightGBM build does not satisfy `device_type="cuda"` on the current host.
-- `install_lightgbm_cuda.sh`: reinstalls LightGBM from source with `USE_CUDA=ON` in the project virtualenv, then runs the validation probe.
-
-The default pipeline no longer auto-submits because `submit` requires an explicit selector.
-
-## Config Overview
-Tracked example configs:
-- `config.binary.example.yaml`
-- `config.regression.example.yaml`
-
-Required top-level sections:
-- `competition`
-- `experiment`
-
-`competition` keys:
-- `slug`
-- `task_type`: `regression` or `binary`
-- `primary_metric`: `rmse`, `mse`, `rmsle`, `mae`, `roc_auc`, `log_loss`, or `accuracy`
-- optional `positive_label` for binary tasks when the training labels do not match one of the safe auto-resolved pairs `[0, 1]`, `[False, True]`, or `["No", "Yes"]`
-- optional `id_column`
-- optional `label_column`
-- `cv`:
-  - `n_splits`
-  - `shuffle`
-  - `random_state`
-- optional `features`:
-  - `force_categorical`
-  - `force_numeric`
-  - `drop_columns`
-  - `low_cardinality_int_threshold`
-
-`experiment` keys:
-- required `tracking`
-- optional `runtime`
-- required `candidates`
-- optional `submit`
-
-`experiment.candidates`:
-- one or more candidate entries under the shared competition, runtime, and tracking config
-- `train` drains the list in order unless you pass `--candidate-id` or `--index`
-- `submit --index <n>` uses a 1-based index into this configured list
-- deprecated migration path: `experiment.candidate` is still accepted as a one-item list and prints a deprecation notice
-
-`experiment.tracking` keys:
-- `tracking_uri`: MLflow tracking URI. This is required.
-
-`experiment.runtime` keys:
-- `compute_target`: `auto`, `cpu`, or `gpu`
-  - `auto`: choose the best registered implementation for the current tuple on the current machine: `gpu_native` first, then `gpu_patch`, otherwise CPU fallback
-  - `cpu`: force CPU execution
-  - `gpu`: require GPU execution and fail fast when no supported GPU implementation exists for the current tuple on the current machine
-- optional `gpu_backend`: `auto`, `patch`, or `native`
-  - advanced/transitional override; leave this at `auto` for normal use
-  - `auto`: let the registry choose between `gpu_native` and `gpu_patch`
-  - `patch`: require the registered RAPIDS hook-based GPU path for the current tuple
-  - `native`: require the registered explicit GPU-native path for the current tuple
-  - tuple routing is registry-driven rather than spread across model-specific branches
-  - preprocessing backend selection is resolved separately from model routing and is recorded in runtime metadata
-  - current preprocessing backend ids are:
-    - `cpu_sklearn`
-    - `cpu_frequency`
-    - `cpu_native_frame`
-    - `gpu_cuml`
-    - `gpu_patch`
-    - `gpu_native_frequency`
-  - current `compute_target: auto` routing on supported Linux NVIDIA hosts is:
-
-    | Model family | Auto-selected model backend | Notes |
-    | --- | --- | --- |
-    | `logistic_regression` (binary) | `gpu_native` for `frequency + standardize`; `gpu_patch` for `frequency + median|kbins`; CPU fallback otherwise | GPU logistic is still `frequency`-only in this runtime |
-    | `lightgbm` | `gpu_native` | `onehot` keeps the existing sparse CSR boundary; the model still trains through the explicit CUDA adapter |
-    | `xgboost` | `gpu_native` for `frequency + median|standardize`; `gpu_patch` for the remaining registered `ordinal` / `frequency` tuples; CPU fallback otherwise | sparse GPU-native inputs remain unsupported |
-    | `catboost` | `gpu_native` for `categorical_preprocessor: native`; CPU fallback otherwise | preprocessing stays on `cpu_native_frame` |
-    | `ridge`, `elasticnet` | `gpu_native` for `frequency + median|standardize`; CPU fallback otherwise | explicit cuML regressors stay on dense inputs only |
-    | `random_forest` | `gpu_native` for `onehot + median|standardize|kbins` and `frequency + median|standardize`; CPU fallback otherwise | explicit cuML random forest stays on dense inputs only |
-    | `extra_trees`, `hist_gradient_boosting` | CPU fallback | intentional fallback because no maintained official GPU backend is registered |
-
-  - preprocessing backend selection is separate from model routing, so a GPU host can still resolve to explicit GPU preprocessing while the model backend falls back to CPU
-  - unsupported explicit `gpu_backend: patch` / `gpu_backend: native` requests fail fast with repo-owned errors
-  - under `compute_target: auto`, tuples with no registered GPU implementation intentionally fall back to CPU
-  - `extra_trees` and `hist_gradient_boosting` are currently intentional CPU-fallback families under `compute_target: auto` even on GPU hosts; this repo does not ship custom GPU implementations for them
-  - when GPU execution is active, `xgboost` and `catboost` switch to their GPU-specific estimator params automatically
-  - when runtime resolves to `gpu_native` for `lightgbm`, the repo uses an explicit LightGBM adapter, validates the installed CUDA build, and then trains with `device_type="cuda"`
-  - when runtime resolves to `gpu_patch` for `logistic_regression`, the repo keeps the sklearn estimator surface and relies on the RAPIDS `cuml.accel` hook path
-  - on GPU hosts, preprocessing can resolve to an explicit GPU backend even when the model backend falls back to CPU; GPU outputs are coerced back to CPU before fit in those hybrid cases
-  - `gpu_cuml` is the current maintained explicit preprocessing backend and currently supports dense `categorical_preprocessor: onehot` with numeric `median`, `standardize`, or `kbins`
-  - `gpu_patch` preprocessing currently keeps the existing sklearn/pandas constructors and runs them after RAPIDS hooks are installed when no explicit GPU preprocessing backend is selected
-  - `gpu_native_frequency` is the explicit repo-owned `frequency` preprocessing backend
-  - the RAPIDS-backed GPU path currently expects the project environment to be installed with `uv sync --extra boosters --extra gpu` on a Python 3.13 Linux `x86_64` CUDA 12 host
-  - the LightGBM `gpu_native` path additionally expects a CUDA-enabled LightGBM source build; the repo ships `./scripts/install_lightgbm_cuda.sh` and `PYTHONPATH=src uv run python scripts/validate_lightgbm_cuda_build.py` for that contract
-  - when runtime resolves to `gpu_native` for `ridge` or `elasticnet`, the repo builds explicit `cuml.Ridge` / `cuml.ElasticNet` estimators for the `frequency + median|standardize` slice and flattens predictions back to the repo's single-target 1D regression contract
-  - the `gpu_native` ridge and elasticnet paths accept only the cuML-overlapping `model_params` subset; unsupported sklearn-only params fail with repo-owned errors
-  - when runtime resolves to `gpu_native` for `random_forest`, the repo builds explicit `cuml.RandomForestClassifier` / `cuml.RandomForestRegressor` estimators instead of relying on patch interception
-  - the `gpu_native` random_forest path supports `categorical_preprocessor: frequency` with `numeric_preprocessor: median|standardize` through `gpu_native_frequency`, plus `categorical_preprocessor: onehot` with `numeric_preprocessor: median|standardize|kbins` through dense `gpu_cuml` outputs
-  - `gpu_native` random_forest requires dense inputs only; when `categorical_preprocessor: onehot` is selected, that branch flips from its usual sparse CSR output to dense arrays only for the native random-forest path
-  - `gpu_native` random_forest normalizes `model_params.criterion` onto cuML's `split_criterion`, normalizes `model_params.max_leaf_nodes` onto `max_leaves`, rejects `model_params.n_jobs`, and only accepts the cuML-overlapping subset: `bootstrap`, `criterion`, `max_batch_size`, `max_depth`, `max_features`, `max_leaf_nodes`, `max_samples`, `min_impurity_decrease`, `min_samples_leaf`, `min_samples_split`, `n_bins`, `n_estimators`, `n_streams`, `oob_score`, `random_state`
-  - `gpu_native` random_forest does not support `model_params.max_depth: null`; omit `max_depth` to use cuML's default finite depth or set an explicit positive integer
-  - when runtime resolves to `gpu_native` for the supported XGBoost slice, fold-local preprocessing remains per-CV-split, `frequency` preprocessing is performed by the repo-owned `cudf` path, and the first supported dense outputs stay GPU-resident through fit and predict
-  - the current native XGBoost support matrix is intentionally narrow and aligned with the documented `gpu_native` tuples above
-  - explicit cuML preprocessing currently stays on dense output only; sparse onehot paths continue to use `gpu_patch` or CPU fallback
-  - the LightGBM `gpu_native` path currently preserves the existing sparse-CSR contract for `onehot`; that means CUDA training is available there, but explicit GPU preprocessing is currently limited to the `frequency + median|standardize` slice
-  - the repo-owned LightGBM adapter coerces fit and predict inputs onto the same NumPy / SciPy boundary before calling LightGBM so the current feature-name warning is not carried into the CUDA path
-  - the XGBoost GPU-native input path currently rejects sparse CSR preprocessing output, including `categorical_preprocessor: onehot` and related sparse `kbins` compositions; use a dense preprocessing option or force CPU execution
-  - the `gpu_patch` logistic regression path currently supports `categorical_preprocessor: frequency` only
-  - the `gpu_patch` logistic regression path currently rejects `categorical_preprocessor: ordinal`, `categorical_preprocessor: onehot`, and related sparse `kbins` compositions; use `frequency` or force CPU execution
-  - the `gpu_native` logistic regression path currently supports `categorical_preprocessor: frequency` with `numeric_preprocessor: standardize` only
-  - the `gpu_native` CatBoost path currently supports `categorical_preprocessor: native` only, uses CatBoost's own GPU mode rather than the RAPIDS patch layer, and keeps preprocessing on the existing `cpu_native_frame` path
-
-Each `experiment.candidates` entry uses one of these shapes:
-- shared:
-  - `candidate_type`: `model` or `blend`
-- model candidate:
-  - `feature_recipe_id`: built-in values are `fr0`, `fr1`, `fr2`, `fr3`, and the `fr2_ablate_*` / `fr3_ablate_*` study variants for `playground-series-s6e3`
-    - `fr3` is the reduced stable `s6e3` engineered recipe
-    - `fr2_ablate_*` and `fr3_ablate_*` variants are study recipes used for grouped ablation work
-  - `model_family`
-    - regression: `ridge`, `elasticnet`, `random_forest`, `extra_trees`, `hist_gradient_boosting`, `lightgbm`, `catboost`, `xgboost`
-    - binary: `logistic_regression`, `random_forest`, `extra_trees`, `hist_gradient_boosting`, `lightgbm`, `catboost`, `xgboost`
-  - `numeric_preprocessor`: `median`, `standardize`, or `kbins`
-  - `categorical_preprocessor`: `onehot`, `ordinal`, `frequency`, or `native`
-  - optional `model_params`: manual estimator overrides; when omitted, the runtime uses repo defaults plus the estimator library defaults
-    - `logistic_regression` is `saga`-only in this runtime
-    - logistic `model_params` use `l1_ratio` only; `penalty` and `solver` are not supported
-  - optional `optimization`
-    - logistic regression Optuna trials fix `solver="saga"` and `max_iter=1000`
-    - logistic regression Optuna trials tune `C`, `tol`, `class_weight`, and `l1_ratio`
-  - `categorical_preprocessor: onehot` is an internal matrix-output decision, not a config knob:
-    - sparse CSR output: `ridge`, `elasticnet`, `logistic_regression`, `extra_trees`, `lightgbm`, `catboost`, `xgboost`, and `random_forest` when runtime does not resolve to `gpu_native`
-    - dense array output: `hist_gradient_boosting`, plus `random_forest` when runtime resolves to `gpu_native`
-    - `numeric_preprocessor: kbins` follows the same sparse-versus-dense decision when combined with `onehot`
-    - when `model_family: xgboost` and runtime resolves to GPU, the sparse CSR branch is rejected before training because XGBoost does not support `cupyx` CSR inputs yet in this runtime
-    - when `model_family: logistic_regression` and runtime resolves to GPU, only `categorical_preprocessor: frequency` is currently supported; the `onehot` sparse branch and the current `ordinal` branch are both rejected before training because the RAPIDS-hooked sklearn preprocessing path is not stable there yet in this runtime
-- blend candidate:
-  - `base_candidate_ids`: at least two existing compatible candidate IDs from the same competition experiment
-  - optional `weights`
-
-`candidate_id` is derived automatically and is not configured directly:
-- model candidates derive `<feature_recipe_id>--<preprocessing_scheme_id>--<model_registry_key>--<hash8>`
-- blend candidates derive `blend__<hash8>`
-- rerunning the exact same candidate spec derives the same `candidate_id` and hard-fails if that run already exists in MLflow
-
-Hard-invalid preprocessing combination:
-- `categorical_preprocessor: native` with any `model_family` other than `catboost`
-
-`experiment.submit` keys:
-- `enabled`
-- optional `message_prefix`
-
-Real Kaggle submissions use auto-generated messages shaped like:
-
-```text
-candidate=<candidate_id> | submit=<submission_event_id> | <metric>=<value>
-```
-
-## Candidate Artifact Contract
-Each candidate MLflow run stores:
-- `logs/runtime.log`
-- `config/runtime_config.json`
-- `context/competition.json`
-- `context/folds.csv`
-- `candidate/candidate.json`
-- `candidate/fold_metrics.csv`
-- `candidate/oof_predictions.csv`
-- `candidate/test_predictions.csv`
-- `candidate/test_prediction_probabilities.csv` for binary `accuracy` candidates and blends
-- `candidate/blend_summary.csv` for blend candidates
-- `candidate/optimization_summary.json`, `candidate/optimization_trials.csv`, and `candidate/optimization_best_params.json` for optimized model candidates
-
-Real Kaggle submissions also add:
-- `submissions/history.json`
-- `submissions/<submission_event_id>/event.json`
-- `submissions/<submission_event_id>/submission.csv`
-- `submissions/<submission_event_id>/observations.json`
-
-Current candidate-run metrics include:
-- `cv_score_mean`
-- `cv_score_std`
-- `feature_count`
-- `fit_wall_seconds`
-- `train_rows`
-- `test_rows`
-- `optimization_best_value` and `optimization_trial_count` when present
-- `submit_count`, `latest_public_score`, `best_public_score`, `latest_private_score`, and `best_private_score` when submission history exists
-
-Current candidate-run tags include:
-- `run_kind=candidate`
-- `tracking_schema_version=3`
-- `competition_slug`
-- `candidate_id`
-- `candidate_type`
-- `task_type`
-- `primary_metric`
-- `runtime_requested_gpu_backend`
-- `runtime_resolved_gpu_backend`
-- `runtime_preprocessing_backend`
-- `config_fingerprint`
-- git metadata when available
-
-The MLflow schema is intentionally lean in this iteration. After a few real runs, trim low-value params/metrics/artifacts and add anything still missing based on actual usage.
-
-## Prediction Contracts
-- Binary `roc_auc` and `log_loss`: `test_predictions.csv` stores positive-class probabilities in `[0, 1]`.
-- Binary `accuracy`: `test_predictions.csv` stores class labels from the observed binary label pair.
-- Binary `accuracy` candidates and blends also store `test_prediction_probabilities.csv` so blends can average positive-class probabilities before applying a `0.5` threshold.
-- Regression submissions must be numeric, non-missing, and finite.
-
-## Manual Verification Targets
-Preferred targets:
-- `playground-series-s5e12`: binary development smoke test
-- `playground-series-s6e3`: binary production target
-- `playground-series-s5e10`: regression smoke test
-
-Suggested checks:
-- run `uv run python main.py train` and confirm one MLflow candidate run appears per configured candidate under the competition experiment
-- inspect a candidate run and confirm `logs/`, `candidate/`, `config/`, and `context/` artifacts exist
-- trigger one intentionally failing candidate run and confirm the MLflow run is marked failed but still has `logs/runtime.log`
-- rerun the exact same candidate config and confirm `uv run python main.py train` fails because it derives the same `candidate_id`
-- train one blend candidate and confirm it downloads base candidates from MLflow instead of reading local artifact directories
-- run `uv run python main.py submit --index 1` with `experiment.submit.enabled: false` and confirm dry-run validation succeeds without creating local candidate artifacts or submission ledgers
-- run `uv run python main.py refresh-submissions` after at least one real Kaggle submission and confirm candidate-run submission metrics update in MLflow
-
-## Current Limits
-- Kaggle authentication is expected to be preconfigured.
-- Competition downloads still live under `data/<competition_slug>/`.
-- RAPIDS acceleration is a Linux GPU runtime concern. Native macOS runs stay on CPU.
-- LightGBM GPU routing still depends on a CUDA-enabled LightGBM runtime build in the target image or host environment.
-- EDA reports still live under `reports/<competition_slug>/`.
-- Local temp directories are used during a running command, but candidate state is not kept there after the command finishes.
-- Candidate lookup is keyed by derived `candidate_id` inside the competition MLflow experiment. Reusing the same candidate spec without deleting the existing run is a hard error.
+- [USAGE.md](USAGE.md) — setup, commands, config reference, outputs, and operational notes.
+- [docs/TECHNICAL_GUIDE.md](docs/TECHNICAL_GUIDE.md) — architecture, runtime contracts, module responsibilities, and extension notes.
