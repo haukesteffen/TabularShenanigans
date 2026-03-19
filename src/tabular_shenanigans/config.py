@@ -81,17 +81,7 @@ class ModelCandidateConfig(BaseCandidateConfig):
     feature_recipe_id: str = Field(default=IDENTITY_FEATURE_RECIPE_ID, min_length=1)
     numeric_preprocessor: str | None = None
     categorical_preprocessor: str | None = None
-    model_family: Literal[
-        "ridge",
-        "elasticnet",
-        "logistic_regression",
-        "random_forest",
-        "extra_trees",
-        "hist_gradient_boosting",
-        "lightgbm",
-        "catboost",
-        "xgboost",
-    ]
+    model_family: str = Field(min_length=1)
     model_params: dict[str, object] = Field(default_factory=dict)
     optimization: CandidateOptimizationConfig | None = None
 

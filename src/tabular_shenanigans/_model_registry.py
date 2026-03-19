@@ -1,0 +1,414 @@
+from tabular_shenanigans._model_builders import (
+    build_catboost_classifier,
+    build_catboost_fit_kwargs,
+    build_catboost_regressor,
+    build_catboost_tuning_space,
+    build_elasticnet,
+    build_extra_trees_classifier,
+    build_extra_trees_regressor,
+    build_extra_trees_tuning_space,
+    build_hist_gradient_boosting_classifier,
+    build_hist_gradient_boosting_regressor,
+    build_hist_gradient_boosting_tuning_space,
+    build_lightgbm_classifier,
+    build_lightgbm_regressor,
+    build_lightgbm_tuning_space,
+    build_logreg,
+    build_logreg_tuning_space,
+    build_random_forest_classifier,
+    build_random_forest_regressor,
+    build_random_forest_tuning_space,
+    build_ridge,
+    build_xgboost_classifier,
+    build_xgboost_regressor,
+    build_xgboost_tuning_space,
+)
+from tabular_shenanigans._model_types import GpuRoutingRule, ModelDefinition
+from tabular_shenanigans.runtime_execution import NATIVE_GPU_BACKEND, PATCH_GPU_BACKEND, RuntimeExecutionContext
+
+ALL_NUMERIC_PREPROCESSORS = ("median", "standardize", "kbins")
+ALL_NON_NATIVE_CATEGORICAL_PREPROCESSORS = ("onehot", "ordinal", "frequency")
+
+
+def gpu_routing_rule(
+    *,
+    numeric_preprocessors: tuple[str, ...],
+    categorical_preprocessors: tuple[str, ...],
+    gpu_backends: tuple[str, ...] = (NATIVE_GPU_BACKEND,),
+) -> GpuRoutingRule:
+    return GpuRoutingRule(
+        numeric_preprocessors=numeric_preprocessors,
+        categorical_preprocessors=categorical_preprocessors,
+        gpu_backends=gpu_backends,
+    )
+
+
+DEFAULT_MODEL_ID_BY_TASK = {
+    "regression": "elasticnet",
+    "binary": "logistic_regression",
+}
+
+MODEL_REGISTRY: dict[str, dict[str, ModelDefinition]] = {
+    "regression": {
+        "ridge": ModelDefinition(
+            model_id="ridge",
+            model_name="Ridge",
+            builder=build_ridge,
+            supports_sparse_preprocessed_input=True,
+            supports_gpu_native_dense_onehot_input=True,
+            gpu_routing_rules=(
+                gpu_routing_rule(
+                    numeric_preprocessors=("median", "standardize"),
+                    categorical_preprocessors=("frequency",),
+                ),
+                gpu_routing_rule(
+                    numeric_preprocessors=ALL_NUMERIC_PREPROCESSORS,
+                    categorical_preprocessors=("ordinal",),
+                ),
+                gpu_routing_rule(
+                    numeric_preprocessors=("kbins",),
+                    categorical_preprocessors=("frequency",),
+                ),
+                gpu_routing_rule(
+                    numeric_preprocessors=ALL_NUMERIC_PREPROCESSORS,
+                    categorical_preprocessors=("onehot",),
+                ),
+            ),
+        ),
+        "elasticnet": ModelDefinition(
+            model_id="elasticnet",
+            model_name="ElasticNet",
+            builder=build_elasticnet,
+            supports_sparse_preprocessed_input=True,
+            supports_gpu_native_dense_onehot_input=True,
+            gpu_routing_rules=(
+                gpu_routing_rule(
+                    numeric_preprocessors=("median", "standardize"),
+                    categorical_preprocessors=("frequency",),
+                ),
+                gpu_routing_rule(
+                    numeric_preprocessors=ALL_NUMERIC_PREPROCESSORS,
+                    categorical_preprocessors=("ordinal",),
+                ),
+                gpu_routing_rule(
+                    numeric_preprocessors=("kbins",),
+                    categorical_preprocessors=("frequency",),
+                ),
+                gpu_routing_rule(
+                    numeric_preprocessors=ALL_NUMERIC_PREPROCESSORS,
+                    categorical_preprocessors=("onehot",),
+                ),
+            ),
+        ),
+        "random_forest": ModelDefinition(
+            model_id="random_forest",
+            model_name="RandomForestRegressor",
+            builder=build_random_forest_regressor,
+            tuning_space_builder=build_random_forest_tuning_space,
+            supports_sparse_preprocessed_input=True,
+            supports_gpu_native_dense_onehot_input=True,
+            gpu_routing_rules=(
+                gpu_routing_rule(
+                    numeric_preprocessors=ALL_NUMERIC_PREPROCESSORS,
+                    categorical_preprocessors=ALL_NON_NATIVE_CATEGORICAL_PREPROCESSORS,
+                ),
+            ),
+        ),
+        "extra_trees": ModelDefinition(
+            model_id="extra_trees",
+            model_name="ExtraTreesRegressor",
+            builder=build_extra_trees_regressor,
+            tuning_space_builder=build_extra_trees_tuning_space,
+            supports_sparse_preprocessed_input=True,
+            is_cpu_only=True,
+        ),
+        "hist_gradient_boosting": ModelDefinition(
+            model_id="hist_gradient_boosting",
+            model_name="HistGradientBoostingRegressor",
+            builder=build_hist_gradient_boosting_regressor,
+            tuning_space_builder=build_hist_gradient_boosting_tuning_space,
+            is_cpu_only=True,
+        ),
+        "lightgbm": ModelDefinition(
+            model_id="lightgbm",
+            model_name="LGBMRegressor",
+            builder=build_lightgbm_regressor,
+            tuning_space_builder=build_lightgbm_tuning_space,
+            supports_sparse_preprocessed_input=True,
+            gpu_routing_rules=(
+                gpu_routing_rule(
+                    numeric_preprocessors=ALL_NUMERIC_PREPROCESSORS,
+                    categorical_preprocessors=ALL_NON_NATIVE_CATEGORICAL_PREPROCESSORS,
+                ),
+            ),
+        ),
+        "catboost": ModelDefinition(
+            model_id="catboost",
+            model_name="CatBoostRegressor",
+            builder=build_catboost_regressor,
+            fit_kwargs_builder=build_catboost_fit_kwargs,
+            tuning_space_builder=build_catboost_tuning_space,
+            supports_native_categorical_preprocessing=True,
+            supports_sparse_preprocessed_input=True,
+            gpu_routing_rules=(
+                gpu_routing_rule(
+                    numeric_preprocessors=ALL_NUMERIC_PREPROCESSORS,
+                    categorical_preprocessors=("native",),
+                ),
+            ),
+        ),
+        "xgboost": ModelDefinition(
+            model_id="xgboost",
+            model_name="XGBRegressor",
+            builder=build_xgboost_regressor,
+            tuning_space_builder=build_xgboost_tuning_space,
+            supports_sparse_preprocessed_input=True,
+            supports_gpu_native_dense_onehot_input=True,
+            gpu_routing_rules=(
+                gpu_routing_rule(
+                    numeric_preprocessors=ALL_NUMERIC_PREPROCESSORS,
+                    categorical_preprocessors=ALL_NON_NATIVE_CATEGORICAL_PREPROCESSORS,
+                ),
+            ),
+        ),
+    },
+    "binary": {
+        "logistic_regression": ModelDefinition(
+            model_id="logistic_regression",
+            model_name="LogisticRegression",
+            builder=build_logreg,
+            tuning_space_builder=build_logreg_tuning_space,
+            supports_sparse_preprocessed_input=True,
+            supports_gpu_native_dense_onehot_input=True,
+            gpu_routing_rules=(
+                gpu_routing_rule(
+                    numeric_preprocessors=ALL_NUMERIC_PREPROCESSORS,
+                    categorical_preprocessors=ALL_NON_NATIVE_CATEGORICAL_PREPROCESSORS,
+                ),
+            ),
+        ),
+        "random_forest": ModelDefinition(
+            model_id="random_forest",
+            model_name="RandomForestClassifier",
+            builder=build_random_forest_classifier,
+            tuning_space_builder=build_random_forest_tuning_space,
+            supports_sparse_preprocessed_input=True,
+            supports_gpu_native_dense_onehot_input=True,
+            gpu_routing_rules=(
+                gpu_routing_rule(
+                    numeric_preprocessors=ALL_NUMERIC_PREPROCESSORS,
+                    categorical_preprocessors=ALL_NON_NATIVE_CATEGORICAL_PREPROCESSORS,
+                ),
+            ),
+        ),
+        "extra_trees": ModelDefinition(
+            model_id="extra_trees",
+            model_name="ExtraTreesClassifier",
+            builder=build_extra_trees_classifier,
+            tuning_space_builder=build_extra_trees_tuning_space,
+            supports_sparse_preprocessed_input=True,
+            is_cpu_only=True,
+        ),
+        "hist_gradient_boosting": ModelDefinition(
+            model_id="hist_gradient_boosting",
+            model_name="HistGradientBoostingClassifier",
+            builder=build_hist_gradient_boosting_classifier,
+            tuning_space_builder=build_hist_gradient_boosting_tuning_space,
+            is_cpu_only=True,
+        ),
+        "lightgbm": ModelDefinition(
+            model_id="lightgbm",
+            model_name="LGBMClassifier",
+            builder=build_lightgbm_classifier,
+            tuning_space_builder=build_lightgbm_tuning_space,
+            supports_sparse_preprocessed_input=True,
+            gpu_routing_rules=(
+                gpu_routing_rule(
+                    numeric_preprocessors=ALL_NUMERIC_PREPROCESSORS,
+                    categorical_preprocessors=ALL_NON_NATIVE_CATEGORICAL_PREPROCESSORS,
+                ),
+            ),
+        ),
+        "catboost": ModelDefinition(
+            model_id="catboost",
+            model_name="CatBoostClassifier",
+            builder=build_catboost_classifier,
+            fit_kwargs_builder=build_catboost_fit_kwargs,
+            tuning_space_builder=build_catboost_tuning_space,
+            supports_native_categorical_preprocessing=True,
+            supports_sparse_preprocessed_input=True,
+            gpu_routing_rules=(
+                gpu_routing_rule(
+                    numeric_preprocessors=ALL_NUMERIC_PREPROCESSORS,
+                    categorical_preprocessors=("native",),
+                ),
+            ),
+        ),
+        "xgboost": ModelDefinition(
+            model_id="xgboost",
+            model_name="XGBClassifier",
+            builder=build_xgboost_classifier,
+            tuning_space_builder=build_xgboost_tuning_space,
+            supports_sparse_preprocessed_input=True,
+            supports_gpu_native_dense_onehot_input=True,
+            gpu_routing_rules=(
+                gpu_routing_rule(
+                    numeric_preprocessors=ALL_NUMERIC_PREPROCESSORS,
+                    categorical_preprocessors=ALL_NON_NATIVE_CATEGORICAL_PREPROCESSORS,
+                ),
+            ),
+        ),
+    },
+}
+
+
+def get_task_model_registry(task_type: str) -> dict[str, ModelDefinition]:
+    try:
+        return MODEL_REGISTRY[task_type]
+    except KeyError as exc:
+        raise ValueError(f"Unsupported task_type for model selection: {task_type}") from exc
+
+
+def resolve_candidate_model_id(
+    task_type: str,
+    model_family: str,
+) -> str:
+    task_registry = get_task_model_registry(task_type)
+    if model_family in task_registry:
+        return model_family
+
+    supported_model_families = sorted(task_registry)
+    raise ValueError(
+        f"Candidate model_family '{model_family}' is not valid for task_type '{task_type}'. "
+        f"Supported model families: {supported_model_families}"
+    )
+
+
+def get_default_model_id(task_type: str) -> str:
+    try:
+        return DEFAULT_MODEL_ID_BY_TASK[task_type]
+    except KeyError as exc:
+        raise ValueError(f"Unsupported task_type for model selection: {task_type}") from exc
+
+
+def get_supported_model_ids(task_type: str) -> list[str]:
+    return sorted(get_task_model_registry(task_type))
+
+
+def get_tunable_model_ids(task_type: str) -> list[str]:
+    task_registry = get_task_model_registry(task_type)
+    return sorted(
+        model_id
+        for model_id, model_definition in task_registry.items()
+        if model_definition.tuning_space_builder is not None
+    )
+
+
+def validate_model_preprocessing_compatibility(
+    task_type: str,
+    model_id: str,
+    categorical_preprocessor_id: str,
+) -> None:
+    model_definition = get_model_definition(task_type, model_id)
+    if categorical_preprocessor_id != "native":
+        return
+    if model_definition.supports_native_categorical_preprocessing:
+        return
+    raise ValueError(
+        f"Model family '{model_definition.model_id}' does not support "
+        "categorical_preprocessor='native'. Use model_family='catboost' for native categorical handling."
+    )
+
+
+def resolve_model_matrix_output_kind(
+    task_type: str,
+    model_id: str,
+    categorical_preprocessor_id: str,
+    runtime_execution_context: RuntimeExecutionContext | None = None,
+) -> str:
+    model_definition = get_model_definition(task_type, model_id)
+    if categorical_preprocessor_id == "native":
+        return "native_frame"
+    if (
+        categorical_preprocessor_id == "onehot"
+        and runtime_execution_context is not None
+        and runtime_execution_context.resolved_gpu_backend in (NATIVE_GPU_BACKEND, PATCH_GPU_BACKEND)
+        and model_definition.supports_gpu_native_dense_onehot_input
+    ):
+        return "dense_array"
+    if categorical_preprocessor_id == "onehot" and model_definition.supports_sparse_preprocessed_input:
+        return "sparse_csr"
+    return "dense_array"
+
+
+def resolve_model_id(task_type: str, model_id: str) -> str:
+    task_registry = get_task_model_registry(task_type)
+    if model_id in task_registry:
+        return model_id
+
+    supported_model_ids = get_supported_model_ids(task_type)
+    raise ValueError(
+        f"Model id '{model_id}' is not valid for task_type '{task_type}'. "
+        f"Use canonical model_ids only. Supported model_ids: {supported_model_ids}"
+    )
+
+
+def get_model_definition(task_type: str, model_id: str) -> ModelDefinition:
+    resolved_model_id = resolve_model_id(task_type, model_id)
+    return get_task_model_registry(task_type)[resolved_model_id]
+
+
+def is_model_id_valid_for_task(task_type: str, model_id: str) -> bool:
+    try:
+        resolve_model_id(task_type, model_id)
+        return True
+    except ValueError:
+        return False
+
+
+def is_model_tunable(task_type: str, model_id: str) -> bool:
+    model_definition = get_model_definition(task_type, model_id)
+    return model_definition.tuning_space_builder is not None
+
+
+def build_tuning_space(task_type: str, model_id: str, trial: object) -> dict[str, object]:
+    model_definition = get_model_definition(task_type, model_id)
+    if model_definition.tuning_space_builder is None:
+        supported_model_ids = get_tunable_model_ids(task_type)
+        raise ValueError(
+            f"Model id '{model_definition.model_id}' does not support tuning for task_type '{task_type}'. "
+            f"Supported tunable model_ids: {supported_model_ids}"
+        )
+    return model_definition.tuning_space_builder(trial)
+
+
+def build_model(
+    task_type: str,
+    model_id: str,
+    random_state: int,
+    parameter_overrides: dict[str, object] | None = None,
+) -> tuple[ModelDefinition, object, dict[str, object]]:
+    model_definition = get_model_definition(task_type, model_id)
+    estimator, explicit_params = model_definition.builder(random_state, parameter_overrides)
+    return model_definition, estimator, explicit_params
+
+
+def build_model_fit_kwargs(
+    model_definition: ModelDefinition,
+    x_train_processed: object,
+    numeric_columns: list[str],
+    categorical_columns: list[str],
+    uses_native_categorical_preprocessing: bool,
+) -> dict[str, object]:
+    if model_definition.fit_kwargs_builder is None or not uses_native_categorical_preprocessing:
+        return {}
+    return model_definition.fit_kwargs_builder(x_train_processed, numeric_columns, categorical_columns)
+
+
+def iter_model_gpu_routing_entries() -> list[tuple[str, str, GpuRoutingRule]]:
+    entries: list[tuple[str, str, GpuRoutingRule]] = []
+    for task_type, task_registry in MODEL_REGISTRY.items():
+        for model_id, model_definition in task_registry.items():
+            for gpu_routing_rule in model_definition.gpu_routing_rules:
+                entries.append((task_type, model_id, gpu_routing_rule))
+    return entries

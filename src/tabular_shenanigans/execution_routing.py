@@ -1,5 +1,6 @@
 from dataclasses import dataclass
 
+from tabular_shenanigans.models import MODEL_REGISTRY, iter_model_gpu_routing_entries
 from tabular_shenanigans.runtime_execution import (
     CPU_GPU_BACKEND,
     NATIVE_GPU_BACKEND,
@@ -10,7 +11,6 @@ from tabular_shenanigans.runtime_execution import (
 
 
 GPU_EXECUTION_PATHS = (NATIVE_GPU_BACKEND, PATCH_GPU_BACKEND)
-CPU_ONLY_MODEL_FAMILIES = ("extra_trees", "hist_gradient_boosting")
 
 
 @dataclass(frozen=True)
@@ -50,163 +50,30 @@ def _register_model_paths(
                 registry[key.to_tuple()] = gpu_paths
 
 
+def _build_cpu_only_model_families() -> frozenset[str]:
+    cpu_only_model_families: set[str] = set()
+    for task_registry in MODEL_REGISTRY.values():
+        for model_id, model_definition in task_registry.items():
+            if model_definition.is_cpu_only:
+                cpu_only_model_families.add(model_id)
+    return frozenset(cpu_only_model_families)
+
+
 def _build_gpu_support_registry() -> dict[tuple[str, str, str, str], tuple[str, ...]]:
     registry: dict[tuple[str, str, str, str], tuple[str, ...]] = {}
-    _register_model_paths(
-        registry,
-        task_types=("binary",),
-        model_family="logistic_regression",
-        numeric_preprocessors=("median", "standardize", "kbins"),
-        categorical_preprocessors=("frequency",),
-        gpu_paths=(NATIVE_GPU_BACKEND,),
-    )
-    _register_model_paths(
-        registry,
-        task_types=("binary",),
-        model_family="logistic_regression",
-        numeric_preprocessors=("median", "standardize", "kbins"),
-        categorical_preprocessors=("ordinal",),
-        gpu_paths=(NATIVE_GPU_BACKEND,),
-    )
-    _register_model_paths(
-        registry,
-        task_types=("binary",),
-        model_family="logistic_regression",
-        numeric_preprocessors=("median", "standardize", "kbins"),
-        categorical_preprocessors=("onehot",),
-        gpu_paths=(NATIVE_GPU_BACKEND,),
-    )
-    _register_model_paths(
-        registry,
-        task_types=("regression",),
-        model_family="ridge",
-        numeric_preprocessors=("median", "standardize"),
-        categorical_preprocessors=("frequency",),
-        gpu_paths=(NATIVE_GPU_BACKEND,),
-    )
-    _register_model_paths(
-        registry,
-        task_types=("regression",),
-        model_family="ridge",
-        numeric_preprocessors=("median", "standardize", "kbins"),
-        categorical_preprocessors=("ordinal",),
-        gpu_paths=(NATIVE_GPU_BACKEND,),
-    )
-    _register_model_paths(
-        registry,
-        task_types=("regression",),
-        model_family="ridge",
-        numeric_preprocessors=("kbins",),
-        categorical_preprocessors=("frequency",),
-        gpu_paths=(NATIVE_GPU_BACKEND,),
-    )
-    _register_model_paths(
-        registry,
-        task_types=("regression",),
-        model_family="ridge",
-        numeric_preprocessors=("median", "standardize", "kbins"),
-        categorical_preprocessors=("onehot",),
-        gpu_paths=(NATIVE_GPU_BACKEND,),
-    )
-    _register_model_paths(
-        registry,
-        task_types=("regression",),
-        model_family="elasticnet",
-        numeric_preprocessors=("median", "standardize"),
-        categorical_preprocessors=("frequency",),
-        gpu_paths=(NATIVE_GPU_BACKEND,),
-    )
-    _register_model_paths(
-        registry,
-        task_types=("regression",),
-        model_family="elasticnet",
-        numeric_preprocessors=("median", "standardize", "kbins"),
-        categorical_preprocessors=("ordinal",),
-        gpu_paths=(NATIVE_GPU_BACKEND,),
-    )
-    _register_model_paths(
-        registry,
-        task_types=("regression",),
-        model_family="elasticnet",
-        numeric_preprocessors=("kbins",),
-        categorical_preprocessors=("frequency",),
-        gpu_paths=(NATIVE_GPU_BACKEND,),
-    )
-    _register_model_paths(
-        registry,
-        task_types=("regression",),
-        model_family="elasticnet",
-        numeric_preprocessors=("median", "standardize", "kbins"),
-        categorical_preprocessors=("onehot",),
-        gpu_paths=(NATIVE_GPU_BACKEND,),
-    )
-    _register_model_paths(
-        registry,
-        task_types=("binary", "regression"),
-        model_family="random_forest",
-        numeric_preprocessors=("median", "standardize", "kbins"),
-        categorical_preprocessors=("onehot",),
-        gpu_paths=(NATIVE_GPU_BACKEND,),
-    )
-    _register_model_paths(
-        registry,
-        task_types=("binary", "regression"),
-        model_family="random_forest",
-        numeric_preprocessors=("median", "standardize", "kbins"),
-        categorical_preprocessors=("frequency",),
-        gpu_paths=(NATIVE_GPU_BACKEND,),
-    )
-    _register_model_paths(
-        registry,
-        task_types=("binary", "regression"),
-        model_family="random_forest",
-        numeric_preprocessors=("median", "standardize", "kbins"),
-        categorical_preprocessors=("ordinal",),
-        gpu_paths=(NATIVE_GPU_BACKEND,),
-    )
-    _register_model_paths(
-        registry,
-        task_types=("binary", "regression"),
-        model_family="lightgbm",
-        numeric_preprocessors=("median", "standardize", "kbins"),
-        categorical_preprocessors=("onehot", "ordinal", "frequency"),
-        gpu_paths=(NATIVE_GPU_BACKEND,),
-    )
-    _register_model_paths(
-        registry,
-        task_types=("binary", "regression"),
-        model_family="xgboost",
-        numeric_preprocessors=("median", "standardize", "kbins"),
-        categorical_preprocessors=("ordinal",),
-        gpu_paths=(NATIVE_GPU_BACKEND,),
-    )
-    _register_model_paths(
-        registry,
-        task_types=("binary", "regression"),
-        model_family="xgboost",
-        numeric_preprocessors=("median", "standardize", "kbins"),
-        categorical_preprocessors=("frequency",),
-        gpu_paths=(NATIVE_GPU_BACKEND,),
-    )
-    _register_model_paths(
-        registry,
-        task_types=("binary", "regression"),
-        model_family="xgboost",
-        numeric_preprocessors=("median", "standardize", "kbins"),
-        categorical_preprocessors=("onehot",),
-        gpu_paths=(NATIVE_GPU_BACKEND,),
-    )
-    _register_model_paths(
-        registry,
-        task_types=("binary", "regression"),
-        model_family="catboost",
-        numeric_preprocessors=("median", "standardize", "kbins"),
-        categorical_preprocessors=("native",),
-        gpu_paths=(NATIVE_GPU_BACKEND,),
-    )
+    for task_type, model_family, gpu_routing_rule in iter_model_gpu_routing_entries():
+        _register_model_paths(
+            registry,
+            task_types=(task_type,),
+            model_family=model_family,
+            numeric_preprocessors=gpu_routing_rule.numeric_preprocessors,
+            categorical_preprocessors=gpu_routing_rule.categorical_preprocessors,
+            gpu_paths=gpu_routing_rule.gpu_backends,
+        )
     return registry
 
 
+CPU_ONLY_MODEL_FAMILIES = _build_cpu_only_model_families()
 GPU_SUPPORT_REGISTRY = _build_gpu_support_registry()
 
 
