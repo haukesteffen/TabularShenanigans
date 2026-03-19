@@ -154,6 +154,36 @@ Submission artifacts on the same candidate run:
 - `submissions/<submission_event_id>/submission.csv`
 - `submissions/<submission_event_id>/observations.json`
 
+### Optimization Trial Child Runs
+
+Optuna-backed model candidates also create nested MLflow child runs named `trial_<n>` with `run_kind=optimization_trial`.
+
+Trial child-run tags:
+- `run_kind=optimization_trial`
+- `mlflow.parentRunId=<candidate_run_id>`
+- `candidate_id`
+- `model_family`
+- `trial_state`, transitioning from `RUNNING` to `COMPLETE` or `FAIL`
+
+Trial child-run params:
+- `trial_number`
+- `feature_recipe_id`
+- `numeric_preprocessor`
+- `categorical_preprocessor`
+- `preprocessing_scheme_id`
+- `model_family`
+- `model_registry_key`
+- `runtime__resolved_compute_target`
+- `runtime__resolved_gpu_backend`
+- `runtime__preprocessing_backend`
+- `hp__*` for sampled Optuna hyperparameters
+- `mp__*` for resolved model params on completed trials
+
+Trial child-run metrics:
+- `duration_seconds`
+- `cv_score_mean` on completed trials
+- `cv_score_std` on completed trials
+
 ## Prediction Contracts
 
 - Binary `roc_auc` and `log_loss`: `test_predictions.csv` stores positive-class probabilities in `[0, 1]`.

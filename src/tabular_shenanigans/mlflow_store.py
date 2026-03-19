@@ -50,6 +50,12 @@ class DownloadedCandidateBundle:
 
 
 @dataclass(frozen=True)
+class TrialRunRef:
+    run_id: str
+    trial_number: int
+
+
+@dataclass(frozen=True)
 class CandidateRunAssessment:
     run_ref: CandidateRunRef
     run_status: str
@@ -510,18 +516,49 @@ def _candidate_run_metrics(
     return metrics
 
 
-def log_trial_run(
+def _trial_run_context_params(
+    config: AppConfig,
+    trial_number: int,
+    hyperparams: dict[str, object],
+    feature_recipe_id: str,
+    numeric_preprocessor: str,
+    categorical_preprocessor: str,
+    preprocessing_scheme_id: str,
+    model_family: str,
+    model_registry_key: str,
+    preprocessing_backend: str,
+) -> dict[str, object]:
+    runtime_execution_context = config.runtime_execution_context
+    params: dict[str, object] = {
+        "trial_number": trial_number,
+        "feature_recipe_id": feature_recipe_id,
+        "numeric_preprocessor": numeric_preprocessor,
+        "categorical_preprocessor": categorical_preprocessor,
+        "preprocessing_scheme_id": preprocessing_scheme_id,
+        "model_family": model_family,
+        "model_registry_key": model_registry_key,
+        "runtime__resolved_compute_target": runtime_execution_context.resolved_compute_target,
+        "runtime__resolved_gpu_backend": runtime_execution_context.resolved_gpu_backend,
+        "runtime__preprocessing_backend": preprocessing_backend,
+    }
+    for key, value in hyperparams.items():
+        params[f"hp__{key}"] = value
+    return params
+
+
+def create_trial_run(
     config: AppConfig,
     candidate_run: CandidateRunRef,
     trial_number: int,
-    model_family: str,
     hyperparams: dict[str, object],
-    model_params: dict[str, object] | None,
-    cv_score_mean: float | None,
-    cv_score_std: float | None,
-    duration_seconds: float | None,
-    trial_state: str,  # "COMPLETE" | "FAIL"
-) -> None:
+    feature_recipe_id: str,
+    numeric_preprocessor: str,
+    categorical_preprocessor: str,
+    preprocessing_scheme_id: str,
+    model_family: str,
+    model_registry_key: str,
+    preprocessing_backend: str,
+) -> TrialRunRef:
     client = _client(config)
     run = client.create_run(
         experiment_id=candidate_run.experiment_id,
@@ -530,26 +567,57 @@ def log_trial_run(
             "run_kind": "optimization_trial",
             "mlflow.parentRunId": candidate_run.run_id,
             "candidate_id": candidate_run.candidate_id,
-            "trial_state": trial_state,
             "model_family": model_family,
+            "trial_state": "RUNNING",
         },
     )
     trial_run_id = run.info.run_id
-    params: dict[str, object] = {"trial_number": trial_number}
-    for key, value in hyperparams.items():
-        params[f"hp__{key}"] = value
+    _log_params(
+        client,
+        trial_run_id,
+        _trial_run_context_params(
+            config=config,
+            trial_number=trial_number,
+            hyperparams=hyperparams,
+            feature_recipe_id=feature_recipe_id,
+            numeric_preprocessor=numeric_preprocessor,
+            categorical_preprocessor=categorical_preprocessor,
+            preprocessing_scheme_id=preprocessing_scheme_id,
+            model_family=model_family,
+            model_registry_key=model_registry_key,
+            preprocessing_backend=preprocessing_backend,
+        ),
+    )
+    return TrialRunRef(run_id=trial_run_id, trial_number=trial_number)
+
+
+def finalize_trial_run(
+    config: AppConfig,
+    trial_run: TrialRunRef,
+    model_params: dict[str, object] | None,
+    cv_score_mean: float | None,
+    cv_score_std: float | None,
+    duration_seconds: float | None,
+    trial_state: str,  # "COMPLETE" | "FAIL"
+) -> None:
+    client = _client(config)
     if isinstance(model_params, dict):
+        params: dict[str, object] = {}
         for key, value in model_params.items():
             params[f"mp__{key}"] = value
-    _log_params(client, trial_run_id, params)
-    if trial_state == "COMPLETE":
-        _log_metrics(client, trial_run_id, {
+        _log_params(client, trial_run.run_id, params)
+    _log_metrics(
+        client,
+        trial_run.run_id,
+        {
             "cv_score_mean": cv_score_mean,
             "cv_score_std": cv_score_std,
             "duration_seconds": duration_seconds,
-        })
+        },
+    )
+    _set_tags(client, trial_run.run_id, {"trial_state": trial_state})
     status = "FINISHED" if trial_state == "COMPLETE" else "FAILED"
-    client.set_terminated(trial_run_id, status=status)
+    client.set_terminated(trial_run.run_id, status=status)
 
 
 def log_candidate_run(

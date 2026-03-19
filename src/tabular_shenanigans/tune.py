@@ -16,7 +16,7 @@ from tabular_shenanigans.model_evaluation import (
     build_prepared_training_context,
     score_model_spec,
 )
-from tabular_shenanigans.mlflow_store import CandidateRunRef, log_trial_run
+from tabular_shenanigans.mlflow_store import CandidateRunRef, create_trial_run, finalize_trial_run
 from tabular_shenanigans.models import build_tuning_space, get_model_definition
 
 
@@ -155,6 +155,19 @@ def run_optimization(
 
     def objective(trial: optuna.Trial) -> float:
         parameter_overrides = build_tuning_space(task_type, tuning_model_spec.model_registry_key, trial)
+        trial_run = create_trial_run(
+            config=config,
+            candidate_run=candidate_run,
+            trial_number=trial.number,
+            hyperparams=parameter_overrides,
+            feature_recipe_id=config.experiment.candidate.feature_recipe_id,
+            numeric_preprocessor=training_context.numeric_preprocessor,
+            categorical_preprocessor=training_context.categorical_preprocessor,
+            preprocessing_scheme_id=training_context.preprocessing_scheme_id,
+            model_family=config.experiment.candidate.model_family,
+            model_registry_key=tuning_model_spec.model_registry_key,
+            preprocessing_backend=training_context.preprocessing_backend,
+        )
         trial_start = time.time()
         try:
             cv_evaluation = score_model_spec(
@@ -168,12 +181,9 @@ def run_optimization(
                 cv_random_state=competition.cv.random_state,
             )
         except Exception:
-            log_trial_run(
+            finalize_trial_run(
                 config=config,
-                candidate_run=candidate_run,
-                trial_number=trial.number,
-                model_family=tuning_model_spec.model_registry_key,
-                hyperparams=parameter_overrides,
+                trial_run=trial_run,
                 model_params=None,
                 cv_score_mean=None,
                 cv_score_std=None,
@@ -187,12 +197,9 @@ def run_optimization(
         trial.set_user_attr("metric_std", metric_std)
         trial.set_user_attr("parameter_overrides", json_ready(parameter_overrides))
         trial.set_user_attr("model_params", json_ready(cv_evaluation.model_result.model_params))
-        log_trial_run(
+        finalize_trial_run(
             config=config,
-            candidate_run=candidate_run,
-            trial_number=trial.number,
-            model_family=tuning_model_spec.model_registry_key,
-            hyperparams=parameter_overrides,
+            trial_run=trial_run,
             model_params=cv_evaluation.model_result.model_params,
             cv_score_mean=metric_mean,
             cv_score_std=metric_std,
