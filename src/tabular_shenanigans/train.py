@@ -336,7 +336,6 @@ def run_training_workflow(
 
             return run_blend_training(config=config, dataset_context=dataset_context)
 
-        optimization = config.experiment.candidate.optimization
         candidate = config.experiment.candidate
         candidate_run = create_candidate_run(
             config=config,
@@ -358,7 +357,7 @@ def run_training_workflow(
                         mlflow_run_id=candidate_run.run_id,
                     )
                     try:
-                        if not optimization.enabled:
+                        if candidate.optimization is None:
                             run_training(
                                 config=config,
                                 dataset_context=dataset_context,

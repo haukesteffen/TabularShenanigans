@@ -126,8 +126,8 @@ def run_optimization(
     competition = config.competition
     candidate = config.experiment.candidate
     optimization = candidate.optimization
-    if not optimization.enabled:
-        raise ValueError("Optimization requires candidate.optimization.enabled=true in config.yaml.")
+    if optimization is None:
+        raise ValueError("Optimization requires a candidate.optimization block in config.yaml.")
 
     task_type = competition.task_type
     primary_metric = competition.primary_metric
