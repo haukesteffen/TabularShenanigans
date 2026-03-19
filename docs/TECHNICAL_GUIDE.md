@@ -38,6 +38,7 @@ For setup, commands, and config reference, see [USAGE.md](/USAGE.md).
 - Candidate runs should upload `logs/runtime.log` on both success and failure once the run exists.
 - `submit` resolves candidates from MLflow, not from local artifact directories.
 - `refresh-submissions` updates existing candidate runs and does not create standalone tracking runs.
+- Untuned model candidates use upstream library estimator defaults for all hyperparameters. The repo sets only runtime and task-contract params: determinism (`random_state`/`random_seed`), parallelism (`n_jobs`/`thread_count`), logging/file-writing controls (`verbosity`, `verbose`, `allow_writing_files`), problem-definition params (`objective`, `eval_metric`, `loss_function`), and GPU routing. Users who want a stronger untuned baseline should set `model_params` explicitly or enable optimization.
 - Feature recipes must be deterministic, leakage-safe, and schema-preserving across train/test.
 - Binary probability blends require matching saved class metadata across all base candidates.
 - Binary `accuracy` blends require the saved probability sidecar and current probability-average blend rule metadata across all base candidates.
@@ -319,7 +320,7 @@ Current preprocessing selection on GPU hosts:
 - [eda.py](/src/tabular_shenanigans/eda.py): local EDA report generation.
 - [feature_recipes](/src/tabular_shenanigans/feature_recipes): deterministic feature recipes such as `fr0`, `fr1`, `fr2`, `fr3`, and the `fr2_ablate_*`/`fr3_ablate_*` grouped ablation variants used for `s6e3` recipe studies.
 - [model_evaluation.py](/src/tabular_shenanigans/model_evaluation.py): shared prepared training context, reusable CV evaluation logic for train/tune, and fold-stage runtime profiling for benchmark checkpoints.
-- [models.py](/src/tabular_shenanigans/models.py): model registry, capability checks, estimator construction, and tuning space definitions.
+- [models.py](/src/tabular_shenanigans/models.py): model registry, capability checks, estimator construction (runtime/task-contract params only; hyperparameter defaults are upstream), and tuning space definitions.
 - [preprocess.py](/src/tabular_shenanigans/preprocess.py): raw feature-frame preparation and split preprocessing components.
 - [cv.py](/src/tabular_shenanigans/cv.py): splitters and task-aware metric scoring.
 - [train.py](/src/tabular_shenanigans/train.py): model training workflow, candidate manifest construction, temp bundle staging, MLflow candidate logging, and training-stage runtime profiling capture.
