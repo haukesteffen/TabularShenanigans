@@ -639,6 +639,52 @@ def build_hist_gradient_boosting_classifier(
     return HistGradientBoostingClassifier(**params), params
 
 
+def build_realmlp_regressor(
+    random_state: int,
+    parameter_overrides: dict[str, object] | None = None,
+) -> tuple[object, dict[str, object]]:
+    try:
+        from pytabkit import RealMLP_TD_Regressor
+    except ImportError as exc:
+        raise ImportError(
+            "RealMLP support requires the optional neural dependencies. "
+            "Install them with `uv sync --extra neural`."
+        ) from exc
+
+    runtime_execution_context = get_runtime_execution_context()
+    params = merge_model_params(
+        {
+            "device": "cuda" if runtime_execution_context.resolved_compute_target == "gpu" else "cpu",
+            "random_state": random_state,
+        },
+        parameter_overrides,
+    )
+    return RealMLP_TD_Regressor(**params), params
+
+
+def build_realmlp_classifier(
+    random_state: int,
+    parameter_overrides: dict[str, object] | None = None,
+) -> tuple[object, dict[str, object]]:
+    try:
+        from pytabkit import RealMLP_TD_Classifier
+    except ImportError as exc:
+        raise ImportError(
+            "RealMLP support requires the optional neural dependencies. "
+            "Install them with `uv sync --extra neural`."
+        ) from exc
+
+    runtime_execution_context = get_runtime_execution_context()
+    params = merge_model_params(
+        {
+            "device": "cuda" if runtime_execution_context.resolved_compute_target == "gpu" else "cpu",
+            "random_state": random_state,
+        },
+        parameter_overrides,
+    )
+    return RealMLP_TD_Classifier(**params), params
+
+
 def build_lightgbm_regressor(
     random_state: int,
     parameter_overrides: dict[str, object] | None = None,
@@ -815,6 +861,20 @@ def build_hist_gradient_boosting_tuning_space(trial: object) -> dict[str, object
         "max_iter": trial.suggest_int("max_iter", 100, 600, step=50),
         "max_leaf_nodes": trial.suggest_int("max_leaf_nodes", 15, 255),
         "min_samples_leaf": trial.suggest_int("min_samples_leaf", 10, 80),
+    }
+
+
+def build_realmlp_tuning_space(trial: object) -> dict[str, object]:
+    return {
+        "n_epochs": trial.suggest_int("n_epochs", 50, 500, step=50),
+        "batch_size": trial.suggest_categorical("batch_size", [128, 256, 512]),
+        "lr": trial.suggest_float("lr", 1e-4, 1e-2, log=True),
+        "hidden_sizes": trial.suggest_categorical(
+            "hidden_sizes",
+            [[128], [256], [128, 128], [256, 128]],
+        ),
+        "p_drop": trial.suggest_float("p_drop", 0.0, 0.5),
+        "wd": trial.suggest_float("wd", 1e-6, 1e-2, log=True),
     }
 
 
