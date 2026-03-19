@@ -15,7 +15,7 @@ def _identity_recipe(
     x_train_raw: pd.DataFrame,
     x_test_raw: pd.DataFrame,
 ) -> tuple[pd.DataFrame, pd.DataFrame]:
-    return x_train_raw.copy(), x_test_raw.copy()
+    return x_train_raw, x_test_raw
 
 
 FEATURE_RECIPE_REGISTRY = {

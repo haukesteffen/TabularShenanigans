@@ -144,7 +144,7 @@ def _automatic_payment_flag(series: pd.Series) -> pd.Series:
 
 
 def _transform_v1_frame(frame: pd.DataFrame) -> pd.DataFrame:
-    transformed = frame.copy()
+    transformed = frame
 
     tenure = transformed["tenure"].astype(float)
     monthly_charges = transformed["MonthlyCharges"].astype(float)
