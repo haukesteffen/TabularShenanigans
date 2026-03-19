@@ -613,7 +613,7 @@ def _build_random_forest_regressor(
         )
         return SingleTargetRegressionAdapter(estimator_class(**params)), params
 
-    params = _merge_model_params({"n_estimators": 500, "n_jobs": -1, "random_state": random_state}, parameter_overrides)
+    params = _merge_model_params({"n_jobs": -1, "random_state": random_state}, parameter_overrides)
     return RandomForestRegressor(**params), params
 
 
@@ -621,7 +621,7 @@ def _build_extra_trees_regressor(
     random_state: int,
     parameter_overrides: dict[str, object] | None = None,
 ) -> tuple[ExtraTreesRegressor, dict[str, object]]:
-    params = _merge_model_params({"n_estimators": 500, "n_jobs": -1, "random_state": random_state}, parameter_overrides)
+    params = _merge_model_params({"n_jobs": -1, "random_state": random_state}, parameter_overrides)
     return ExtraTreesRegressor(**params), params
 
 
@@ -630,12 +630,7 @@ def _build_hist_gradient_boosting_regressor(
     parameter_overrides: dict[str, object] | None = None,
 ) -> tuple[HistGradientBoostingRegressor, dict[str, object]]:
     params = _merge_model_params(
-        {
-            "early_stopping": False,
-            "learning_rate": 0.05,
-            "max_iter": 300,
-            "random_state": random_state,
-        },
+        {"random_state": random_state},
         parameter_overrides,
     )
     return HistGradientBoostingRegressor(**params), params
@@ -715,7 +710,7 @@ def _build_random_forest_classifier(
         )
         return BinaryLabelEncodingClassifier(estimator_class(**params)), params
 
-    params = _merge_model_params({"n_estimators": 500, "n_jobs": -1, "random_state": random_state}, parameter_overrides)
+    params = _merge_model_params({"n_jobs": -1, "random_state": random_state}, parameter_overrides)
     return RandomForestClassifier(**params), params
 
 
@@ -723,7 +718,7 @@ def _build_extra_trees_classifier(
     random_state: int,
     parameter_overrides: dict[str, object] | None = None,
 ) -> tuple[ExtraTreesClassifier, dict[str, object]]:
-    params = _merge_model_params({"n_estimators": 500, "n_jobs": -1, "random_state": random_state}, parameter_overrides)
+    params = _merge_model_params({"n_jobs": -1, "random_state": random_state}, parameter_overrides)
     return ExtraTreesClassifier(**params), params
 
 
@@ -732,12 +727,7 @@ def _build_hist_gradient_boosting_classifier(
     parameter_overrides: dict[str, object] | None = None,
 ) -> tuple[HistGradientBoostingClassifier, dict[str, object]]:
     params = _merge_model_params(
-        {
-            "early_stopping": False,
-            "learning_rate": 0.05,
-            "max_iter": 300,
-            "random_state": random_state,
-        },
+        {"random_state": random_state},
         parameter_overrides,
     )
     return HistGradientBoostingClassifier(**params), params
@@ -757,12 +747,8 @@ def _build_lightgbm_regressor(
 
     runtime_execution_context = get_runtime_execution_context()
     params = {
-        "colsample_bytree": 0.8,
-        "learning_rate": 0.05,
-        "n_estimators": 500,
         "n_jobs": -1,
         "random_state": random_state,
-        "subsample": 0.8,
         "verbosity": -1,
         **_resolve_booster_runtime_defaults("lightgbm"),
     }
@@ -788,12 +774,8 @@ def _build_lightgbm_classifier(
 
     runtime_execution_context = get_runtime_execution_context()
     params = {
-        "colsample_bytree": 0.8,
-        "learning_rate": 0.05,
-        "n_estimators": 500,
         "n_jobs": -1,
         "random_state": random_state,
-        "subsample": 0.8,
         "verbosity": -1,
         **_resolve_booster_runtime_defaults("lightgbm"),
     }
@@ -819,9 +801,6 @@ def _build_catboost_regressor(
 
     params = {
         "allow_writing_files": False,
-        "depth": 6,
-        "iterations": 500,
-        "learning_rate": 0.05,
         "loss_function": "RMSE",
         "random_seed": random_state,
         "thread_count": -1,
@@ -846,9 +825,6 @@ def _build_catboost_classifier(
 
     params = {
         "allow_writing_files": False,
-        "depth": 6,
-        "iterations": 500,
-        "learning_rate": 0.05,
         "loss_function": "Logloss",
         "random_seed": random_state,
         "thread_count": -1,
@@ -872,15 +848,10 @@ def _build_xgboost_regressor(
         ) from exc
 
     params = {
-        "colsample_bytree": 0.8,
         "eval_metric": "rmse",
-        "learning_rate": 0.05,
-        "max_depth": 6,
-        "n_estimators": 500,
         "n_jobs": -1,
         "objective": "reg:squarederror",
         "random_state": random_state,
-        "subsample": 0.8,
         "tree_method": "hist",
         **_resolve_booster_runtime_defaults("xgboost"),
     }
@@ -901,15 +872,10 @@ def _build_xgboost_classifier(
         ) from exc
 
     params = {
-        "colsample_bytree": 0.8,
         "eval_metric": "logloss",
-        "learning_rate": 0.05,
-        "max_depth": 6,
-        "n_estimators": 500,
         "n_jobs": -1,
         "objective": "binary:logistic",
         "random_state": random_state,
-        "subsample": 0.8,
         "tree_method": "hist",
         **_resolve_booster_runtime_defaults("xgboost"),
     }
