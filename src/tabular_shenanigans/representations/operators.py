@@ -8,7 +8,7 @@ import pandas as pd
 from scipy import sparse
 from sklearn.impute import SimpleImputer
 from sklearn.pipeline import Pipeline
-from sklearn.preprocessing import OneHotEncoder, OrdinalEncoder, StandardScaler
+from sklearn.preprocessing import KBinsDiscretizer, OneHotEncoder, OrdinalEncoder, RobustScaler, StandardScaler
 
 from tabular_shenanigans.representations.feature_schema import ResolvedFeatureSchema
 from tabular_shenanigans.representations.types import (
@@ -172,6 +172,98 @@ class StandardizeNumericGenerator:
 
 
 @dataclass(frozen=True)
+class RobustScaleNumericGenerator:
+    operator_id: str = "robust_scale_numeric"
+    fit_mode: FitMode = "unsupervised"
+    output_kind: OutputKind = "dense_numeric"
+    columns: tuple[str, ...] = ()
+
+    def fit(self, X: pd.DataFrame, y: pd.Series | None) -> FittedFeatureGenerator:
+        del y
+        transformer = Pipeline(
+            steps=[
+                ("imputer", SimpleImputer(strategy="median")),
+                ("scaler", RobustScaler()),
+            ]
+        )
+        if self.columns:
+            transformer.fit(X.loc[:, list(self.columns)])
+        output_columns = [f"{self.operator_id}__{column}" for column in self.columns]
+
+        def _transform(frame: pd.DataFrame) -> pd.DataFrame:
+            if not self.columns:
+                return pd.DataFrame(index=frame.index)
+            transformed = transformer.transform(frame.loc[:, list(self.columns)])
+            return pd.DataFrame(transformed, index=frame.index, columns=output_columns)
+
+        return _FittedDenseFrameGenerator(block_id=self.operator_id, transform_fn=_transform)
+
+
+@dataclass(frozen=True)
+class SignedLogExpandNumericGenerator:
+    operator_id: str = "signed_log_expand_numeric"
+    fit_mode: FitMode = "unsupervised"
+    output_kind: OutputKind = "dense_numeric"
+    columns: tuple[str, ...] = ()
+
+    def fit(self, X: pd.DataFrame, y: pd.Series | None) -> FittedFeatureGenerator:
+        del y
+        transformer = SimpleImputer(strategy="median")
+        if self.columns:
+            transformer.fit(X.loc[:, list(self.columns)])
+        output_columns = [f"{self.operator_id}__{column}" for column in self.columns]
+
+        def _transform(frame: pd.DataFrame) -> pd.DataFrame:
+            if not self.columns:
+                return pd.DataFrame(index=frame.index)
+            imputed = transformer.transform(frame.loc[:, list(self.columns)])
+            transformed = np.sign(imputed) * np.log1p(np.abs(imputed))
+            return pd.DataFrame(transformed, index=frame.index, columns=output_columns)
+
+        return _FittedDenseFrameGenerator(block_id=self.operator_id, transform_fn=_transform)
+
+
+@dataclass(frozen=True)
+class QuantileBinNumericGenerator:
+    operator_id: str = "quantile_bin_numeric"
+    fit_mode: FitMode = "unsupervised"
+    output_kind: OutputKind = "sparse_numeric"
+    columns: tuple[str, ...] = ()
+    n_bins: int = 5
+
+    def fit(self, X: pd.DataFrame, y: pd.Series | None) -> FittedFeatureGenerator:
+        del y
+        transformer = Pipeline(
+            steps=[
+                ("imputer", SimpleImputer(strategy="median")),
+                (
+                    "kbins",
+                    KBinsDiscretizer(
+                        n_bins=self.n_bins,
+                        encode="onehot",
+                        strategy="quantile",
+                        quantile_method="averaged_inverted_cdf",
+                    ),
+                ),
+            ]
+        )
+        feature_names: tuple[str, ...] = ()
+        if self.columns:
+            transformer.fit(X.loc[:, list(self.columns)])
+            kbins = transformer.named_steps["kbins"]
+            feature_names = tuple(
+                f"{self.operator_id}__{feature_name}"
+                for feature_name in kbins.get_feature_names_out(list(self.columns))
+            )
+        return _FittedSparseGenerator(
+            block_id=self.operator_id,
+            transformer=transformer,
+            columns=self.columns,
+            feature_names=feature_names,
+        )
+
+
+@dataclass(frozen=True)
 class FrequencyEncodeCategoricalsGenerator:
     operator_id: str = "frequency_encode_categoricals"
     fit_mode: FitMode = "unsupervised"
@@ -270,6 +362,125 @@ class OneHotLowCardinalityCategoricalsGenerator:
 
 
 @dataclass(frozen=True)
+class TargetEncodeCategoricalsGenerator:
+    operator_id: str = "target_encode_categoricals"
+    fit_mode: FitMode = "supervised"
+    output_kind: OutputKind = "dense_numeric"
+    columns: tuple[str, ...] = ()
+    smoothing: float = 1.0
+    missing_value: str = "__missing__"
+
+    def fit(self, X: pd.DataFrame, y: pd.Series | None) -> FittedFeatureGenerator:
+        if y is None:
+            raise ValueError("target_encode_categoricals requires y (supervised fit_mode).")
+        global_mean = float(y.mean())
+        category_encodings: dict[str, dict[str, float]] = {}
+        for column in self.columns:
+            normalized = _normalize_categorical_series(X[column], self.missing_value)
+            stats = pd.DataFrame({"category": normalized, "target": y})
+            agg = stats.groupby("category")["target"].agg(["mean", "count"])
+            encoding = (
+                (agg["count"] * agg["mean"] + self.smoothing * global_mean)
+                / (agg["count"] + self.smoothing)
+            )
+            category_encodings[column] = {
+                str(category): float(value) for category, value in encoding.items()
+            }
+        output_columns = [f"{self.operator_id}__{column}" for column in self.columns]
+
+        def _transform(frame: pd.DataFrame) -> pd.DataFrame:
+            encoded_columns: dict[str, pd.Series] = {}
+            for input_column, output_column in zip(self.columns, output_columns, strict=True):
+                normalized = _normalize_categorical_series(frame[input_column], self.missing_value)
+                encoded_columns[output_column] = normalized.map(
+                    category_encodings[input_column]
+                ).fillna(global_mean)
+            return pd.DataFrame(encoded_columns, index=frame.index).astype(float)
+
+        return _FittedDenseFrameGenerator(block_id=self.operator_id, transform_fn=_transform)
+
+
+@dataclass(frozen=True)
+class RareCategoryBucketGenerator:
+    operator_id: str = "rare_category_bucket"
+    fit_mode: FitMode = "unsupervised"
+    output_kind: OutputKind = "sparse_numeric"
+    columns: tuple[str, ...] = ()
+    min_frequency: float = 0.01
+    missing_value: str = "__missing__"
+
+    def fit(self, X: pd.DataFrame, y: pd.Series | None) -> FittedFeatureGenerator:
+        del y
+        rare_categories_per_column: dict[str, frozenset[str]] = {}
+        for column in self.columns:
+            normalized = _normalize_categorical_series(X[column], self.missing_value)
+            frequencies = normalized.value_counts(normalize=True, dropna=False)
+            rare = frozenset(
+                str(category) for category, freq in frequencies.items() if freq < self.min_frequency
+            )
+            rare_categories_per_column[column] = rare
+
+        non_rare_sentinel = "__non_rare__"
+
+        def _mask_non_rare(frame: pd.DataFrame) -> pd.DataFrame:
+            masked = pd.DataFrame(index=frame.index)
+            for column in self.columns:
+                normalized = _normalize_categorical_series(frame[column], self.missing_value)
+                rare_set = rare_categories_per_column[column]
+                masked[column] = normalized.where(normalized.isin(rare_set), non_rare_sentinel)
+            return masked
+
+        encoder = OneHotEncoder(handle_unknown="ignore", sparse_output=True)
+        feature_names: tuple[str, ...] = ()
+        if self.columns:
+            masked_fit = _mask_non_rare(X)
+            encoder.fit(masked_fit)
+            # Drop the non_rare_sentinel columns from the encoder output
+            raw_feature_names = list(encoder.get_feature_names_out(list(self.columns)))
+            keep_indices = [
+                i for i, name in enumerate(raw_feature_names)
+                if not name.endswith(f"_{non_rare_sentinel}")
+            ]
+            feature_names = tuple(
+                f"{self.operator_id}__{raw_feature_names[i]}" for i in keep_indices
+            )
+
+        return _FittedRareCategorySparseGenerator(
+            block_id=self.operator_id,
+            encoder=encoder,
+            columns=self.columns,
+            feature_names=feature_names,
+            mask_fn=_mask_non_rare,
+            keep_indices=tuple(keep_indices) if self.columns else (),
+        )
+
+
+@dataclass(frozen=True)
+class _FittedRareCategorySparseGenerator:
+    block_id: str
+    encoder: object
+    columns: tuple[str, ...]
+    feature_names: tuple[str, ...]
+    mask_fn: Callable[[pd.DataFrame], pd.DataFrame]
+    keep_indices: tuple[int, ...]
+    output_kind: OutputKind = "sparse_numeric"
+
+    def transform(self, X: pd.DataFrame) -> FeatureBlock:
+        if not self.columns:
+            matrix = sparse.csr_matrix((len(X.index), 0), dtype=float)
+        else:
+            masked = self.mask_fn(X)
+            full_matrix = self.encoder.transform(masked)
+            matrix = sparse.csr_matrix(full_matrix.tocsc()[:, list(self.keep_indices)])
+        return FeatureBlock(
+            block_id=self.block_id,
+            output_kind=self.output_kind,
+            values=matrix,
+            feature_names=self.feature_names,
+        )
+
+
+@dataclass(frozen=True)
 class RowMissingCountGenerator:
     operator_id: str = "row_missing_count"
     fit_mode: FitMode = "stateless"
@@ -344,6 +555,18 @@ def build_feature_generator(
         _validate_no_unknown_params("operator", component_id, params, set())
         return StandardizeNumericGenerator(columns=tuple(feature_schema.numeric_columns))
 
+    if component_id == "robust_scale_numeric":
+        _validate_no_unknown_params("operator", component_id, params, set())
+        return RobustScaleNumericGenerator(columns=tuple(feature_schema.numeric_columns))
+
+    if component_id == "signed_log_expand_numeric":
+        _validate_no_unknown_params("operator", component_id, params, set())
+        return SignedLogExpandNumericGenerator(columns=tuple(feature_schema.numeric_columns))
+
+    if component_id == "quantile_bin_numeric":
+        _validate_no_unknown_params("operator", component_id, params, set())
+        return QuantileBinNumericGenerator(columns=tuple(feature_schema.numeric_columns))
+
     if component_id == "frequency_encode_categoricals":
         _validate_no_unknown_params("operator", component_id, params, {"missing_value"})
         missing_value = str(params.get("missing_value", "__missing__"))
@@ -368,6 +591,30 @@ def build_feature_generator(
         )
         return OneHotLowCardinalityCategoricalsGenerator(columns=eligible_columns)
 
+    if component_id == "target_encode_categoricals":
+        _validate_no_unknown_params("operator", component_id, params, {"smoothing", "missing_value"})
+        smoothing = float(params.get("smoothing", 1.0))
+        if smoothing < 0.0:
+            raise ValueError("operator 'target_encode_categoricals' requires smoothing >= 0.")
+        missing_value = str(params.get("missing_value", "__missing__"))
+        return TargetEncodeCategoricalsGenerator(
+            columns=tuple(feature_schema.categorical_columns),
+            smoothing=smoothing,
+            missing_value=missing_value,
+        )
+
+    if component_id == "rare_category_bucket":
+        _validate_no_unknown_params("operator", component_id, params, {"min_frequency", "missing_value"})
+        min_frequency = float(params.get("min_frequency", 0.01))
+        if min_frequency <= 0.0 or min_frequency >= 1.0:
+            raise ValueError("operator 'rare_category_bucket' requires min_frequency in (0.0, 1.0).")
+        missing_value = str(params.get("missing_value", "__missing__"))
+        return RareCategoryBucketGenerator(
+            columns=tuple(feature_schema.categorical_columns),
+            min_frequency=min_frequency,
+            missing_value=missing_value,
+        )
+
     if component_id == "row_missing_count":
         _validate_no_unknown_params("operator", component_id, params, set())
         return RowMissingCountGenerator()
@@ -388,11 +635,31 @@ def build_feature_pruner(component_id: str, params: dict[str, object]) -> Featur
 
 def validate_component_params(component_id: str, params: dict[str, object], component_kind: str) -> None:
     if component_kind == "operator":
-        if component_id in {"native_numeric", "standardize_numeric", "ordinal_encode_categoricals", "row_missing_count"}:
+        if component_id in {
+            "native_numeric",
+            "standardize_numeric",
+            "robust_scale_numeric",
+            "signed_log_expand_numeric",
+            "quantile_bin_numeric",
+            "ordinal_encode_categoricals",
+            "row_missing_count",
+        }:
             _validate_no_unknown_params(component_kind, component_id, params, set())
             return
         if component_id in {"native_categorical", "frequency_encode_categoricals"}:
             _validate_no_unknown_params(component_kind, component_id, params, {"missing_value"})
+            return
+        if component_id == "rare_category_bucket":
+            _validate_no_unknown_params(component_kind, component_id, params, {"min_frequency", "missing_value"})
+            min_frequency = float(params.get("min_frequency", 0.01))
+            if min_frequency <= 0.0 or min_frequency >= 1.0:
+                raise ValueError("operator 'rare_category_bucket' requires min_frequency in (0.0, 1.0).")
+            return
+        if component_id == "target_encode_categoricals":
+            _validate_no_unknown_params(component_kind, component_id, params, {"smoothing", "missing_value"})
+            smoothing = float(params.get("smoothing", 1.0))
+            if smoothing < 0.0:
+                raise ValueError("operator 'target_encode_categoricals' requires smoothing >= 0.")
             return
         if component_id == "onehot_encode_low_cardinality_categoricals":
             _validate_no_unknown_params(component_kind, component_id, params, {"max_cardinality"})
@@ -417,9 +684,14 @@ SUPPORTED_OPERATOR_IDS = frozenset(
         "native_numeric",
         "native_categorical",
         "standardize_numeric",
+        "robust_scale_numeric",
+        "signed_log_expand_numeric",
+        "quantile_bin_numeric",
         "frequency_encode_categoricals",
         "ordinal_encode_categoricals",
         "onehot_encode_low_cardinality_categoricals",
+        "target_encode_categoricals",
+        "rare_category_bucket",
         "row_missing_count",
     }
 )

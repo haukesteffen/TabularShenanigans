@@ -55,7 +55,15 @@ def _build_bootstrap_representation_summary(
 
     operator_ids = {operator["id"] for operator in normalized_operators}
     has_native_categorical = "native_categorical" in operator_ids
-    has_sparse_numeric = "onehot_encode_low_cardinality_categoricals" in operator_ids
+    has_sparse_numeric = bool(
+        operator_ids.intersection(
+            {
+                "quantile_bin_numeric",
+                "onehot_encode_low_cardinality_categoricals",
+                "rare_category_bucket",
+            }
+        )
+    )
 
     routing_numeric_preprocessor = "custom"
     if operator_ids == {"standardize_numeric"}:
@@ -70,6 +78,8 @@ def _build_bootstrap_representation_summary(
         routing_categorical_preprocessor = "native"
     elif "onehot_encode_low_cardinality_categoricals" in operator_ids:
         routing_categorical_preprocessor = "onehot"
+    elif "target_encode_categoricals" in operator_ids:
+        routing_categorical_preprocessor = "target"
     elif "frequency_encode_categoricals" in operator_ids:
         routing_categorical_preprocessor = "frequency"
     elif "ordinal_encode_categoricals" in operator_ids:
