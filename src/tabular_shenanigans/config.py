@@ -6,7 +6,6 @@ import yaml
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from tabular_shenanigans.data import SUPPORTED_PRIMARY_METRICS, is_metric_valid_for_task, normalize_primary_metric
-from tabular_shenanigans.feature_recipes import IDENTITY_FEATURE_RECIPE_ID, resolve_feature_recipe_id
 from tabular_shenanigans.models import (
     get_tunable_model_ids,
     is_model_tunable,
@@ -19,10 +18,9 @@ from tabular_shenanigans.naming import (
     build_model_candidate_id,
     normalize_blend_weights,
 )
-from tabular_shenanigans.preprocess import (
-    CATEGORICAL_PREPROCESSOR_IDS,
-    NUMERIC_PREPROCESSOR_IDS,
-    build_preprocessing_scheme_id,
+from tabular_shenanigans.representations import (
+    get_representation_definition,
+    resolve_representation_id,
 )
 from tabular_shenanigans.preprocess_execution import resolve_preprocessing_execution_plan
 
@@ -78,20 +76,22 @@ class ModelCandidateConfig(BaseCandidateConfig):
     model_config = ConfigDict(extra="forbid")
 
     candidate_type: Literal["model"] = "model"
-    feature_recipe_id: str = Field(default=IDENTITY_FEATURE_RECIPE_ID, min_length=1)
-    numeric_preprocessor: str | None = None
-    categorical_preprocessor: str | None = None
+    representation_id: str = Field(min_length=1)
     model_family: str = Field(min_length=1)
     model_params: dict[str, object] = Field(default_factory=dict)
     optimization: CandidateOptimizationConfig | None = None
 
     @model_validator(mode="before")
     @classmethod
-    def reject_legacy_preprocessor(cls, values: object) -> object:
-        if isinstance(values, dict) and "preprocessor" in values:
+    def reject_legacy_fields(cls, values: object) -> object:
+        if not isinstance(values, dict):
+            return values
+        legacy_fields = {"preprocessor", "numeric_preprocessor", "categorical_preprocessor", "feature_recipe_id"}
+        found_legacy = sorted(legacy_fields.intersection(values))
+        if found_legacy:
             raise ValueError(
-                "candidate.preprocessor is no longer supported. "
-                "Use candidate.numeric_preprocessor and candidate.categorical_preprocessor."
+                f"Legacy candidate fields {found_legacy} are no longer supported. "
+                "Use candidate.representation_id instead."
             )
         return values
 
@@ -102,37 +102,7 @@ class ModelCandidateConfig(BaseCandidateConfig):
                 "candidate.model_params and candidate.optimization are mutually exclusive. "
                 "Use model_params for fixed training or optimization for tuning, not both."
             )
-
-        if self.numeric_preprocessor is None or self.categorical_preprocessor is None:
-            raise ValueError(
-                "Model candidates require candidate.numeric_preprocessor and "
-                "candidate.categorical_preprocessor."
-            )
-
-        if self.numeric_preprocessor not in NUMERIC_PREPROCESSOR_IDS:
-            raise ValueError(
-                "Unsupported candidate.numeric_preprocessor "
-                f"'{self.numeric_preprocessor}'. Supported values: {sorted(NUMERIC_PREPROCESSOR_IDS)}"
-            )
-
-        if self.categorical_preprocessor not in CATEGORICAL_PREPROCESSOR_IDS:
-            raise ValueError(
-                "Unsupported candidate.categorical_preprocessor "
-                f"'{self.categorical_preprocessor}'. Supported values: {sorted(CATEGORICAL_PREPROCESSOR_IDS)}"
-            )
         return self
-
-    @property
-    def preprocessing_scheme_id(self) -> str:
-        if self.numeric_preprocessor is None or self.categorical_preprocessor is None:
-            raise ValueError(
-                "preprocessing_scheme_id requires candidate.numeric_preprocessor and "
-                "candidate.categorical_preprocessor."
-            )
-        return build_preprocessing_scheme_id(
-            numeric_preprocessor_id=self.numeric_preprocessor,
-            categorical_preprocessor_id=self.categorical_preprocessor,
-        )
 
 
 class BlendCandidateConfig(BaseCandidateConfig):
@@ -264,12 +234,13 @@ class AppConfig(BaseModel):
         for candidate_index, candidate in enumerate(self.experiment.candidates, start=1):
             try:
                 if isinstance(candidate, ModelCandidateConfig):
-                    candidate.feature_recipe_id = resolve_feature_recipe_id(candidate.feature_recipe_id)
+                    candidate.representation_id = resolve_representation_id(candidate.representation_id)
+                    representation_definition = get_representation_definition(candidate.representation_id)
                     resolved_model_registry_key = self.resolve_model_registry_key_for_index(candidate_index - 1)
                     validate_model_preprocessing_compatibility(
                         task_type=competition.task_type,
                         model_id=resolved_model_registry_key,
-                        categorical_preprocessor_id=candidate.categorical_preprocessor,
+                        categorical_preprocessor_id=representation_definition.categorical_preprocessor_id,
                     )
                     validate_model_parameter_overrides(
                         task_type=competition.task_type,
@@ -434,14 +405,15 @@ class AppConfig(BaseModel):
         if not isinstance(candidate, ModelCandidateConfig):
             return runtime_execution_context
 
+        representation_definition = get_representation_definition(candidate.representation_id)
         resolved_runtime_execution_context = resolve_model_candidate_runtime_execution(
             requested_compute_target=self.experiment.runtime.compute_target,
             requested_gpu_backend=self.experiment.runtime.gpu_backend,
             capabilities=runtime_execution_context.capabilities,
             task_type=self.competition.task_type,
             model_family=candidate.model_family,
-            numeric_preprocessor=candidate.numeric_preprocessor,
-            categorical_preprocessor=candidate.categorical_preprocessor,
+            numeric_preprocessor=representation_definition.numeric_preprocessor_id,
+            categorical_preprocessor=representation_definition.categorical_preprocessor_id,
         )
         return resolved_runtime_execution_context.__class__(
             requested_compute_target=resolved_runtime_execution_context.requested_compute_target,
@@ -460,17 +432,18 @@ class AppConfig(BaseModel):
         if not isinstance(candidate, ModelCandidateConfig):
             raise ValueError("preprocessing_execution_plan is only available for model candidates.")
 
+        representation_definition = get_representation_definition(candidate.representation_id)
         runtime_execution_context = self.runtime_execution_context_for_index(candidate_index)
         matrix_output_kind = resolve_model_matrix_output_kind(
             task_type=self.competition.task_type,
             model_id=self.resolve_model_registry_key_for_index(candidate_index),
-            categorical_preprocessor_id=candidate.categorical_preprocessor,
+            categorical_preprocessor_id=representation_definition.categorical_preprocessor_id,
             runtime_execution_context=runtime_execution_context,
         )
         return resolve_preprocessing_execution_plan(
             runtime_execution_context=runtime_execution_context,
-            numeric_preprocessor_id=candidate.numeric_preprocessor,
-            categorical_preprocessor_id=candidate.categorical_preprocessor,
+            numeric_preprocessor_id=representation_definition.numeric_preprocessor_id,
+            categorical_preprocessor_id=representation_definition.categorical_preprocessor_id,
             matrix_output_kind=matrix_output_kind,
         )
 
@@ -492,10 +465,7 @@ class AppConfig(BaseModel):
                     "positive_label": competition.positive_label,
                 },
                 "candidate": {
-                    "feature_recipe_id": candidate.feature_recipe_id,
-                    "numeric_preprocessor": candidate.numeric_preprocessor,
-                    "categorical_preprocessor": candidate.categorical_preprocessor,
-                    "preprocessing_scheme_id": candidate.preprocessing_scheme_id,
+                    "representation_id": candidate.representation_id,
                     "model_family": candidate.model_family,
                     "model_registry_key": self.resolve_model_registry_key_for_index(candidate_index),
                     "model_params": candidate.model_params,
@@ -511,9 +481,8 @@ class AppConfig(BaseModel):
                 },
             }
             return build_model_candidate_id(
-                feature_recipe_id=candidate.feature_recipe_id,
-                preprocessing_scheme_id=candidate.preprocessing_scheme_id,
                 model_registry_key=self.resolve_model_registry_key_for_index(candidate_index),
+                representation_id=candidate.representation_id,
                 fingerprint_payload=fingerprint_payload,
             )
 
