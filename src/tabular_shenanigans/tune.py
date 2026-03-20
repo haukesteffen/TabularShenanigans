@@ -154,18 +154,16 @@ def run_optimization(
 
     def objective(trial: optuna.Trial) -> float:
         parameter_overrides = build_tuning_space(task_type, tuning_model_spec.model_registry_key, trial)
-        trial_run = None
-        if config.active_run_stage != "screening":
-            trial_run = create_trial_run(
-                config=config,
-                candidate_run=candidate_run,
-                trial_number=trial.number,
-                hyperparams=parameter_overrides,
-                representation_id=training_context.representation_id,
-                model_family=config.experiment.candidate.model_family,
-                model_registry_key=tuning_model_spec.model_registry_key,
-                preprocessing_backend=training_context.preprocessing_backend,
-            )
+        trial_run = create_trial_run(
+            config=config,
+            candidate_run=candidate_run,
+            trial_number=trial.number,
+            hyperparams=parameter_overrides,
+            representation_id=training_context.representation_id,
+            model_family=config.experiment.candidate.model_family,
+            model_registry_key=tuning_model_spec.model_registry_key,
+            preprocessing_backend=training_context.preprocessing_backend,
+        )
         trial_start = time.time()
         try:
             cv_evaluation = score_model_spec(

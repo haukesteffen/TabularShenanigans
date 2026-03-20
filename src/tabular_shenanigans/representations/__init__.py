@@ -91,13 +91,24 @@ def build_representation_contract(
         operator_ids.intersection(
             {
                 "standardize_numeric",
+                "robust_scale_numeric",
+                "signed_log_expand_numeric",
                 "frequency_encode_categoricals",
                 "ordinal_encode_categoricals",
+                "target_encode_categoricals",
                 "row_missing_count",
             }
         )
     )
-    has_sparse_numeric = "onehot_encode_low_cardinality_categoricals" in operator_ids
+    has_sparse_numeric = bool(
+        operator_ids.intersection(
+            {
+                "quantile_bin_numeric",
+                "onehot_encode_low_cardinality_categoricals",
+                "rare_category_bucket",
+            }
+        )
+    )
     has_native_categorical = "native_categorical" in operator_ids
     has_native_numeric = "native_numeric" in operator_ids
     has_native_tabular = has_native_categorical or has_native_numeric
@@ -128,6 +139,8 @@ def build_representation_contract(
         routing_categorical_preprocessor = "native"
     elif operator_ids.intersection({"onehot_encode_low_cardinality_categoricals"}):
         routing_categorical_preprocessor = "onehot"
+    elif operator_ids.intersection({"target_encode_categoricals"}):
+        routing_categorical_preprocessor = "target"
     elif operator_ids.intersection({"frequency_encode_categoricals"}):
         routing_categorical_preprocessor = "frequency"
     elif operator_ids.intersection({"ordinal_encode_categoricals"}):
