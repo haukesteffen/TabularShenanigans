@@ -2,13 +2,86 @@ from dataclasses import dataclass
 from pathlib import Path
 
 import yaml
+from tabular_shenanigans.naming import _short_hash
 
 
 @dataclass(frozen=True)
 class BootstrapCandidateRuntimeConfig:
     candidate_type: str | None = None
     model_family: str | None = None
+    representation: dict[str, object] | None = None
     representation_id: str | None = None
+    routing_numeric_preprocessor: str = "custom"
+    routing_categorical_preprocessor: str = "custom"
+    has_native_categorical: bool = False
+    has_sparse_numeric: bool = False
+
+
+def _normalize_representation_component_payload(component: object, field_name: str) -> dict[str, object]:
+    if not isinstance(component, dict):
+        raise ValueError(f"{field_name} entries must be mappings.")
+    component_id = component.get("id")
+    if not isinstance(component_id, str) or not component_id:
+        raise ValueError(f"{field_name} entries must include a non-empty string 'id'.")
+    return {
+        "id": component_id,
+        "params": {str(key): value for key, value in component.items() if key != "id"},
+    }
+
+
+def _build_bootstrap_representation_summary(
+    representation: dict[str, object] | None,
+) -> tuple[str | None, str, str, bool, bool]:
+    if representation is None:
+        return None, "custom", "custom", False, False
+
+    operators = representation.get("operators")
+    pruners = representation.get("pruners", [])
+    if not isinstance(operators, list) or not operators:
+        raise ValueError("representation.operators must be a non-empty list.")
+    if not isinstance(pruners, list):
+        raise ValueError("representation.pruners must be a list when provided.")
+
+    normalized_operators = [
+        _normalize_representation_component_payload(component, "representation.operators")
+        for component in operators
+    ]
+    normalized_pruners = [
+        _normalize_representation_component_payload(component, "representation.pruners")
+        for component in pruners
+    ]
+    fingerprint_payload = {"operators": normalized_operators, "pruners": normalized_pruners}
+    representation_id = f"repr-{_short_hash(fingerprint_payload)}"
+
+    operator_ids = {operator["id"] for operator in normalized_operators}
+    has_native_categorical = "native_categorical" in operator_ids
+    has_sparse_numeric = "onehot_encode_low_cardinality_categoricals" in operator_ids
+
+    routing_numeric_preprocessor = "custom"
+    if operator_ids == {"standardize_numeric"}:
+        routing_numeric_preprocessor = "standardize"
+    elif operator_ids == {"native_numeric"}:
+        routing_numeric_preprocessor = "median"
+    elif "standardize_numeric" in operator_ids and "native_numeric" not in operator_ids:
+        routing_numeric_preprocessor = "standardize"
+
+    routing_categorical_preprocessor = "custom"
+    if has_native_categorical and not has_sparse_numeric:
+        routing_categorical_preprocessor = "native"
+    elif "onehot_encode_low_cardinality_categoricals" in operator_ids:
+        routing_categorical_preprocessor = "onehot"
+    elif "frequency_encode_categoricals" in operator_ids:
+        routing_categorical_preprocessor = "frequency"
+    elif "ordinal_encode_categoricals" in operator_ids:
+        routing_categorical_preprocessor = "ordinal"
+
+    return (
+        representation_id,
+        routing_numeric_preprocessor,
+        routing_categorical_preprocessor,
+        has_native_categorical,
+        has_sparse_numeric,
+    )
 
 
 @dataclass(frozen=True)
@@ -55,10 +128,23 @@ def _coerce_bootstrap_candidate(candidate: object) -> BootstrapCandidateRuntimeC
         return BootstrapCandidateRuntimeConfig()
     if not isinstance(candidate, dict):
         raise ValueError("experiment.candidates items must be mappings when provided.")
+    representation = candidate.get("representation") if isinstance(candidate.get("representation"), dict) else None
+    (
+        representation_id,
+        routing_numeric_preprocessor,
+        routing_categorical_preprocessor,
+        has_native_categorical,
+        has_sparse_numeric,
+    ) = _build_bootstrap_representation_summary(representation)
     return BootstrapCandidateRuntimeConfig(
         candidate_type=candidate.get("candidate_type"),
         model_family=candidate.get("model_family"),
-        representation_id=candidate.get("representation_id"),
+        representation=representation,
+        representation_id=representation_id,
+        routing_numeric_preprocessor=routing_numeric_preprocessor,
+        routing_categorical_preprocessor=routing_categorical_preprocessor,
+        has_native_categorical=has_native_categorical,
+        has_sparse_numeric=has_sparse_numeric,
     )
 
 
@@ -118,16 +204,29 @@ def load_bootstrap_runtime_config(path: str | Path = "config.yaml") -> Bootstrap
 
     screening_candidate_list: list[BootstrapCandidateRuntimeConfig] = []
     if screening is not None:
-        screening_repr_ids = screening.get("representation_ids")
+        screening_representations = screening.get("representations")
         screening_model_families = screening.get("model_families")
-        if isinstance(screening_repr_ids, list) and isinstance(screening_model_families, list):
-            for repr_id in screening_repr_ids:
+        if isinstance(screening_representations, list) and isinstance(screening_model_families, list):
+            for representation in screening_representations:
                 for model_family in screening_model_families:
+                    normalized_representation = representation if isinstance(representation, dict) else None
+                    (
+                        representation_id,
+                        routing_numeric_preprocessor,
+                        routing_categorical_preprocessor,
+                        has_native_categorical,
+                        has_sparse_numeric,
+                    ) = _build_bootstrap_representation_summary(normalized_representation)
                     screening_candidate_list.append(
                         BootstrapCandidateRuntimeConfig(
                             candidate_type="model",
                             model_family=model_family if isinstance(model_family, str) else None,
-                            representation_id=repr_id if isinstance(repr_id, str) else None,
+                            representation=normalized_representation,
+                            representation_id=representation_id,
+                            routing_numeric_preprocessor=routing_numeric_preprocessor,
+                            routing_categorical_preprocessor=routing_categorical_preprocessor,
+                            has_native_categorical=has_native_categorical,
+                            has_sparse_numeric=has_sparse_numeric,
                         )
                     )
 

@@ -79,6 +79,7 @@ def _build_config_snapshot(
     )
     config_snapshot["resolved_model_registry_key"] = model_spec.model_registry_key
     config_snapshot["resolved_representation_id"] = candidate.representation_id
+    config_snapshot["resolved_representation"] = candidate.representation.to_payload()
     if model_spec.parameter_overrides:
         config_snapshot["resolved_model_parameter_overrides"] = model_spec.parameter_overrides
     if tuning_provenance is not None:
@@ -124,6 +125,7 @@ def _build_candidate_manifest(
         "mlflow_run_id": mlflow_run_id,
         "model_family": candidate.model_family,
         "representation_id": candidate.representation_id,
+        "representation": candidate.representation.to_payload(),
         "feature_columns": training_context.x_train_features.columns.tolist(),
         "preprocessing_backend": training_context.preprocessing_backend,
         "model_registry_key": model_result.model_registry_key,

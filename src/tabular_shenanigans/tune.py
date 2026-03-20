@@ -47,6 +47,7 @@ def _build_optimization_config_snapshot(
     )
     config_snapshot["resolved_model_registry_key"] = tuning_model_spec.model_registry_key
     config_snapshot["resolved_representation_id"] = training_context.representation_id
+    config_snapshot["resolved_representation"] = config.experiment.candidate.representation.to_payload()
     return config_snapshot
 
 
