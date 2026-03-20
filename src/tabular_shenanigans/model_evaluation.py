@@ -19,8 +19,8 @@ from tabular_shenanigans.preprocess import prepare_feature_frames
 from tabular_shenanigans.representations import (
     CompiledRepresentation,
     ResolvedFeatureSchema,
+    build_representation_contract,
     compile_representation,
-    get_representation_definition,
     resolve_feature_schema,
 )
 
@@ -153,8 +153,9 @@ def build_prepared_training_context(
         negative_label=negative_label,
         observed_label_pair=observed_label_pair,
     )
-    representation_id = candidate.representation_id
-    representation_definition = get_representation_definition(representation_id)
+    representation_spec = candidate.representation.to_runtime_spec()
+    representation_contract = build_representation_contract(representation_spec)
+    representation_id = representation_spec.representation_id
     feature_schema = resolve_feature_schema(
         x_train_raw=x_train_raw,
         force_categorical=features.force_categorical,
@@ -163,11 +164,10 @@ def build_prepared_training_context(
     )
     runtime_execution_context = config.runtime_execution_context
     compiled_representation = compile_representation(
-        definition=representation_definition,
+        representation_spec=representation_spec,
         feature_schema=feature_schema,
-        runtime_execution_context=runtime_execution_context,
-        task_type=competition.task_type,
-        model_id=config.resolved_model_registry_key,
+        x_train_sample=x_train_raw,
+        representation_contract=representation_contract,
     )
     uses_xgboost_gpu_native_inputs = (
         config.resolved_model_registry_key == "xgboost"

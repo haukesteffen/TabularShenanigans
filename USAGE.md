@@ -86,7 +86,7 @@ Optional top-level section: `screening`.
 
 `train` drains `experiment.candidates` in order unless narrowed with `--candidate-id` or `--index`. `submit --index <n>` uses a 1-based index into this list.
 
-`screening` evaluates the valid cross-product of `screening.representation_ids` and `screening.model_families`, then prints a copy/paste-ready YAML snippet for the top `screening.promote_top_k` candidates to paste into `experiment.candidates`.
+`screening` evaluates the valid cross-product of `screening.representations` and `screening.model_families`, then prints a copy/paste-ready YAML snippet for the top `screening.promote_top_k` candidates to paste into `experiment.candidates`.
 
 #### Candidate Shapes
 
@@ -95,13 +95,15 @@ Optional top-level section: `screening`.
 - `model_family`:
   - regression: `ridge`, `elasticnet`, `random_forest`, `extra_trees`, `hist_gradient_boosting`, `realmlp`, `lightgbm`, `catboost`, `xgboost`
   - binary: `logistic_regression`, `random_forest`, `extra_trees`, `hist_gradient_boosting`, `realmlp`, `lightgbm`, `catboost`, `xgboost`
-- `representation_id`: registered representation (e.g., `median-native`, `standardize-onehot`, `kbins-frequency`, or competition-specific like `s6e3_fr1-median-native`)
+- `representation`: explicit operator/pruner spec
+  - `operators`: one or more operator entries like `standardize_numeric`, `native_numeric`, `native_categorical`, `ordinal_encode_categoricals`, `frequency_encode_categoricals`, `onehot_encode_low_cardinality_categoricals`, `row_missing_count`
+  - `pruners`: optional pruner entries like `high_correlation_prune`
 - optional `model_params`: manual estimator overrides
   - `logistic_regression` is `saga`-only; `model_params` uses `l1_ratio` only; `penalty` and `solver` are not supported
 - optional `optimization`
   - logistic regression Optuna trials fix `solver="saga"` and `max_iter=1000`, tune `C`, `tol`, `class_weight`, and `l1_ratio`
 
-Hard-invalid: representations with `native` categorical preprocessor and any `model_family` other than `catboost` or `realmlp`.
+Hard-invalid: representations with `native_categorical` and any `model_family` other than `catboost` or `realmlp`.
 
 **Blend candidate:**
 - `candidate_type: blend`
@@ -119,8 +121,8 @@ Hard-invalid: representations with `native` categorical preprocessor and any `mo
 
 | Key | Required | Notes |
 | --- | --- | --- |
-| `representation_ids` | yes | registered representation IDs; screening expands these against `model_families` |
-| `model_families` | yes | model families to screen against `representation_ids` |
+| `representations` | yes | explicit representation specs; screening expands these against `model_families` |
+| `model_families` | yes | model families to screen against `representations` |
 | `optimization` | no | optional shared tuning budget applied to each valid screening candidate |
 | `cv.n_splits` | no | defaults to `2` |
 | `cv.shuffle` | no | defaults to `true` |

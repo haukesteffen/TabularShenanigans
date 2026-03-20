@@ -11,7 +11,7 @@ from tabular_shenanigans.models import (
     is_model_tunable,
     resolve_candidate_model_id,
     validate_model_parameter_overrides,
-    validate_model_preprocessing_compatibility,
+    validate_model_representation_compatibility,
 )
 from tabular_shenanigans.naming import (
     build_blend_candidate_id,
@@ -19,8 +19,9 @@ from tabular_shenanigans.naming import (
     normalize_blend_weights,
 )
 from tabular_shenanigans.representations import (
-    get_representation_definition,
-    resolve_representation_id,
+    build_representation_contract,
+    build_representation_spec_from_payload,
+    validate_representation_spec,
 )
 from tabular_shenanigans.preprocess_execution import resolve_preprocessing_execution_plan
 
@@ -71,10 +72,40 @@ class CompetitionConfig(BaseModel):
     features: CompetitionFeaturesConfig = Field(default_factory=CompetitionFeaturesConfig)
 
 
+class RepresentationComponentConfig(BaseModel):
+    model_config = ConfigDict(extra="allow")
+
+    id: str = Field(min_length=1)
+
+    def params(self) -> dict[str, object]:
+        return dict(self.model_extra or {})
+
+    def to_payload(self) -> dict[str, object]:
+        return {"id": self.id, **self.params()}
+
+
+class RepresentationConfig(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    operators: list[RepresentationComponentConfig] = Field(min_length=1)
+    pruners: list[RepresentationComponentConfig] = Field(default_factory=list)
+
+    def to_payload(self) -> dict[str, object]:
+        return {
+            "operators": [operator.to_payload() for operator in self.operators],
+            "pruners": [pruner.to_payload() for pruner in self.pruners],
+        }
+
+    def to_runtime_spec(self):
+        representation_spec = build_representation_spec_from_payload(self.to_payload())
+        validate_representation_spec(representation_spec)
+        return representation_spec
+
+
 class ScreeningConfig(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
-    representation_ids: list[str] = Field(min_length=1)
+    representations: list[RepresentationConfig] = Field(min_length=1)
     model_families: list[str] = Field(min_length=1)
     optimization: "CandidateOptimizationConfig | None" = None
     cv: CompetitionCvConfig = Field(
@@ -92,8 +123,13 @@ class ScreeningConfig(BaseModel):
         if "candidates" in values:
             raise ValueError(
                 "screening.candidates is not a user-facing field. "
-                "Use screening.representation_ids and screening.model_families instead. "
+                "Use screening.representations and screening.model_families instead. "
                 "The candidates list is built automatically from the cross-product."
+            )
+        if "representation_ids" in values:
+            raise ValueError(
+                "screening.representation_ids is no longer supported. "
+                "Use screening.representations."
             )
         return values
 
@@ -119,7 +155,8 @@ class ModelCandidateConfig(BaseCandidateConfig):
     model_config = ConfigDict(extra="forbid")
 
     candidate_type: Literal["model"] = "model"
-    representation_id: str = Field(min_length=1)
+    representation: RepresentationConfig
+    representation_id: str = Field(default="", exclude=True)
     model_family: str = Field(min_length=1)
     model_params: dict[str, object] = Field(default_factory=dict)
     optimization: CandidateOptimizationConfig | None = None
@@ -129,12 +166,18 @@ class ModelCandidateConfig(BaseCandidateConfig):
     def reject_legacy_fields(cls, values: object) -> object:
         if not isinstance(values, dict):
             return values
-        legacy_fields = {"preprocessor", "numeric_preprocessor", "categorical_preprocessor", "feature_recipe_id"}
+        legacy_fields = {
+            "representation_id",
+            "preprocessor",
+            "numeric_preprocessor",
+            "categorical_preprocessor",
+            "feature_recipe_id",
+        }
         found_legacy = sorted(legacy_fields.intersection(values))
         if found_legacy:
             raise ValueError(
                 f"Legacy candidate fields {found_legacy} are no longer supported. "
-                "Use candidate.representation_id instead."
+                "Use candidate.representation."
             )
         return values
 
@@ -145,6 +188,7 @@ class ModelCandidateConfig(BaseCandidateConfig):
                 "candidate.model_params and candidate.optimization are mutually exclusive. "
                 "Use model_params for fixed training or optimization for tuning, not both."
             )
+        self.representation_id = self.representation.to_runtime_spec().representation_id
         return self
 
 
@@ -265,13 +309,13 @@ class AppConfig(BaseModel):
         for candidate_index, candidate in enumerate(self.experiment.candidates, start=1):
             try:
                 if isinstance(candidate, ModelCandidateConfig):
-                    candidate.representation_id = resolve_representation_id(candidate.representation_id)
-                    representation_definition = get_representation_definition(candidate.representation_id)
+                    representation_spec = candidate.representation.to_runtime_spec()
+                    representation_contract = build_representation_contract(representation_spec)
                     resolved_model_registry_key = self.resolve_model_registry_key_for_index(candidate_index - 1)
-                    validate_model_preprocessing_compatibility(
+                    validate_model_representation_compatibility(
                         task_type=competition.task_type,
                         model_id=resolved_model_registry_key,
-                        categorical_preprocessor_id=representation_definition.categorical_preprocessor_id,
+                        representation_contract=representation_contract,
                     )
                     validate_model_parameter_overrides(
                         task_type=competition.task_type,
@@ -317,11 +361,11 @@ class AppConfig(BaseModel):
         if self.screening is not None:
             screening = self.screening
 
-            resolved_representation_ids = []
-            for raw_repr_id in screening.representation_ids:
-                resolved_repr_id = resolve_representation_id(raw_repr_id)
-                get_representation_definition(resolved_repr_id)
-                resolved_representation_ids.append(resolved_repr_id)
+            resolved_representations = []
+            for representation in screening.representations:
+                representation_spec = representation.to_runtime_spec()
+                representation_contract = build_representation_contract(representation_spec)
+                resolved_representations.append((representation, representation_spec, representation_contract))
 
             resolved_model_families: list[tuple[str, str]] = []
             for raw_model_family in screening.model_families:
@@ -332,24 +376,23 @@ class AppConfig(BaseModel):
                 resolved_model_families.append((raw_model_family, resolved_model_id))
 
             expanded_candidates: list[ModelCandidateConfig] = []
-            for repr_id in resolved_representation_ids:
-                representation_definition = get_representation_definition(repr_id)
+            for representation, representation_spec, representation_contract in resolved_representations:
                 for model_family, model_registry_key in resolved_model_families:
                     try:
-                        validate_model_preprocessing_compatibility(
+                        validate_model_representation_compatibility(
                             task_type=competition.task_type,
                             model_id=model_registry_key,
-                            categorical_preprocessor_id=representation_definition.categorical_preprocessor_id,
+                            representation_contract=representation_contract,
                         )
                     except ValueError as exc:
                         print(
                             f"Screening: skipping incompatible pair "
-                            f"(model_family={model_family!r}, representation_id={repr_id!r}): {exc}"
+                            f"(model_family={model_family!r}, representation_id={representation_spec.representation_id!r}): {exc}"
                         )
                         continue
                     expanded_candidates.append(
                         ModelCandidateConfig(
-                            representation_id=repr_id,
+                            representation=representation.model_copy(deep=True),
                             model_family=model_family,
                             optimization=screening.optimization.model_copy(deep=True)
                             if screening.optimization is not None
@@ -359,7 +402,7 @@ class AppConfig(BaseModel):
 
             if not expanded_candidates:
                 raise ValueError(
-                    "screening: no valid (model_family, representation_id) pairs survived "
+                    "screening: no valid (model_family, representation) pairs survived "
                     "compatibility checks. All cross-product pairs were incompatible."
                 )
 
@@ -563,6 +606,22 @@ class AppConfig(BaseModel):
             model_family=candidate.model_family,
         )
 
+    def resolve_representation_spec_for_index(self, candidate_index: int | None = None):
+        candidate = self.get_candidate(candidate_index)
+        if not isinstance(candidate, ModelCandidateConfig):
+            raise ValueError("representation spec is only available for model candidates.")
+        return candidate.representation.to_runtime_spec()
+
+    def resolve_representation_contract_for_index(self, candidate_index: int | None = None):
+        return build_representation_contract(self.resolve_representation_spec_for_index(candidate_index))
+
+    def resolve_screening_representation_spec_for_index(self, candidate_index: int | None = None):
+        candidate = self.get_screening_candidate(candidate_index)
+        return candidate.representation.to_runtime_spec()
+
+    def resolve_screening_representation_contract_for_index(self, candidate_index: int | None = None):
+        return build_representation_contract(self.resolve_screening_representation_spec_for_index(candidate_index))
+
     def resolve_blend_weights_for_index(self, candidate_index: int | None = None) -> list[float]:
         candidate = self.get_candidate(candidate_index)
         if not isinstance(candidate, BlendCandidateConfig):
@@ -610,15 +669,15 @@ class AppConfig(BaseModel):
         if not isinstance(candidate, ModelCandidateConfig):
             return runtime_execution_context
 
-        representation_definition = get_representation_definition(candidate.representation_id)
+        representation_contract = self.resolve_representation_contract_for_index(candidate_index)
         resolved_runtime_execution_context = resolve_model_candidate_runtime_execution(
             requested_compute_target=self.experiment.runtime.compute_target,
             requested_gpu_backend=self.experiment.runtime.gpu_backend,
             capabilities=runtime_execution_context.capabilities,
             task_type=self.competition.task_type,
             model_family=candidate.model_family,
-            numeric_preprocessor=representation_definition.numeric_preprocessor_id,
-            categorical_preprocessor=representation_definition.categorical_preprocessor_id,
+            numeric_preprocessor=representation_contract.routing_numeric_preprocessor,
+            categorical_preprocessor=representation_contract.routing_categorical_preprocessor,
         )
         return resolved_runtime_execution_context.__class__(
             requested_compute_target=resolved_runtime_execution_context.requested_compute_target,
@@ -631,25 +690,17 @@ class AppConfig(BaseModel):
         )
 
     def preprocessing_execution_plan_for_index(self, candidate_index: int | None = None):
-        from tabular_shenanigans.models import resolve_model_matrix_output_kind
-
         candidate = self.get_candidate(candidate_index)
         if not isinstance(candidate, ModelCandidateConfig):
             raise ValueError("preprocessing_execution_plan is only available for model candidates.")
 
-        representation_definition = get_representation_definition(candidate.representation_id)
+        representation_contract = self.resolve_representation_contract_for_index(candidate_index)
         runtime_execution_context = self.runtime_execution_context_for_index(candidate_index)
-        matrix_output_kind = resolve_model_matrix_output_kind(
-            task_type=self.competition.task_type,
-            model_id=self.resolve_model_registry_key_for_index(candidate_index),
-            categorical_preprocessor_id=representation_definition.categorical_preprocessor_id,
-            runtime_execution_context=runtime_execution_context,
-        )
         return resolve_preprocessing_execution_plan(
             runtime_execution_context=runtime_execution_context,
-            numeric_preprocessor_id=representation_definition.numeric_preprocessor_id,
-            categorical_preprocessor_id=representation_definition.categorical_preprocessor_id,
-            matrix_output_kind=matrix_output_kind,
+            numeric_preprocessor_id=representation_contract.routing_numeric_preprocessor,
+            categorical_preprocessor_id=representation_contract.routing_categorical_preprocessor,
+            matrix_output_kind=representation_contract.matrix_output_kind,
         )
 
     def resolve_candidate_id_for_index(self, candidate_index: int | None = None) -> str:
@@ -663,6 +714,7 @@ class AppConfig(BaseModel):
                 "competition": _competition_identity_fingerprint_payload(competition),
                 "candidate": {
                     "representation_id": candidate.representation_id,
+                    "representation": candidate.representation.to_payload(),
                     "model_family": candidate.model_family,
                     "model_registry_key": self.resolve_model_registry_key_for_index(candidate_index),
                     "model_params": candidate.model_params,
@@ -705,6 +757,7 @@ class AppConfig(BaseModel):
             "competition": _competition_identity_fingerprint_payload(competition),
             "candidate": {
                 "representation_id": candidate.representation_id,
+                "representation": candidate.representation.to_payload(),
                 "model_family": candidate.model_family,
                 "model_registry_key": self.resolve_screening_model_registry_key_for_index(candidate_index),
                 "model_params": candidate.model_params,

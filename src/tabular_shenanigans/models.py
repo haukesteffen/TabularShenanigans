@@ -16,6 +16,8 @@ from tabular_shenanigans._model_registry import (
     resolve_candidate_model_id,
     resolve_model_id,
     resolve_model_matrix_output_kind,
+    validate_model_output_compatibility,
+    validate_model_representation_compatibility,
     validate_model_preprocessing_compatibility,
 )
 from tabular_shenanigans._model_types import (
@@ -46,6 +48,8 @@ __all__ = [
     "resolve_candidate_model_id",
     "resolve_model_id",
     "resolve_model_matrix_output_kind",
+    "validate_model_output_compatibility",
+    "validate_model_representation_compatibility",
     "validate_model_parameter_overrides",
     "validate_model_preprocessing_compatibility",
 ]

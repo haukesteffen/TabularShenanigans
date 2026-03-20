@@ -37,6 +37,7 @@ from tabular_shenanigans._model_builders import (
     build_xgboost_tuning_space,
 )
 from tabular_shenanigans._model_types import GpuRoutingRule, ModelDefinition
+from tabular_shenanigans.representations.types import RepresentationContract
 from tabular_shenanigans.runtime_execution import (
     CPU_GPU_BACKEND,
     NATIVE_GPU_BACKEND,
@@ -451,6 +452,44 @@ def validate_model_preprocessing_compatibility(
         "categorical_preprocessor='native'. "
         f"Supported native categorical model families: {native_model_families}."
     )
+
+
+def validate_model_representation_compatibility(
+    task_type: str,
+    model_id: str,
+    representation_contract: RepresentationContract,
+) -> None:
+    validate_model_output_compatibility(
+        task_type=task_type,
+        model_id=model_id,
+        has_native_categorical=representation_contract.has_native_categorical,
+        has_sparse_numeric=representation_contract.has_sparse_numeric,
+    )
+
+
+def validate_model_output_compatibility(
+    task_type: str,
+    model_id: str,
+    has_native_categorical: bool,
+    has_sparse_numeric: bool,
+) -> None:
+    model_definition = get_model_definition(task_type, model_id)
+
+    if has_native_categorical and not model_definition.supports_native_categorical_preprocessing:
+        native_model_families = sorted(
+            candidate_model_id
+            for candidate_model_id, candidate_definition in get_task_model_registry(task_type).items()
+            if candidate_definition.supports_native_categorical_preprocessing
+        )
+        raise ValueError(
+            f"Model family '{model_definition.model_id}' does not support native categorical representations. "
+            f"Supported native categorical model families: {native_model_families}."
+        )
+
+    if has_sparse_numeric and not model_definition.supports_sparse_preprocessed_input:
+        raise ValueError(
+            f"Model family '{model_definition.model_id}' does not support sparse numeric representations."
+        )
 
 
 def resolve_model_matrix_output_kind(

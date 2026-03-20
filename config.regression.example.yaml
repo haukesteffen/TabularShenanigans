@@ -37,7 +37,12 @@ experiment:
     # Remove entries you do not want to include in the current train batch.
     - candidate_type: model
       model_family: elasticnet
-      representation_id: standardize-onehot
+      representation:
+        operators:
+          - id: standardize_numeric
+          - id: onehot_encode_low_cardinality_categoricals
+            max_cardinality: 20
+        pruners: []
       model_params: {}
       # To enable optimization, replace model_params with an optimization block:
       # optimization:
@@ -48,7 +53,11 @@ experiment:
 
     - candidate_type: model
       model_family: lightgbm
-      representation_id: median-ordinal
+      representation:
+        operators:
+          - id: native_numeric
+          - id: ordinal_encode_categoricals
+        pruners: []
       model_params: {}
 
     # Optional blend candidate shape:
@@ -60,13 +69,20 @@ experiment:
     #     - 0.5
     #     - 0.5
 
-# Optional screening stage — evaluates the cross-product of representation_ids x model_families
+# Optional screening stage — evaluates the cross-product of representations x model_families
 # with a cheap reduced-fold CV, then prints a promotion snippet for the top-k candidates.
 # screening:
-#   representation_ids:
-#     - standardize-onehot
-#     - median-ordinal
-#     - median-frequency
+#   representations:
+#     - operators:
+#         - id: standardize_numeric
+#         - id: onehot_encode_low_cardinality_categoricals
+#           max_cardinality: 20
+#     - operators:
+#         - id: native_numeric
+#         - id: ordinal_encode_categoricals
+#     - operators:
+#         - id: native_numeric
+#         - id: frequency_encode_categoricals
 #   model_families:
 #     - lightgbm
 #     - xgboost

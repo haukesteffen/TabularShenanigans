@@ -81,23 +81,20 @@ def _raise_mixed_patch_runtime_error(selection: BootstrapCliSelection) -> None:
 def _filter_compatible_screening_candidates(
     screening_candidates: tuple,
     task_type: str,
-    representation_registry: dict,
     resolve_model_id_fn,
     validate_compatibility_fn,
 ) -> tuple:
     filtered = []
     for candidate in screening_candidates:
-        if candidate.model_family is None or candidate.representation_id is None:
-            continue
-        representation_definition = representation_registry.get(candidate.representation_id)
-        if representation_definition is None:
+        if candidate.model_family is None or candidate.representation is None:
             continue
         try:
             model_id = resolve_model_id_fn(task_type=task_type, model_family=candidate.model_family)
             validate_compatibility_fn(
                 task_type=task_type,
                 model_id=model_id,
-                categorical_preprocessor_id=representation_definition.categorical_preprocessor_id,
+                has_native_categorical=candidate.has_native_categorical,
+                has_sparse_numeric=candidate.has_sparse_numeric,
             )
         except ValueError:
             continue
@@ -111,8 +108,7 @@ def _apply_runtime_bootstrap(argv: list[str] | None) -> None:
 
     from tabular_shenanigans.bootstrap_config import load_bootstrap_runtime_config
     from tabular_shenanigans.execution_routing import resolve_model_candidate_runtime_execution
-    from tabular_shenanigans.models import resolve_candidate_model_id, validate_model_preprocessing_compatibility
-    from tabular_shenanigans.representations.registry import REPRESENTATION_REGISTRY
+    from tabular_shenanigans.models import resolve_candidate_model_id, validate_model_output_compatibility
     from tabular_shenanigans.runtime_execution import (
         PATCH_GPU_BACKEND,
         activate_runtime_acceleration,
@@ -132,9 +128,8 @@ def _apply_runtime_bootstrap(argv: list[str] | None) -> None:
         configured_candidates = _filter_compatible_screening_candidates(
             runtime_config.screening_candidates,
             runtime_config.task_type,
-            REPRESENTATION_REGISTRY,
             resolve_candidate_model_id,
-            validate_model_preprocessing_compatibility,
+            validate_model_output_compatibility,
         )
     else:
         configured_candidates = runtime_config.experiment_candidates
@@ -150,11 +145,8 @@ def _apply_runtime_bootstrap(argv: list[str] | None) -> None:
         if (
             candidate.candidate_type != "model"
             or candidate.model_family is None
-            or candidate.representation_id is None
+            or candidate.representation is None
         ):
-            continue
-        representation_definition = REPRESENTATION_REGISTRY.get(candidate.representation_id)
-        if representation_definition is None:
             continue
         selected_model_contexts.append(
             resolve_model_candidate_runtime_execution(
@@ -163,8 +155,8 @@ def _apply_runtime_bootstrap(argv: list[str] | None) -> None:
                 capabilities=capabilities,
                 task_type=runtime_config.task_type,
                 model_family=candidate.model_family,
-                numeric_preprocessor=representation_definition.numeric_preprocessor_id,
-                categorical_preprocessor=representation_definition.categorical_preprocessor_id,
+                numeric_preprocessor=candidate.routing_numeric_preprocessor,
+                categorical_preprocessor=candidate.routing_categorical_preprocessor,
             )
         )
 
