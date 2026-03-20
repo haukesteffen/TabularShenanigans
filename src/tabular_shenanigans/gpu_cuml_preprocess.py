@@ -3,7 +3,7 @@ from dataclasses import dataclass
 import pandas as pd
 from sklearn.preprocessing import KBinsDiscretizer as SklearnKBinsDiscretizer
 
-from tabular_shenanigans.preprocess import ResolvedFeatureSchema
+from tabular_shenanigans.representations.feature_schema import ResolvedFeatureSchema
 
 
 def _import_gpu_preprocessing_modules():

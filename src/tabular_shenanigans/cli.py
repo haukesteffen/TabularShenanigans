@@ -98,10 +98,8 @@ def _print_candidate_setup(candidate_config: AppConfig, candidate_index: int) ->
         f"candidate_type=model, "
         f"task_type={competition.task_type}, "
         f"primary_metric={competition.primary_metric}, "
-        f"feature_recipe={candidate.feature_recipe_id}, "
-        f"model_family={candidate.model_family}, "
-        f"numeric_preprocessor={candidate.numeric_preprocessor}, "
-        f"categorical_preprocessor={candidate.categorical_preprocessor}"
+        f"representation={candidate.representation_id}, "
+        f"model_family={candidate.model_family}"
     )
 
 

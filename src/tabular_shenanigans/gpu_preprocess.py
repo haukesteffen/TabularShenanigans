@@ -3,7 +3,7 @@ from dataclasses import dataclass
 import pandas as pd
 
 from tabular_shenanigans.gpu_cuml_preprocess import fit_kbins_transformer, transform_kbins_values
-from tabular_shenanigans.preprocess import ResolvedFeatureSchema
+from tabular_shenanigans.representations.feature_schema import ResolvedFeatureSchema
 
 SUPPORTED_GPU_NATIVE_NUMERIC_PREPROCESSOR_IDS = frozenset({"median", "standardize", "kbins"})
 SUPPORTED_GPU_NATIVE_CATEGORICAL_PREPROCESSOR_IDS = frozenset({"frequency"})
