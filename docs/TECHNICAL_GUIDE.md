@@ -403,6 +403,39 @@ Current preprocessing selection on GPU hosts:
 - [validate_lightgbm_cuda_build.py](/scripts/validate_lightgbm_cuda_build.py): repo-owned validation probe for the installed LightGBM CUDA build on the current host.
 - [install_lightgbm_cuda.sh](/scripts/install_lightgbm_cuda.sh): source-build helper that reinstalls LightGBM with `USE_CUDA=ON` into the project virtualenv and immediately runs the validation probe.
 
+## Representation Operator Catalog
+
+### Numeric Operators
+- `native_numeric` — passthrough numeric columns as native tabular
+- `standardize_numeric` — median impute + standard scale
+- `robust_scale_numeric` — median impute + robust scale
+- `signed_log_expand_numeric` — median impute + signed log1p transform
+- `quantile_bin_numeric` — median impute + quantile binning (sparse onehot)
+
+### Categorical Operators
+- `native_categorical` — passthrough categoricals as native tabular (normalized strings)
+- `frequency_encode_categoricals` — per-column frequency encoding
+- `ordinal_encode_categoricals` — ordinal encoding with unknown handling
+- `onehot_encode_low_cardinality_categoricals` — sparse onehot for low-cardinality columns
+- `target_encode_categoricals` — smoothed target encoding (supervised)
+- `rare_category_bucket` — sparse onehot indicator for rare categories
+
+### Interaction Operators
+- `multiply_numeric_pairs` — pairwise product of all C(n,2) numeric column pairs
+- `ratio_numeric_pairs` — pairwise ratio a/(b+eps) of all C(n,2) numeric column pairs
+- `difference_numeric_pairs` — pairwise difference of all C(n,2) numeric column pairs
+- `sum_numeric_pairs` — pairwise sum of all C(n,2) numeric column pairs
+- `cross_low_cardinality_categoricals` — sparse onehot of all C(n,2) low-cardinality categorical crosses
+- `cross_categorical_with_binned_numeric` — sparse onehot of (binned numeric x low-cardinality categorical) crosses
+- `groupwise_deviation_features` — per-group z-score deviation for (numeric, categorical) pairs
+- `frequency_encode_categorical_crosses` — frequency encoding of all C(n,2) low-cardinality categorical crosses
+
+### Utility Operators
+- `row_missing_count` — count of missing values per row
+
+### Pruners
+- `high_correlation_prune` — drop dense columns exceeding a correlation threshold
+
 ## Extension Notes
 
 - After a few real runs, revisit which params are actually worth showing in the runs table, which metrics are redundant, whether some artifacts should be dropped or renamed, and whether candidate-level submission history should expose more derived leaderboard metadata.

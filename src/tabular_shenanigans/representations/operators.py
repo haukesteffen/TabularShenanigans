@@ -619,6 +619,88 @@ def build_feature_generator(
         _validate_no_unknown_params("operator", component_id, params, set())
         return RowMissingCountGenerator()
 
+    # Lazy import to avoid circular dependency (interaction_operators imports from this module).
+    from tabular_shenanigans.representations.interaction_operators import (
+        CrossCategoricalWithBinnedNumericGenerator,
+        CrossLowCardinalityCategoricalsGenerator,
+        DifferenceNumericPairsGenerator,
+        FrequencyEncodeCategoricalCrossesGenerator,
+        GroupwiseDeviationFeaturesGenerator,
+        MultiplyNumericPairsGenerator,
+        RatioNumericPairsGenerator,
+        SumNumericPairsGenerator,
+    )
+
+    if component_id == "multiply_numeric_pairs":
+        _validate_no_unknown_params("operator", component_id, params, set())
+        return MultiplyNumericPairsGenerator(columns=tuple(feature_schema.numeric_columns))
+
+    if component_id == "ratio_numeric_pairs":
+        _validate_no_unknown_params("operator", component_id, params, set())
+        return RatioNumericPairsGenerator(columns=tuple(feature_schema.numeric_columns))
+
+    if component_id == "difference_numeric_pairs":
+        _validate_no_unknown_params("operator", component_id, params, set())
+        return DifferenceNumericPairsGenerator(columns=tuple(feature_schema.numeric_columns))
+
+    if component_id == "sum_numeric_pairs":
+        _validate_no_unknown_params("operator", component_id, params, set())
+        return SumNumericPairsGenerator(columns=tuple(feature_schema.numeric_columns))
+
+    if component_id == "cross_low_cardinality_categoricals":
+        _validate_no_unknown_params("operator", component_id, params, {"max_cardinality", "missing_value"})
+        max_cardinality = int(params.get("max_cardinality", 10))
+        if max_cardinality < 1:
+            raise ValueError("operator 'cross_low_cardinality_categoricals' requires max_cardinality >= 1.")
+        missing_value = str(params.get("missing_value", "__missing__"))
+        return CrossLowCardinalityCategoricalsGenerator(
+            columns=tuple(feature_schema.categorical_columns),
+            max_cardinality=max_cardinality,
+            missing_value=missing_value,
+        )
+
+    if component_id == "cross_categorical_with_binned_numeric":
+        _validate_no_unknown_params("operator", component_id, params, {"n_bins", "max_cardinality", "missing_value"})
+        n_bins = int(params.get("n_bins", 5))
+        if n_bins < 2:
+            raise ValueError("operator 'cross_categorical_with_binned_numeric' requires n_bins >= 2.")
+        max_cardinality = int(params.get("max_cardinality", 10))
+        if max_cardinality < 1:
+            raise ValueError("operator 'cross_categorical_with_binned_numeric' requires max_cardinality >= 1.")
+        missing_value = str(params.get("missing_value", "__missing__"))
+        return CrossCategoricalWithBinnedNumericGenerator(
+            categorical_columns=tuple(feature_schema.categorical_columns),
+            numeric_columns=tuple(feature_schema.numeric_columns),
+            n_bins=n_bins,
+            max_cardinality=max_cardinality,
+            missing_value=missing_value,
+        )
+
+    if component_id == "groupwise_deviation_features":
+        _validate_no_unknown_params("operator", component_id, params, {"max_cardinality", "missing_value"})
+        max_cardinality = int(params.get("max_cardinality", 20))
+        if max_cardinality < 1:
+            raise ValueError("operator 'groupwise_deviation_features' requires max_cardinality >= 1.")
+        missing_value = str(params.get("missing_value", "__missing__"))
+        return GroupwiseDeviationFeaturesGenerator(
+            categorical_columns=tuple(feature_schema.categorical_columns),
+            numeric_columns=tuple(feature_schema.numeric_columns),
+            max_cardinality=max_cardinality,
+            missing_value=missing_value,
+        )
+
+    if component_id == "frequency_encode_categorical_crosses":
+        _validate_no_unknown_params("operator", component_id, params, {"max_cardinality", "missing_value"})
+        max_cardinality = int(params.get("max_cardinality", 10))
+        if max_cardinality < 1:
+            raise ValueError("operator 'frequency_encode_categorical_crosses' requires max_cardinality >= 1.")
+        missing_value = str(params.get("missing_value", "__missing__"))
+        return FrequencyEncodeCategoricalCrossesGenerator(
+            columns=tuple(feature_schema.categorical_columns),
+            max_cardinality=max_cardinality,
+            missing_value=missing_value,
+        )
+
     raise ValueError(f"Unsupported operator id '{component_id}'.")
 
 
@@ -643,6 +725,10 @@ def validate_component_params(component_id: str, params: dict[str, object], comp
             "quantile_bin_numeric",
             "ordinal_encode_categoricals",
             "row_missing_count",
+            "multiply_numeric_pairs",
+            "ratio_numeric_pairs",
+            "difference_numeric_pairs",
+            "sum_numeric_pairs",
         }:
             _validate_no_unknown_params(component_kind, component_id, params, set())
             return
@@ -669,6 +755,29 @@ def validate_component_params(component_id: str, params: dict[str, object], comp
                     "operator 'onehot_encode_low_cardinality_categoricals' requires max_cardinality >= 1."
                 )
             return
+        if component_id in {"cross_low_cardinality_categoricals", "frequency_encode_categorical_crosses"}:
+            _validate_no_unknown_params(component_kind, component_id, params, {"max_cardinality", "missing_value"})
+            max_cardinality = int(params.get("max_cardinality", 10))
+            if max_cardinality < 1:
+                raise ValueError(f"operator '{component_id}' requires max_cardinality >= 1.")
+            return
+        if component_id == "cross_categorical_with_binned_numeric":
+            _validate_no_unknown_params(
+                component_kind, component_id, params, {"n_bins", "max_cardinality", "missing_value"}
+            )
+            n_bins = int(params.get("n_bins", 5))
+            if n_bins < 2:
+                raise ValueError("operator 'cross_categorical_with_binned_numeric' requires n_bins >= 2.")
+            max_cardinality = int(params.get("max_cardinality", 10))
+            if max_cardinality < 1:
+                raise ValueError("operator 'cross_categorical_with_binned_numeric' requires max_cardinality >= 1.")
+            return
+        if component_id == "groupwise_deviation_features":
+            _validate_no_unknown_params(component_kind, component_id, params, {"max_cardinality", "missing_value"})
+            max_cardinality = int(params.get("max_cardinality", 20))
+            if max_cardinality < 1:
+                raise ValueError("operator 'groupwise_deviation_features' requires max_cardinality >= 1.")
+            return
     if component_kind == "pruner":
         if component_id == "high_correlation_prune":
             _validate_no_unknown_params(component_kind, component_id, params, {"threshold"})
@@ -693,6 +802,14 @@ SUPPORTED_OPERATOR_IDS = frozenset(
         "target_encode_categoricals",
         "rare_category_bucket",
         "row_missing_count",
+        "multiply_numeric_pairs",
+        "ratio_numeric_pairs",
+        "difference_numeric_pairs",
+        "sum_numeric_pairs",
+        "cross_low_cardinality_categoricals",
+        "cross_categorical_with_binned_numeric",
+        "groupwise_deviation_features",
+        "frequency_encode_categorical_crosses",
     }
 )
 
