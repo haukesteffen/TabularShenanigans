@@ -11,20 +11,17 @@ from tabular_shenanigans.competition import ensure_prepared_competition_context
 from tabular_shenanigans.config import AppConfig
 from tabular_shenanigans.cv import is_higher_better, resolve_positive_label, score_predictions
 from tabular_shenanigans.data import CompetitionDatasetContext, get_binary_prediction_kind
-from tabular_shenanigans.feature_recipes import apply_feature_recipe
 from tabular_shenanigans.models import (
     build_model,
     build_model_fit_kwargs,
-    resolve_model_matrix_output_kind,
 )
-from tabular_shenanigans.preprocess import (
+from tabular_shenanigans.preprocess import prepare_feature_frames
+from tabular_shenanigans.representations import (
+    CompiledRepresentation,
     ResolvedFeatureSchema,
-    prepare_feature_frames,
+    compile_representation,
+    get_representation_definition,
     resolve_feature_schema,
-)
-from tabular_shenanigans.preprocess_execution import (
-    PreprocessingExecutionPlan,
-    build_preprocessor_for_execution_plan,
 )
 
 
@@ -52,14 +49,14 @@ class CvSummary:
 class ModelRunResult:
     model_registry_key: str
     estimator_name: str
-    preprocessing_scheme_id: str
+    representation_id: str
     model_params: dict[str, object]
     cv_summary: CvSummary
 
     def to_fingerprint_entry(self) -> dict[str, object]:
         return {
             "model_registry_key": self.model_registry_key,
-            "preprocessing_scheme_id": self.preprocessing_scheme_id,
+            "representation_id": self.representation_id,
             "model_params": self.model_params,
         }
 
@@ -101,9 +98,8 @@ class PreparedTrainingContext:
     observed_label_pair: tuple[object, object] | None
     target_summary: dict[str, object]
     feature_schema: ResolvedFeatureSchema
-    numeric_preprocessor: str
-    categorical_preprocessor: str
-    preprocessing_scheme_id: str
+    compiled_representation: CompiledRepresentation
+    representation_id: str
     matrix_output_kind: str
     uses_xgboost_gpu_native_inputs: bool
     preserves_gpu_preprocessed_inputs: bool
@@ -150,11 +146,6 @@ def build_prepared_training_context(
         dataset_context=dataset_context,
         expected_feature_columns=x_train_raw.columns.tolist(),
     )
-    x_train_features, x_test_features = apply_feature_recipe(
-        recipe_id=candidate.feature_recipe_id,
-        x_train_raw=x_train_raw,
-        x_test_raw=x_test_raw,
-    )
     target_summary = build_target_summary(
         task_type=competition.task_type,
         y_train=y_train,
@@ -162,30 +153,33 @@ def build_prepared_training_context(
         negative_label=negative_label,
         observed_label_pair=observed_label_pair,
     )
+    representation_id = candidate.representation_id
+    representation_definition = get_representation_definition(representation_id)
     feature_schema = resolve_feature_schema(
-        x_train_raw=x_train_features,
+        x_train_raw=x_train_raw,
         force_categorical=features.force_categorical,
         force_numeric=features.force_numeric,
         low_cardinality_int_threshold=features.low_cardinality_int_threshold,
     )
-    matrix_output_kind = resolve_model_matrix_output_kind(
+    runtime_execution_context = config.runtime_execution_context
+    compiled_representation = compile_representation(
+        definition=representation_definition,
+        feature_schema=feature_schema,
+        runtime_execution_context=runtime_execution_context,
         task_type=competition.task_type,
         model_id=config.resolved_model_registry_key,
-        categorical_preprocessor_id=candidate.categorical_preprocessor,
-        runtime_execution_context=config.runtime_execution_context,
     )
-    preprocessing_execution_plan = config.preprocessing_execution_plan
     uses_xgboost_gpu_native_inputs = (
         config.resolved_model_registry_key == "xgboost"
-        and config.runtime_execution_context.resolved_compute_target == "gpu"
+        and runtime_execution_context.resolved_compute_target == "gpu"
     )
     return PreparedTrainingContext(
         id_column=id_column,
         label_column=label_column,
         competition_manifest=prepared_context.manifest,
         y_train=y_train,
-        x_train_features=x_train_features,
-        x_test_features=x_test_features,
+        x_train_features=x_train_raw,
+        x_test_features=x_test_raw,
         split_indices=prepared_context.split_indices,
         fold_assignments=prepared_context.fold_assignments,
         positive_label=positive_label,
@@ -193,14 +187,13 @@ def build_prepared_training_context(
         observed_label_pair=observed_label_pair,
         target_summary=target_summary,
         feature_schema=feature_schema,
-        numeric_preprocessor=candidate.numeric_preprocessor,
-        categorical_preprocessor=candidate.categorical_preprocessor,
-        preprocessing_scheme_id=candidate.preprocessing_scheme_id,
-        matrix_output_kind=preprocessing_execution_plan.matrix_output_kind,
+        compiled_representation=compiled_representation,
+        representation_id=representation_id,
+        matrix_output_kind=compiled_representation.matrix_output_kind,
         uses_xgboost_gpu_native_inputs=uses_xgboost_gpu_native_inputs,
         preserves_gpu_preprocessed_inputs=uses_xgboost_gpu_native_inputs,
-        preprocessing_backend=preprocessing_execution_plan.preprocessing_backend,
-        model_compute_target=config.runtime_execution_context.resolved_compute_target,
+        preprocessing_backend=compiled_representation.preprocessing_backend,
+        model_compute_target=runtime_execution_context.resolved_compute_target,
     )
 
 
@@ -342,12 +335,13 @@ def _run_cv_evaluation(
     )
     resolved_model_registry_key = model_definition.model_id
     estimator_name = model_definition.model_name
-    preprocessing_scheme_id = training_context.preprocessing_scheme_id
+    representation_id = training_context.representation_id
     matrix_output_kind = training_context.matrix_output_kind
     uses_xgboost_gpu_native_inputs = training_context.uses_xgboost_gpu_native_inputs
     preserves_gpu_preprocessed_inputs = training_context.preserves_gpu_preprocessed_inputs
     preprocessing_backend = training_context.preprocessing_backend
     model_compute_target = training_context.model_compute_target
+    compiled_representation = training_context.compiled_representation
 
     oof_predictions = (
         np.zeros(training_context.x_train_features.shape[0], dtype=float)
@@ -371,20 +365,12 @@ def _run_cv_evaluation(
         y_fold_valid = training_context.y_train.iloc[valid_idx]
 
         preprocess_started = time.perf_counter()
-        preprocessor = build_preprocessor_for_execution_plan(
-            feature_schema=training_context.feature_schema,
-            numeric_preprocessor_id=training_context.numeric_preprocessor,
-            categorical_preprocessor_id=training_context.categorical_preprocessor,
-            execution_plan=PreprocessingExecutionPlan(
-                preprocessing_backend=training_context.preprocessing_backend,
-                matrix_output_kind=matrix_output_kind,
-            ),
-        )
-        x_fold_train_processed = preprocessor.fit_transform(x_fold_train)
-        x_fold_valid_processed = preprocessor.transform(x_fold_valid)
+        fitted_representation = compiled_representation.fit(x_fold_train, y_fold_train)
+        x_fold_train_processed = fitted_representation.transform(x_fold_train)
+        x_fold_valid_processed = fitted_representation.transform(x_fold_valid)
         x_test_processed = None
         if collect_prediction_artifacts:
-            x_test_processed = preprocessor.transform(training_context.x_test_features)
+            x_test_processed = fitted_representation.transform(training_context.x_test_features)
 
         x_fold_train_processed = _coerce_processed_matrix(
             x_fold_train_processed,
@@ -494,7 +480,7 @@ def _run_cv_evaluation(
         model_result=ModelRunResult(
             model_registry_key=resolved_model_registry_key,
             estimator_name=estimator_name,
-            preprocessing_scheme_id=preprocessing_scheme_id,
+            representation_id=representation_id,
             model_params=model_params,
             cv_summary=CvSummary(
                 metric_name=primary_metric,
