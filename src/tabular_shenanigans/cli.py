@@ -327,11 +327,6 @@ def main(argv: list[str] | None = None) -> None:
     args = parser.parse_args(argv)
     load_dotenv(dotenv_path=Path(".env"), override=False)
     config = load_config()
-    if config.experiment.legacy_candidate_contract_used:
-        print(
-            "Config deprecation: experiment.candidate is deprecated. "
-            "Migrate config.yaml to experiment.candidates."
-        )
     _print_resolved_setup(config)
 
     if args.stage is None:

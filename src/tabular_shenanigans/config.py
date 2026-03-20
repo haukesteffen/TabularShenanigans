@@ -215,24 +215,6 @@ class ExperimentConfig(BaseModel):
     runtime: ExperimentRuntimeConfig = Field(default_factory=ExperimentRuntimeConfig)
     tracking: ExperimentTrackingConfig = Field(default_factory=ExperimentTrackingConfig)
     active_candidate_index: int = Field(default=0, exclude=True, repr=False, ge=0)
-    legacy_candidate_contract_used: bool = Field(default=False, exclude=True, repr=False)
-
-    @model_validator(mode="before")
-    @classmethod
-    def migrate_single_candidate_contract(cls, values: object) -> object:
-        if not isinstance(values, dict):
-            return values
-
-        if values.get("candidate") is not None and values.get("candidates") is not None:
-            raise ValueError("Use either experiment.candidate or experiment.candidates, not both.")
-
-        if values.get("candidate") is None:
-            return values
-
-        migrated_values = dict(values)
-        migrated_values["candidates"] = [migrated_values.pop("candidate")]
-        migrated_values["legacy_candidate_contract_used"] = True
-        return migrated_values
 
     @model_validator(mode="after")
     def validate_active_candidate_index(self) -> "ExperimentConfig":
