@@ -30,7 +30,7 @@ def _parse_bootstrap_cli_selection(argv: list[str] | None) -> BootstrapCliSelect
     if not argv:
         return BootstrapCliSelection(stage=None, candidate_index=None, candidate_id_requested=False)
 
-    known_stages = {"fetch", "prepare", "eda", "train", "submit", "refresh-submissions"}
+    known_stages = {"fetch", "prepare", "eda", "train", "screening", "submit", "refresh-submissions"}
     stage = argv[0] if argv[0] in known_stages else None
     option_argv = argv[1:] if stage is not None else argv
     index_value = _extract_option_value(option_argv, "--index")
@@ -44,35 +44,41 @@ def _parse_bootstrap_cli_selection(argv: list[str] | None) -> BootstrapCliSelect
 
 
 def _stage_uses_training_runtime(stage: str | None) -> bool:
-    return stage in {None, "train"}
+    return stage in {None, "train", "screening"}
 
 
 def _resolve_selected_candidate_indices(
     runtime_config,
     selection: BootstrapCliSelection,
 ) -> tuple[int, ...]:
+    configured_candidates = (
+        runtime_config.screening_candidates
+        if selection.stage == "screening"
+        else runtime_config.experiment_candidates
+    )
     if selection.candidate_index is not None:
         resolved_index = selection.candidate_index - 1
-        if resolved_index < 0 or resolved_index >= len(runtime_config.candidates):
+        if resolved_index < 0 or resolved_index >= len(configured_candidates):
             raise ValueError(
-                f"--index must be between 1 and {len(runtime_config.candidates)}. "
+                f"--index must be between 1 and {len(configured_candidates)}. "
                 f"Got {selection.candidate_index}."
             )
         return (resolved_index,)
-    return tuple(range(len(runtime_config.candidates)))
+    return tuple(range(len(configured_candidates)))
 
 
 def _raise_mixed_patch_runtime_error(selection: BootstrapCliSelection) -> None:
+    stage_name = "screening" if selection.stage == "screening" else "train"
     if selection.candidate_id_requested:
         raise RuntimeError(
             "This config mixes gpu_patch candidates with non-gpu_patch candidates. "
-            "Bootstrap happens before --candidate-id can be resolved safely, so this train invocation cannot "
+            f"Bootstrap happens before --candidate-id can be resolved safely, so this {stage_name} invocation cannot "
             "install RAPIDS hooks without risking the wrong process-wide runtime. "
-            "Use `uv run python main.py train --index <n>` or split the batch."
+            f"Use `uv run python main.py {stage_name} --index <n>` or split the batch."
         )
     raise RuntimeError(
-        "Batch train cannot mix gpu_patch candidates with non-gpu_patch candidates in one process because "
-        "RAPIDS hook installation is process-global. Split the run with `uv run python main.py train --index <n>` "
+        "Batch execution cannot mix gpu_patch candidates with non-gpu_patch candidates in one process because "
+        f"RAPIDS hook installation is process-global. Split the run with `uv run python main.py {stage_name} --index <n>` "
         "or separate invocations."
     )
 
@@ -102,9 +108,14 @@ def _apply_runtime_bootstrap(argv: list[str] | None) -> None:
     capabilities = detect_runtime_capabilities()
     from tabular_shenanigans.representations.registry import REPRESENTATION_REGISTRY
 
+    configured_candidates = (
+        runtime_config.screening_candidates
+        if selection.stage == "screening"
+        else runtime_config.experiment_candidates
+    )
     selected_model_contexts = []
     for candidate_index in selected_candidate_indices:
-        candidate = runtime_config.candidates[candidate_index]
+        candidate = configured_candidates[candidate_index]
         if (
             candidate.candidate_type != "model"
             or candidate.model_family is None

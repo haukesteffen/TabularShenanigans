@@ -14,9 +14,13 @@ from tabular_shenanigans.data import (
 )
 from tabular_shenanigans.mlflow_store import (
     CandidateRunRef,
+    SubmissionRunRef,
+    create_submission_run,
     download_candidate_bundle,
     download_submission_history,
+    list_submission_runs,
     search_candidate_runs,
+    terminate_run,
     update_submission_metrics,
     upload_submission_history,
 )
@@ -59,6 +63,7 @@ class SubmissionContext:
 class SubmissionRunResult:
     candidate_id: str
     candidate_run_id: str
+    submission_run_id: str | None
     submission_status: str
     submission_message: str
     submission_event_id: str | None
@@ -113,6 +118,7 @@ def _load_submission_context(
             run_id=downloaded_bundle.run_id,
             experiment_id=downloaded_bundle.experiment_id,
             candidate_id=candidate_id,
+            run_kind="canonical",
         ),
         candidate_id=str(_require_manifest_value(candidate_manifest, "candidate_id")),
         candidate_type=str(_require_manifest_value(candidate_manifest, "candidate_type")),
@@ -407,11 +413,6 @@ def run_submission(
                 print(completed.stderr.strip())
             submit_response_message = _collect_submit_response_message(completed)
 
-            history = download_submission_history(
-                config=config,
-                run_id=submission_context.candidate_run.run_id,
-                destination_dir=temp_root / "history",
-            )
             submission_event = _build_submission_event(
                 submission_context=submission_context,
                 submission_event_id=submission_event_id,
@@ -419,22 +420,31 @@ def run_submission(
                 submit_message=submission_message,
                 submit_response_message=submit_response_message,
             )
-            history = history.with_submission_event(submission_event)
-            upload_submission_history(
+            submission_run = create_submission_run(
                 config=config,
-                run_id=submission_context.candidate_run.run_id,
-                history=history,
-                updated_submission_event_ids=[submission_event_id],
-                submission_csv_paths={submission_event_id: submission_path},
+                submission_event=submission_event,
             )
-            update_submission_metrics(
-                config=config,
-                run_id=submission_context.candidate_run.run_id,
-                score_metrics=build_submission_score_metrics(
-                    primary_metric=submission_context.primary_metric,
+            submission_run_status = "FAILED"
+            try:
+                history = CandidateSubmissionHistory.empty().with_submission_event(submission_event)
+                upload_submission_history(
+                    config=config,
+                    run_id=submission_run.run_id,
                     history=history,
-                ),
-            )
+                    updated_submission_event_ids=[submission_event_id],
+                    submission_csv_paths={submission_event_id: submission_path},
+                )
+                update_submission_metrics(
+                    config=config,
+                    run_id=submission_run.run_id,
+                    score_metrics=build_submission_score_metrics(
+                        primary_metric=submission_context.primary_metric,
+                        history=history,
+                    ),
+                )
+                submission_run_status = "FINISHED"
+            finally:
+                terminate_run(config=config, run_id=submission_run.run_id, status=submission_run_status)
 
             immediate_refresh_error = None
             try:
@@ -456,10 +466,11 @@ def run_submission(
             return SubmissionRunResult(
                 candidate_id=submission_context.candidate_id,
                 candidate_run_id=submission_context.candidate_run.run_id,
+                submission_run_id=submission_run.run_id,
                 submission_status="submitted",
                 submission_message=submission_message,
                 submission_event_id=submission_event_id,
-                submission_artifact_path=f"submissions/{submission_event_id}/submission.csv",
+                submission_artifact_path="submissions/submission.csv",
                 submission_refresh_result=submission_refresh_result,
                 immediate_refresh_error=immediate_refresh_error,
             )
@@ -468,6 +479,7 @@ def run_submission(
         return SubmissionRunResult(
             candidate_id=submission_context.candidate_id,
             candidate_run_id=submission_context.candidate_run.run_id,
+            submission_run_id=None,
             submission_status="prepared",
             submission_message="",
             submission_event_id=None,
@@ -483,104 +495,107 @@ def run_submission_refresh(
     observation_source: str = "manual_refresh",
 ) -> SubmissionRefreshResult:
     candidate_runs = search_candidate_runs(config)
-    tracked_candidate_count = 0
+    submission_runs = list_submission_runs(config)
     tracked_submission_event_count = 0
     matched_submission_event_ids: set[str] = set()
-    updated_candidate_count = 0
     appended_observation_count = 0
     scanned_remote_submission_count = 0
+    tracked_candidate_ids: set[str] = set()
+    updated_candidate_ids: set[str] = set()
 
     histories_by_run_id: dict[str, CandidateSubmissionHistory] = {}
-    event_to_candidate_run: dict[str, CandidateRunRef] = {}
+    event_to_submission_run: dict[str, SubmissionRunRef] = {}
     candidate_run_by_candidate_id: dict[str, CandidateRunRef] = {}
     submission_contexts_by_run_id: dict[str, SubmissionContext] = {}
+    created_submission_run_ids: set[str] = set()
+    finished_submission_run_ids: set[str] = set()
 
-    with tempfile.TemporaryDirectory(prefix="tabular-shenanigans-refresh-submissions-") as temp_dir:
-        temp_root = Path(temp_dir)
-        for candidate_run in candidate_runs:
-            if target_candidate_ids is not None and candidate_run.candidate_id not in target_candidate_ids:
-                continue
-            candidate_run_by_candidate_id[candidate_run.candidate_id] = candidate_run
-            history = download_submission_history(
-                config=config,
-                run_id=candidate_run.run_id,
-                destination_dir=temp_root / candidate_run.candidate_id,
-            )
-            histories_by_run_id[candidate_run.run_id] = history
-            relevant_event_ids = {
-                event.submission_event_id
-                for event in history.events
-                if target_submission_event_ids is None or event.submission_event_id in target_submission_event_ids
-            }
-            if relevant_event_ids:
-                tracked_candidate_count += 1
-                tracked_submission_event_count += len(relevant_event_ids)
-            for submission_event_id in relevant_event_ids:
-                if submission_event_id in event_to_candidate_run:
-                    existing_candidate_id = event_to_candidate_run[submission_event_id].candidate_id
-                    raise ValueError(
-                        "Submission event ids must be unique across candidate runs. "
-                        f"Event '{submission_event_id}' was found under candidates "
-                        f"'{existing_candidate_id}' and '{candidate_run.candidate_id}'."
-                    )
-                event_to_candidate_run[submission_event_id] = candidate_run
-
-        if not histories_by_run_id:
-            return SubmissionRefreshResult(
-                competition_slug=config.competition.slug,
-                tracked_candidate_count=tracked_candidate_count,
-                tracked_submission_event_count=tracked_submission_event_count,
-                matched_submission_event_count=0,
-                updated_candidate_count=0,
-                appended_observation_count=0,
-                scanned_remote_submission_count=0,
-                observation_source=observation_source,
-            )
-
-        observations_by_run_id: dict[str, list[SubmissionScoreObservation]] = {}
-        updated_submission_event_ids_by_run_id: dict[str, set[str]] = {}
-        for remote_submission in iter_kaggle_submissions(config.competition.slug):
-            scanned_remote_submission_count += 1
-            submission_event_id = extract_submission_event_id(remote_submission.kaggle_description)
-            if submission_event_id is None:
-                continue
-            if target_submission_event_ids is not None and submission_event_id not in target_submission_event_ids:
-                continue
-
-            candidate_id = extract_candidate_id(remote_submission.kaggle_description)
-            candidate_run = event_to_candidate_run.get(submission_event_id)
-            if candidate_run is not None:
-                if target_candidate_ids is not None and candidate_run.candidate_id not in target_candidate_ids:
+    try:
+        with tempfile.TemporaryDirectory(prefix="tabular-shenanigans-refresh-submissions-") as temp_dir:
+            temp_root = Path(temp_dir)
+            for candidate_run in candidate_runs:
+                candidate_run_by_candidate_id[candidate_run.candidate_id] = candidate_run
+            for submission_run in submission_runs:
+                if target_candidate_ids is not None and submission_run.candidate_id not in target_candidate_ids:
                     continue
-                if candidate_id is not None and candidate_id != candidate_run.candidate_id:
-                    raise ValueError(
-                        "Kaggle submission metadata did not match the tracked MLflow candidate. "
-                        f"submission_event_id={submission_event_id}, "
-                        f"kaggle_candidate_id={candidate_id}, "
-                        f"tracked_candidate_id={candidate_run.candidate_id}"
-                    )
-            else:
-                if target_candidate_ids is not None and candidate_id not in target_candidate_ids:
+                history = download_submission_history(
+                    config=config,
+                    run_id=submission_run.run_id,
+                    destination_dir=temp_root / submission_run.candidate_id / submission_run.submission_event_id,
+                )
+                histories_by_run_id[submission_run.run_id] = history
+                relevant_event_ids = {
+                    event.submission_event_id
+                    for event in history.events
+                    if target_submission_event_ids is None or event.submission_event_id in target_submission_event_ids
+                }
+                if relevant_event_ids:
+                    tracked_candidate_ids.add(submission_run.candidate_id)
+                    tracked_submission_event_count += len(relevant_event_ids)
+                for submission_event_id in relevant_event_ids:
+                    if submission_event_id in event_to_submission_run:
+                        existing_candidate_id = event_to_submission_run[submission_event_id].candidate_id
+                        raise ValueError(
+                            "Submission event ids must be unique across submission runs. "
+                            f"Event '{submission_event_id}' was found under candidates "
+                            f"'{existing_candidate_id}' and '{submission_run.candidate_id}'."
+                        )
+                    event_to_submission_run[submission_event_id] = submission_run
+
+            if not candidate_run_by_candidate_id and not histories_by_run_id:
+                return SubmissionRefreshResult(
+                    competition_slug=config.competition.slug,
+                    tracked_candidate_count=len(tracked_candidate_ids),
+                    tracked_submission_event_count=tracked_submission_event_count,
+                    matched_submission_event_count=0,
+                    updated_candidate_count=0,
+                    appended_observation_count=0,
+                    scanned_remote_submission_count=0,
+                    observation_source=observation_source,
+                )
+
+            observations_by_run_id: dict[str, list[SubmissionScoreObservation]] = {}
+            updated_submission_event_ids_by_run_id: dict[str, set[str]] = {}
+            for remote_submission in iter_kaggle_submissions(config.competition.slug):
+                scanned_remote_submission_count += 1
+                submission_event_id = extract_submission_event_id(remote_submission.kaggle_description)
+                if submission_event_id is None:
                     continue
-                if candidate_id is None:
-                    print(
-                        "Submission refresh could not recover orphaned Kaggle submission: "
-                        f"submission_event_id={submission_event_id}, "
-                        "reason=missing_candidate_id_in_kaggle_description"
-                    )
-                    continue
-                candidate_run = candidate_run_by_candidate_id.get(candidate_id)
-                if candidate_run is None:
-                    print(
-                        "Submission refresh could not recover orphaned Kaggle submission: "
-                        f"candidate_id={candidate_id}, "
-                        f"submission_event_id={submission_event_id}, "
-                        "reason=no_canonical_candidate_run"
-                    )
+                if target_submission_event_ids is not None and submission_event_id not in target_submission_event_ids:
                     continue
 
-                history = histories_by_run_id[candidate_run.run_id]
-                if history.get_event(submission_event_id) is None:
+                candidate_id = extract_candidate_id(remote_submission.kaggle_description)
+                submission_run = event_to_submission_run.get(submission_event_id)
+                if submission_run is not None:
+                    if target_candidate_ids is not None and submission_run.candidate_id not in target_candidate_ids:
+                        continue
+                    if candidate_id is not None and candidate_id != submission_run.candidate_id:
+                        raise ValueError(
+                            "Kaggle submission metadata did not match the tracked MLflow candidate. "
+                            f"submission_event_id={submission_event_id}, "
+                            f"kaggle_candidate_id={candidate_id}, "
+                            f"tracked_candidate_id={submission_run.candidate_id}"
+                        )
+                else:
+                    if target_candidate_ids is not None and candidate_id not in target_candidate_ids:
+                        continue
+                    if candidate_id is None:
+                        print(
+                            "Submission refresh could not recover orphaned Kaggle submission: "
+                            f"submission_event_id={submission_event_id}, "
+                            "reason=missing_candidate_id_in_kaggle_description"
+                        )
+                        continue
+                    candidate_run = candidate_run_by_candidate_id.get(candidate_id)
+                    if candidate_run is None:
+                        print(
+                            "Submission refresh could not recover orphaned Kaggle submission: "
+                            f"candidate_id={candidate_id}, "
+                            f"submission_event_id={submission_event_id}, "
+                            "reason=no_canonical_candidate_run"
+                        )
+                        continue
+
                     submission_context = submission_contexts_by_run_id.get(candidate_run.run_id)
                     if submission_context is None:
                         submission_context = _load_submission_context(
@@ -590,75 +605,94 @@ def run_submission_refresh(
                         )
                         submission_contexts_by_run_id[candidate_run.run_id] = submission_context
 
-                    history = history.with_submission_event(
-                        _build_recovered_submission_event(
-                            submission_context=submission_context,
-                            submission_event_id=submission_event_id,
-                            kaggle_submitted_at=remote_submission.kaggle_submitted_at,
-                            kaggle_file_name=remote_submission.kaggle_file_name,
-                            kaggle_description=remote_submission.kaggle_description,
-                        )
+                    submission_event = _build_recovered_submission_event(
+                        submission_context=submission_context,
+                        submission_event_id=submission_event_id,
+                        kaggle_submitted_at=remote_submission.kaggle_submitted_at,
+                        kaggle_file_name=remote_submission.kaggle_file_name,
+                        kaggle_description=remote_submission.kaggle_description,
                     )
-                    histories_by_run_id[candidate_run.run_id] = history
-                    event_to_candidate_run[submission_event_id] = candidate_run
-                    updated_submission_event_ids_by_run_id.setdefault(candidate_run.run_id, set()).add(
+                    submission_run = create_submission_run(
+                        config=config,
+                        submission_event=submission_event,
+                    )
+                    created_submission_run_ids.add(submission_run.run_id)
+                    history = CandidateSubmissionHistory.empty().with_submission_event(submission_event)
+                    histories_by_run_id[submission_run.run_id] = history
+                    event_to_submission_run[submission_event_id] = submission_run
+                    updated_submission_event_ids_by_run_id.setdefault(submission_run.run_id, set()).add(
                         submission_event_id
                     )
                     print(
-                        "Recovered orphaned Kaggle submission onto candidate run: "
+                        "Recovered orphaned Kaggle submission onto submission run: "
                         f"candidate_id={candidate_run.candidate_id}, "
                         f"submission_event_id={submission_event_id}, "
-                        f"mlflow_run_id={candidate_run.run_id}"
+                        f"mlflow_run_id={submission_run.run_id}"
                     )
 
-            matched_submission_event_ids.add(submission_event_id)
-            observations_by_run_id.setdefault(candidate_run.run_id, []).append(
-                SubmissionScoreObservation(
-                    observed_at_utc=utc_now_iso(),
-                    submission_event_id=submission_event_id,
-                    kaggle_submitted_at=remote_submission.kaggle_submitted_at,
-                    kaggle_file_name=remote_submission.kaggle_file_name,
-                    kaggle_description=remote_submission.kaggle_description,
-                    kaggle_status=remote_submission.kaggle_status,
-                    public_score=remote_submission.public_score,
-                    private_score=remote_submission.private_score,
-                    observation_source=observation_source,
+                if submission_run is None:
+                    raise RuntimeError(
+                        f"Submission run resolution failed for submission_event_id={submission_event_id}."
+                    )
+
+                matched_submission_event_ids.add(submission_event_id)
+                observations_by_run_id.setdefault(submission_run.run_id, []).append(
+                    SubmissionScoreObservation(
+                        observed_at_utc=utc_now_iso(),
+                        submission_event_id=submission_event_id,
+                        kaggle_submitted_at=remote_submission.kaggle_submitted_at,
+                        kaggle_file_name=remote_submission.kaggle_file_name,
+                        kaggle_description=remote_submission.kaggle_description,
+                        kaggle_status=remote_submission.kaggle_status,
+                        public_score=remote_submission.public_score,
+                        private_score=remote_submission.private_score,
+                        observation_source=observation_source,
+                    )
                 )
-            )
-            updated_submission_event_ids_by_run_id.setdefault(candidate_run.run_id, set()).add(submission_event_id)
+                updated_submission_event_ids_by_run_id.setdefault(submission_run.run_id, set()).add(
+                    submission_event_id
+                )
 
-        for run_id, history in histories_by_run_id.items():
-            observations = observations_by_run_id.get(run_id, [])
-            updated_history, appended_count = history.with_submission_observations(observations)
-            updated_submission_event_ids = sorted(updated_submission_event_ids_by_run_id.get(run_id, set()))
-            if appended_count == 0 and not updated_submission_event_ids:
-                continue
+            for run_id, history in histories_by_run_id.items():
+                observations = observations_by_run_id.get(run_id, [])
+                updated_history, appended_count = history.with_submission_observations(observations)
+                updated_submission_event_ids = sorted(updated_submission_event_ids_by_run_id.get(run_id, set()))
+                if appended_count == 0 and not updated_submission_event_ids:
+                    continue
 
-            upload_submission_history(
-                config=config,
-                run_id=run_id,
-                history=updated_history,
-                updated_submission_event_ids=updated_submission_event_ids,
-            )
-            update_submission_metrics(
-                config=config,
-                run_id=run_id,
-                score_metrics=build_submission_score_metrics(
-                    primary_metric=config.competition.primary_metric,
+                upload_submission_history(
+                    config=config,
+                    run_id=run_id,
                     history=updated_history,
-                ),
-            )
-            histories_by_run_id[run_id] = updated_history
-            updated_candidate_count += 1
-            appended_observation_count += appended_count
+                    updated_submission_event_ids=updated_submission_event_ids,
+                )
+                update_submission_metrics(
+                    config=config,
+                    run_id=run_id,
+                    score_metrics=build_submission_score_metrics(
+                        primary_metric=config.competition.primary_metric,
+                        history=updated_history,
+                    ),
+                )
+                histories_by_run_id[run_id] = updated_history
+                candidate_id = updated_history.events[0].candidate_id if updated_history.events else None
+                if candidate_id is not None:
+                    updated_candidate_ids.add(candidate_id)
+                if run_id in created_submission_run_ids:
+                    terminate_run(config=config, run_id=run_id, status="FINISHED")
+                    finished_submission_run_ids.add(run_id)
+                appended_observation_count += appended_count
 
-    return SubmissionRefreshResult(
-        competition_slug=config.competition.slug,
-        tracked_candidate_count=tracked_candidate_count,
-        tracked_submission_event_count=tracked_submission_event_count,
-        matched_submission_event_count=len(matched_submission_event_ids),
-        updated_candidate_count=updated_candidate_count,
-        appended_observation_count=appended_observation_count,
-        scanned_remote_submission_count=scanned_remote_submission_count,
-        observation_source=observation_source,
-    )
+        return SubmissionRefreshResult(
+            competition_slug=config.competition.slug,
+            tracked_candidate_count=len(tracked_candidate_ids),
+            tracked_submission_event_count=tracked_submission_event_count,
+            matched_submission_event_count=len(matched_submission_event_ids),
+            updated_candidate_count=len(updated_candidate_ids),
+            appended_observation_count=appended_observation_count,
+            scanned_remote_submission_count=scanned_remote_submission_count,
+            observation_source=observation_source,
+        )
+    finally:
+        for run_id in sorted(created_submission_run_ids - finished_submission_run_ids):
+            terminate_run(config=config, run_id=run_id, status="FAILED")

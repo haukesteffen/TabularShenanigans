@@ -55,6 +55,8 @@ Tracked example configs:
 
 Required top-level sections: `competition`, `experiment`.
 
+Optional top-level section: `screening`.
+
 #### `competition`
 
 | Key | Required | Values / Notes |
@@ -84,6 +86,8 @@ Required top-level sections: `competition`, `experiment`.
 
 `train` drains `experiment.candidates` in order unless narrowed with `--candidate-id` or `--index`. `submit --index <n>` uses a 1-based index into this list.
 
+`screening` evaluates `screening.candidates` in order and prints a copy/paste-ready YAML snippet for the top `screening.promote_top_k` candidates to paste into `experiment.candidates`.
+
 Deprecated: `experiment.candidate` (singular) is still accepted as a one-entry list and emits a deprecation notice.
 
 #### Candidate Shapes
@@ -109,7 +113,19 @@ Hard-invalid: representations with `native` categorical preprocessor and any `mo
 `candidate_id` is derived automatically:
 - model: `<model_registry_key>-<representation_id>-<hash8>`
 - blend: `blend__<hash8>`
-- rerunning the same spec derives the same ID and hard-fails only when a canonical completed run for that `candidate_id` already exists in MLflow
+- the same logical model candidate keeps the same `candidate_id` across screening and canonical evaluation
+- rerunning the same canonical candidate hard-fails only when a canonical completed run for that `candidate_id` already exists in MLflow
+- schema v4 changes the candidate-id fingerprint inputs versus older experiments; existing schema-v3 MLflow data is archival and does not share IDs with new runs
+
+#### `screening`
+
+| Key | Required | Notes |
+| --- | --- | --- |
+| `cv.n_splits` | no | defaults to `2` |
+| `cv.shuffle` | no | defaults to `true` |
+| `cv.random_state` | no | defaults to `42` |
+| `promote_top_k` | no | defaults to `3`; must be `<= len(screening.candidates)` |
+| `candidates` | yes | model candidates only; same shape as `experiment.candidates` model entries |
 
 ## Commands
 
@@ -123,6 +139,9 @@ Hard-invalid: representations with `native` categorical preprocessor and any `mo
 | `uv run python main.py prepare` | fetch if needed, materialize context in memory, write EDA reports |
 | `uv run python main.py eda` | write EDA reports only |
 | `uv run python main.py train` | train all configured candidates sequentially |
+| `uv run python main.py screening` | run all configured screening candidates sequentially |
+| `uv run python main.py screening --candidate-id <id>` | screen one candidate by configured screening candidate ID |
+| `uv run python main.py screening --index <n>` | screen one candidate by 1-based screening index |
 | `uv run python main.py train --candidate-id <id>` | train one candidate by ID |
 | `uv run python main.py train --index <n>` | train one candidate by 1-based index |
 | `uv run python main.py train --skip-existing` | skip candidates that already exist in MLflow |
@@ -149,9 +168,10 @@ The default pipeline stops after `train`; `submit` is always a separate explicit
 - **fetch**: ensures the competition zip is present locally.
 - **prepare**: fetches if needed, materializes the competition context in memory, and writes EDA reports under `reports/<competition_slug>/`.
 - **eda**: writes EDA reports only.
-- **train**: trains all configured candidates sequentially by default, loading one shared dataset context per invocation. Use `--candidate-id` or `--index` to train one configured candidate. Model candidates stage artifacts in a temp bundle and upload to MLflow. Blend candidates download their base candidates from MLflow, materialize blended predictions, then upload the blended candidate run.
-- **submit**: downloads the candidate from MLflow and validates `test_predictions.csv` against `sample_submission.csv`. With `--execute`, submits to Kaggle and records the submission event on the candidate run. Without `--execute`, performs dry-run validation only.
-- **refresh-submissions**: scans Kaggle submission history, matches `submit=<submission_event_id>` descriptions, and can recover missing MLflow submission events from `candidate=<candidate_id>` metadata before appending score observations.
+- **screening**: runs model-only screening candidates under `screening.cv`, writes screening runs to the screening MLflow experiment, and prints a promotion snippet for the top-ranked candidates.
+- **train**: trains canonical candidates sequentially by default, loading one shared dataset context per invocation. Use `--candidate-id` or `--index` to train one configured candidate. Model candidates stage artifacts in a temp bundle and upload to the candidates MLflow experiment. Blend candidates download their base candidates from the candidates experiment, materialize blended predictions, then upload the canonical candidate run.
+- **submit**: downloads the canonical candidate from MLflow and validates `test_predictions.csv` against `sample_submission.csv`. With `--execute`, submits to Kaggle and records the submission event on a submission run in the submissions MLflow experiment. Without `--execute`, performs dry-run validation only.
+- **refresh-submissions**: scans Kaggle submission history, matches `submit=<submission_event_id>` descriptions, and updates submission runs in the submissions experiment.
 
 ## Outputs
 
@@ -163,10 +183,16 @@ The default pipeline stops after `train`; `submit` is always a separate explicit
 
 ### MLflow
 
-- One MLflow experiment per `competition.slug`.
-- One canonical top-level MLflow run per `candidate_id`.
-- Failed or incomplete retry attempts may coexist as non-canonical top-level runs for the same `candidate_id`.
-- There are no stage-specific MLflow runs for `prepare`, `submit`, or `refresh-submissions`.
+- Three MLflow experiments per `competition.slug`:
+  - `<competition_slug>__screening`
+  - `<competition_slug>__candidates`
+  - `<competition_slug>__submissions`
+- Screening runs live only in the screening experiment.
+- Re-screening the same logical candidate is allowed and creates another screening run; screening runs are exploratory, not canonical.
+- One canonical top-level candidate run per `candidate_id` lives in the candidates experiment.
+- Submission event runs live in the submissions experiment.
+- Failed or incomplete retry attempts may coexist as non-canonical top-level runs for the same canonical `candidate_id`.
+- There are no stage-specific MLflow runs for `prepare` or `refresh-submissions`.
 - There is no local canonical `artifacts/` workflow.
 
 Real Kaggle submissions use auto-generated messages:
@@ -195,13 +221,15 @@ Preferred competitions for manual testing:
 - `playground-series-s5e10`: regression smoke test
 
 Suggested checks:
-- Run `uv run python main.py train` and confirm one MLflow run appears per configured candidate.
+- Run `uv run python main.py screening` and confirm one MLflow run appears per configured screening candidate in `<competition_slug>__screening`.
+- Run `uv run python main.py train` and confirm one MLflow run appears per configured canonical candidate in `<competition_slug>__candidates`.
 - Inspect a candidate run and confirm `logs/`, `candidate/`, `config/`, and `context/` artifacts exist.
 - Trigger one intentionally failing candidate and confirm the run is marked failed but still has `logs/runtime.log`.
 - Rerun the same candidate config after a failed attempt and confirm training retries without manual MLflow cleanup.
 - Train a blend candidate and confirm it downloads base candidates from MLflow.
 - Run `uv run python main.py submit --index 1` and confirm dry-run validation succeeds.
-- Run `uv run python main.py refresh-submissions` after a real submission and confirm MLflow metrics update, including recovery when the post-submit MLflow write was interrupted.
+- Run `uv run python main.py submit --index 1 --execute` and confirm a submission run appears in `<competition_slug>__submissions` while the canonical candidate run remains unchanged.
+- Run `uv run python main.py refresh-submissions` after a real submission and confirm submission-run metrics update, including recovery when the original submission-run write was interrupted.
 
 ### Current Limits
 

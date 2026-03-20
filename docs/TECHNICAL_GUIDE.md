@@ -7,7 +7,7 @@ For setup, commands, and config reference, see [USAGE.md](/USAGE.md).
 ## System Flow
 
 1. Enter the bootstrap entrypoint before importing runtime modules that depend on `pandas` or `sklearn`.
-2. Read `experiment.runtime.compute_target` and the optional advanced `experiment.runtime.gpu_backend` override from repository-root `config.yaml`, resolve hardware capability separately from tuple routing, inspect the selected train candidates before importing the runtime stack, install RAPIDS hooks only when the selected train batch resolves entirely to `gpu_patch`, and route GPU-capable booster families onto their GPU parameter paths.
+2. Read `experiment.runtime.compute_target` and the optional advanced `experiment.runtime.gpu_backend` override from repository-root `config.yaml`, resolve hardware capability separately from tuple routing, inspect the selected train or screening candidates before importing the runtime stack, install RAPIDS hooks only when the selected batch resolves entirely to `gpu_patch`, and route GPU-capable booster families onto their GPU parameter paths.
 3. Load and validate the repository-root `config.yaml`.
 4. Normalize and validate `competition.task_type`, `competition.primary_metric`, and the full `experiment.candidates` contract.
 5. Resolve the MLflow tracking URI from `experiment.tracking.tracking_uri`.
@@ -24,23 +24,27 @@ For setup, commands, and config reference, see [USAGE.md](/USAGE.md).
     - `context/competition.json`
     - `context/folds.csv`
     - `candidate/*`
-15. Create one MLflow run attempt for the candidate and upload the staged bundle.
-16. Treat only a `FINISHED` MLflow run with the full candidate artifact contract as the canonical run for that `candidate_id`.
-17. For real Kaggle submissions, download the explicitly selected candidate from MLflow, validate `test_predictions.csv` against `sample_submission.csv`, submit `submission.csv`, and append submission history artifacts back onto that same candidate run.
-18. For submission refresh, scan Kaggle submissions once, match `submit=<submission_event_id>` descriptions, recover missing submission events from `candidate=<candidate_id>` metadata when needed, and update candidate-run submission history plus scoreboard metrics in place.
+15. For screening, create one screening MLflow run attempt in `<competition_slug>__screening` and upload the staged bundle.
+16. For canonical training, create one canonical candidate MLflow run attempt in `<competition_slug>__candidates` and upload the staged bundle.
+17. Treat only a `FINISHED` canonical candidate run with the full candidate artifact contract as the canonical run for that `candidate_id`.
+18. For real Kaggle submissions, download the explicitly selected canonical candidate from MLflow, validate `test_predictions.csv` against `sample_submission.csv`, submit `submission.csv`, and create a submission run in `<competition_slug>__submissions`.
+19. For submission refresh, scan Kaggle submissions once, match `submit=<submission_event_id>` descriptions, recover missing submission runs from `candidate=<candidate_id>` metadata when needed, and update submission-run history plus scoreboard metrics in place.
 
 ## Runtime Invariants
 
 - MLflow is required. The runtime does not support a no-tracking mode.
 - Candidate state is canonical in MLflow, not on local disk.
-- A completed run with the full candidate artifact contract is canonical for a `candidate_id`.
+- A completed run with the full candidate artifact contract is canonical for a `candidate_id` only in the candidates experiment.
 - Failed or incomplete candidate attempts are non-canonical and may remain in MLflow until cleaned up.
-- Starting a new attempt while another run for the same `candidate_id` is still active is a hard error.
+- Starting a new canonical attempt while another canonical run for the same `candidate_id` is still active is a hard error.
 - `prepare` is not a persisted source of truth anymore.
-- `train` and `blend` must produce exactly one canonical candidate run keyed by `candidate_id`.
+- `screening` writes non-canonical screening runs into the screening experiment.
+- Re-screening the same logical candidate is expected behavior and creates another screening run; screening runs are exploratory history, not canonical state.
+- `train` and `blend` must produce exactly one canonical candidate run keyed by `candidate_id` in the candidates experiment.
 - Candidate runs should upload `logs/runtime.log` on both success and failure once the run exists.
 - `submit` resolves candidates from MLflow, not from local artifact directories.
-- `refresh-submissions` updates existing candidate runs and does not create standalone tracking runs.
+- `submit` and `refresh-submissions` must not mutate canonical candidate runs.
+- `refresh-submissions` updates existing submission runs and may recover missing submission runs.
 - Untuned model candidates use upstream library estimator defaults for all hyperparameters. The repo sets only runtime and task-contract params: determinism (`random_state`/`random_seed`), parallelism (`n_jobs`/`thread_count`), logging/file-writing controls (`verbosity`, `verbose`, `allow_writing_files`), problem-definition params (`objective`, `eval_metric`, `loss_function`), and GPU routing. Users who want a stronger untuned baseline should set `model_params` explicitly or enable optimization.
 - Representation steps must be deterministic and schema-preserving across train/test. All steps fit per fold inside the CV loop.
 - Binary probability blends require matching saved class metadata across all base candidates.
@@ -51,10 +55,12 @@ For setup, commands, and config reference, see [USAGE.md](/USAGE.md).
 ## Canonical Storage Model
 
 - MLflow is the canonical experiment store.
-- One MLflow experiment per `competition.slug`.
-- One canonical top-level MLflow run per `candidate_id`.
-- Failed or incomplete retry attempts may coexist as non-canonical top-level runs for the same `candidate_id`.
-- There are no stage-specific MLflow runs.
+- Three MLflow experiments per `competition.slug`: screening, candidates, submissions.
+- One canonical top-level MLflow candidate run per `candidate_id` in the candidates experiment.
+- Screening runs live in the screening experiment and are not canonical.
+- Submission runs live in the submissions experiment and track leaderboard events independently of candidate runs.
+- Tracking schema v4 changes candidate-id derivation versus archival schema-v3 data; existing experiments should be treated as read-only history rather than mixed with new runs.
+- Failed or incomplete retry attempts may coexist as non-canonical top-level runs for the same canonical `candidate_id`.
 - There are no local canonical candidate directories or local submission ledgers.
 
 Local persistent filesystem usage is limited to:
@@ -68,8 +74,19 @@ Each candidate run is named with `candidate_id`.
 
 ### Tags
 
-- `run_kind=candidate`
-- `tracking_schema_version=3`
+### Screening Runs
+
+Screening runs use:
+- `run_kind=screening`
+- `tracking_schema_version=4`
+
+Screening runs use the same candidate artifact bundle contract as canonical model candidates, but they live in the screening experiment and are not used for canonical lookup or submissions.
+
+### Candidate Runs
+
+Canonical candidate runs use:
+- `run_kind=canonical`
+- `tracking_schema_version=4`
 - `competition_slug`
 - `candidate_id`
 - `candidate_type`
@@ -119,13 +136,6 @@ Each candidate run is named with `candidate_id`.
 - `fit_wall_seconds`
 - `optimization_best_value` when present
 - `optimization_trial_count` when present
-- submission metrics when submission history exists:
-  - `submit_count`
-  - `latest_public_score`
-  - `best_public_score`
-  - `latest_private_score`
-  - `best_private_score`
-
 ### Artifacts
 
 Every candidate run stores:
@@ -145,15 +155,9 @@ Optional candidate artifacts:
 - `candidate/optimization_trials.csv`
 - `candidate/optimization_best_params.json`
 
-Submission artifacts on the same candidate run:
-- `submissions/history.json`
-- `submissions/<submission_event_id>/event.json`
-- `submissions/<submission_event_id>/submission.csv`
-- `submissions/<submission_event_id>/observations.json`
-
 ### Optimization Trial Child Runs
 
-Optuna-backed model candidates also create nested MLflow child runs named `trial_<n>` with `run_kind=optimization_trial`.
+Optuna-backed canonical model candidates also create nested MLflow child runs named `trial_<n>` with `run_kind=optimization_trial`.
 
 Trial child-run tags:
 - `run_kind=optimization_trial`
@@ -161,6 +165,42 @@ Trial child-run tags:
 - `candidate_id`
 - `model_family`
 - `trial_state`, transitioning from `RUNNING` to `COMPLETE` or `FAIL`
+
+### Submission Runs
+
+Submission runs use:
+- `run_kind=submission`
+- `tracking_schema_version=4`
+- `candidate_id`
+- `candidate_type`
+- `submission_event_id`
+- `representation_id`
+- `model_registry_key`
+
+Submission run params include:
+- `candidate_id`
+- `candidate_type`
+- `config_fingerprint`
+- `representation_id`
+- `model_registry_key`
+- `estimator_name`
+- `cv_metric_name`
+- `cv_metric_mean`
+- `cv_metric_std`
+- `submission_file_name`
+
+Submission run metrics:
+- `submit_count`
+- `latest_public_score`
+- `best_public_score`
+- `latest_private_score`
+- `best_private_score`
+
+Submission run artifacts:
+- `submissions/history.json`
+- `submissions/event.json`
+- `submissions/submission.csv`
+- `submissions/observations.json`
 
 Trial child-run params:
 - `trial_number`
@@ -206,17 +246,17 @@ Validation rules:
 Real Kaggle submissions:
 - generate one `submission_event_id`
 - use description format `candidate=<candidate_id> | submit=<submission_event_id> | <metric>=<value>`
-- append the event into `submissions/history.json` on the candidate run
-- upload `submission.csv` under `submissions/<submission_event_id>/`
-- attempt an immediate refresh without creating a separate run
+- create one submission run in the submissions experiment
+- write `submissions/history.json`, `submissions/event.json`, and `submissions/submission.csv` on that submission run
+- attempt an immediate refresh against that submission run
 
 Refresh behavior:
 - scan Kaggle submissions once
 - extract `submission_event_id` from the Kaggle description
-- match it to candidate-run submission history
-- when `submission_event_id` is missing from MLflow history but the Kaggle description includes `candidate=<candidate_id>`, recover the submission event onto that canonical candidate run
+- match it to submission-run history
+- when `submission_event_id` is missing from MLflow history but the Kaggle description includes `candidate=<candidate_id>`, recover the submission event into a new submission run linked to that canonical candidate
 - append only new observations
-- update candidate-run score metrics in place
+- update submission-run score metrics in place
 
 ## Candidate Manifest Contract
 
