@@ -7,7 +7,7 @@ For setup, commands, and config reference, see [USAGE.md](/USAGE.md).
 ## System Flow
 
 1. Enter the bootstrap entrypoint before importing runtime modules that depend on `pandas` or `sklearn`.
-2. Read `experiment.runtime.compute_target` and the optional advanced `experiment.runtime.gpu_backend` override from repository-root `config.yaml`, resolve hardware capability separately from tuple routing, inspect the selected train or screening candidates before importing the runtime stack, install RAPIDS hooks only when the selected batch resolves entirely to `gpu_patch`, and route GPU-capable booster families onto their GPU parameter paths.
+2. Read `experiment.runtime.compute_target` and the optional advanced `experiment.runtime.gpu_backend` override from repository-root `config.yaml`, resolve hardware capability separately from tuple routing, inspect the selected train or screening candidates before importing the runtime stack, install RAPIDS hooks only when the selected batch resolves entirely to `gpu_patch`, and route GPU-capable booster families onto their GPU parameter paths. Screening config uses `screening.representation_ids` x `screening.model_families` cross-product expansion; incompatible pairs are skipped with a warning at config validation time.
 3. Load and validate the repository-root `config.yaml`.
 4. Normalize and validate `competition.task_type`, `competition.primary_metric`, and the full `experiment.candidates` contract.
 5. Resolve the MLflow tracking URI from `experiment.tracking.tracking_uri`.
@@ -171,22 +171,14 @@ Trial child-run tags:
 Submission runs use:
 - `run_kind=submission`
 - `tracking_schema_version=4`
+- `competition_slug`
 - `candidate_id`
-- `candidate_type`
 - `submission_event_id`
-- `representation_id`
-- `model_registry_key`
+- `git_commit` when available
+- `git_branch` when available
 
 Submission run params include:
 - `candidate_id`
-- `candidate_type`
-- `config_fingerprint`
-- `representation_id`
-- `model_registry_key`
-- `estimator_name`
-- `cv_metric_name`
-- `cv_metric_mean`
-- `cv_metric_std`
 - `submission_file_name`
 
 Submission run metrics:

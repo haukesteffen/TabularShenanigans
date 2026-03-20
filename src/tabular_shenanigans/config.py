@@ -74,30 +74,32 @@ class CompetitionConfig(BaseModel):
 class ScreeningConfig(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
-    candidates: list["ModelCandidateConfig"] = Field(min_length=1)
+    representation_ids: list[str] = Field(min_length=1)
+    model_families: list[str] = Field(min_length=1)
+    optimization: "CandidateOptimizationConfig | None" = None
     cv: CompetitionCvConfig = Field(
         default_factory=lambda: CompetitionCvConfig(n_splits=2, shuffle=True, random_state=42)
     )
     promote_top_k: int = Field(default=3, ge=1)
+    candidates: list["ModelCandidateConfig"] = Field(default_factory=list, exclude=True)
     active_candidate_index: int = Field(default=0, exclude=True, repr=False, ge=0)
+
+    @model_validator(mode="before")
+    @classmethod
+    def reject_user_provided_candidates(cls, values: object) -> object:
+        if not isinstance(values, dict):
+            return values
+        if "candidates" in values:
+            raise ValueError(
+                "screening.candidates is not a user-facing field. "
+                "Use screening.representation_ids and screening.model_families instead. "
+                "The candidates list is built automatically from the cross-product."
+            )
+        return values
 
     @property
     def candidate(self) -> "ModelCandidateConfig":
         return self.candidates[self.active_candidate_index]
-
-    @model_validator(mode="after")
-    def validate_active_candidate_index(self) -> "ScreeningConfig":
-        if self.active_candidate_index >= len(self.candidates):
-            raise ValueError(
-                "screening.active_candidate_index must reference a configured candidate. "
-                f"Got {self.active_candidate_index} for {len(self.candidates)} candidates."
-            )
-        if self.promote_top_k > len(self.candidates):
-            raise ValueError(
-                "screening.promote_top_k cannot exceed the number of screening candidates. "
-                f"Got promote_top_k={self.promote_top_k} for {len(self.candidates)} candidates."
-            )
-        return self
 
 
 class CandidateOptimizationConfig(BaseModel):
@@ -331,42 +333,71 @@ class AppConfig(BaseModel):
             )
 
         if self.screening is not None:
-            resolved_screening_candidate_ids: dict[str, list[int]] = {}
-            for candidate_index, candidate in enumerate(self.screening.candidates, start=1):
-                try:
-                    candidate.representation_id = resolve_representation_id(candidate.representation_id)
-                    representation_definition = get_representation_definition(candidate.representation_id)
-                    resolved_model_registry_key = self.resolve_screening_model_registry_key_for_index(
-                        candidate_index - 1
-                    )
-                    validate_model_preprocessing_compatibility(
-                        task_type=competition.task_type,
-                        model_id=resolved_model_registry_key,
-                        categorical_preprocessor_id=representation_definition.categorical_preprocessor_id,
-                    )
-                    validate_model_parameter_overrides(
-                        task_type=competition.task_type,
-                        model_id=resolved_model_registry_key,
-                        parameter_overrides=candidate.model_params,
-                    )
-                    if candidate.optimization is not None:
-                        optimization = candidate.optimization
-                        if optimization.n_trials is None and optimization.timeout_seconds is None:
-                            raise ValueError(
-                                "At least one screening candidate.optimization stopping condition is required. "
-                                "Set screening candidate.optimization.n_trials or "
-                                "screening candidate.optimization.timeout_seconds."
-                            )
-                        if not is_model_tunable(competition.task_type, resolved_model_registry_key):
-                            supported_tunable_model_families = get_tunable_model_ids(competition.task_type)
-                            raise ValueError(
-                                f"Configured screening model_family '{candidate.model_family}' does not support "
-                                f"optimization for task_type '{competition.task_type}'. Supported tunable model "
-                                f"families: {supported_tunable_model_families}"
-                            )
-                except ValueError as exc:
-                    raise ValueError(f"screening.candidates[{candidate_index}] is invalid: {exc}") from exc
+            screening = self.screening
 
+            resolved_representation_ids = []
+            for raw_repr_id in screening.representation_ids:
+                resolved_repr_id = resolve_representation_id(raw_repr_id)
+                get_representation_definition(resolved_repr_id)
+                resolved_representation_ids.append(resolved_repr_id)
+
+            resolved_model_families: list[tuple[str, str]] = []
+            for raw_model_family in screening.model_families:
+                resolved_model_id = resolve_candidate_model_id(
+                    task_type=competition.task_type,
+                    model_family=raw_model_family,
+                )
+                resolved_model_families.append((raw_model_family, resolved_model_id))
+
+            expanded_candidates: list[ModelCandidateConfig] = []
+            for repr_id in resolved_representation_ids:
+                representation_definition = get_representation_definition(repr_id)
+                for model_family, model_registry_key in resolved_model_families:
+                    try:
+                        validate_model_preprocessing_compatibility(
+                            task_type=competition.task_type,
+                            model_id=model_registry_key,
+                            categorical_preprocessor_id=representation_definition.categorical_preprocessor_id,
+                        )
+                    except ValueError as exc:
+                        print(
+                            f"Screening: skipping incompatible pair "
+                            f"(model_family={model_family!r}, representation_id={repr_id!r}): {exc}"
+                        )
+                        continue
+                    expanded_candidates.append(
+                        ModelCandidateConfig(
+                            representation_id=repr_id,
+                            model_family=model_family,
+                            optimization=screening.optimization.model_copy(deep=True)
+                            if screening.optimization is not None
+                            else None,
+                        )
+                    )
+
+            if not expanded_candidates:
+                raise ValueError(
+                    "screening: no valid (model_family, representation_id) pairs survived "
+                    "compatibility checks. All cross-product pairs were incompatible."
+                )
+
+            screening.candidates = expanded_candidates
+
+            if screening.active_candidate_index >= len(screening.candidates):
+                raise ValueError(
+                    "screening.active_candidate_index must reference a valid screening candidate. "
+                    f"Got {screening.active_candidate_index} for {len(screening.candidates)} candidates."
+                )
+
+            if screening.promote_top_k > len(screening.candidates):
+                raise ValueError(
+                    "screening.promote_top_k cannot exceed the number of valid screening candidates. "
+                    f"Got promote_top_k={screening.promote_top_k} for "
+                    f"{len(screening.candidates)} valid candidates."
+                )
+
+            resolved_screening_candidate_ids: dict[str, list[int]] = {}
+            for candidate_index, candidate in enumerate(screening.candidates, start=1):
                 resolved_candidate_id = self.resolve_screening_candidate_id_for_index(candidate_index - 1)
                 resolved_screening_candidate_ids.setdefault(resolved_candidate_id, []).append(candidate_index)
 
@@ -384,6 +415,27 @@ class AppConfig(BaseModel):
                     "Configured screening candidates must derive distinct candidate_id values. "
                     f"Duplicates: {duplicate_summary}"
                 )
+
+            if screening.optimization is not None:
+                optimization = screening.optimization
+                if optimization.n_trials is None and optimization.timeout_seconds is None:
+                    raise ValueError(
+                        "At least one screening.optimization stopping condition is required. "
+                        "Set screening.optimization.n_trials or screening.optimization.timeout_seconds."
+                    )
+                for model_family, model_registry_key in resolved_model_families:
+                    has_expanded_candidate = any(
+                        c.model_family == model_family for c in expanded_candidates
+                    )
+                    if not has_expanded_candidate:
+                        continue
+                    if not is_model_tunable(competition.task_type, model_registry_key):
+                        supported_tunable_model_families = get_tunable_model_ids(competition.task_type)
+                        raise ValueError(
+                            f"Configured screening model_family '{model_family}' does not support "
+                            f"optimization for task_type '{competition.task_type}'. Supported tunable "
+                            f"model families: {supported_tunable_model_families}"
+                        )
         return self
 
     @property

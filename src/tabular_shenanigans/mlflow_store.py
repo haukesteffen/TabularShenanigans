@@ -719,10 +719,7 @@ def create_submission_run(config: AppConfig, submission_event: SubmissionEvent) 
             "tracking_schema_version": TRACKING_SCHEMA_VERSION,
             "competition_slug": submission_event.competition_slug,
             "candidate_id": submission_event.candidate_id,
-            "candidate_type": submission_event.candidate_type,
             "submission_event_id": submission_event.submission_event_id,
-            "representation_id": submission_event.representation_id,
-            "model_registry_key": submission_event.model_registry_key,
             **_git_metadata(),
         },
     )
@@ -731,14 +728,6 @@ def create_submission_run(config: AppConfig, submission_event: SubmissionEvent) 
         run.info.run_id,
         {
             "candidate_id": submission_event.candidate_id,
-            "candidate_type": submission_event.candidate_type,
-            "config_fingerprint": submission_event.config_fingerprint,
-            "representation_id": submission_event.representation_id,
-            "model_registry_key": submission_event.model_registry_key,
-            "estimator_name": submission_event.estimator_name,
-            "cv_metric_name": submission_event.cv_metric_name,
-            "cv_metric_mean": submission_event.cv_metric_mean,
-            "cv_metric_std": submission_event.cv_metric_std,
             "submission_file_name": submission_event.submission_file_name,
         },
     )

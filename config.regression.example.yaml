@@ -59,3 +59,25 @@ experiment:
     #   weights:
     #     - 0.5
     #     - 0.5
+
+# Optional screening stage — evaluates the cross-product of representation_ids x model_families
+# with a cheap reduced-fold CV, then prints a promotion snippet for the top-k candidates.
+# screening:
+#   representation_ids:
+#     - standardize-onehot
+#     - median-ordinal
+#     - median-frequency
+#   model_families:
+#     - lightgbm
+#     - xgboost
+#     - ridge
+#   cv:
+#     n_splits: 2
+#     shuffle: true
+#     random_state: 42
+#   promote_top_k: 3
+#   # Optional tuning budget for screening:
+#   # optimization:
+#   #   method: optuna
+#   #   n_trials: 10
+#   #   timeout_seconds: 300

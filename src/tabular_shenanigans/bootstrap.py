@@ -48,14 +48,9 @@ def _stage_uses_training_runtime(stage: str | None) -> bool:
 
 
 def _resolve_selected_candidate_indices(
-    runtime_config,
+    configured_candidates: tuple,
     selection: BootstrapCliSelection,
 ) -> tuple[int, ...]:
-    configured_candidates = (
-        runtime_config.screening_candidates
-        if selection.stage == "screening"
-        else runtime_config.experiment_candidates
-    )
     if selection.candidate_index is not None:
         resolved_index = selection.candidate_index - 1
         if resolved_index < 0 or resolved_index >= len(configured_candidates):
@@ -83,12 +78,41 @@ def _raise_mixed_patch_runtime_error(selection: BootstrapCliSelection) -> None:
     )
 
 
+def _filter_compatible_screening_candidates(
+    screening_candidates: tuple,
+    task_type: str,
+    representation_registry: dict,
+    resolve_model_id_fn,
+    validate_compatibility_fn,
+) -> tuple:
+    filtered = []
+    for candidate in screening_candidates:
+        if candidate.model_family is None or candidate.representation_id is None:
+            continue
+        representation_definition = representation_registry.get(candidate.representation_id)
+        if representation_definition is None:
+            continue
+        try:
+            model_id = resolve_model_id_fn(task_type=task_type, model_family=candidate.model_family)
+            validate_compatibility_fn(
+                task_type=task_type,
+                model_id=model_id,
+                categorical_preprocessor_id=representation_definition.categorical_preprocessor_id,
+            )
+        except ValueError:
+            continue
+        filtered.append(candidate)
+    return tuple(filtered)
+
+
 def _apply_runtime_bootstrap(argv: list[str] | None) -> None:
     if _should_skip_runtime_bootstrap(argv):
         return
 
     from tabular_shenanigans.bootstrap_config import load_bootstrap_runtime_config
     from tabular_shenanigans.execution_routing import resolve_model_candidate_runtime_execution
+    from tabular_shenanigans.models import resolve_candidate_model_id, validate_model_preprocessing_compatibility
+    from tabular_shenanigans.representations.registry import REPRESENTATION_REGISTRY
     from tabular_shenanigans.runtime_execution import (
         PATCH_GPU_BACKEND,
         activate_runtime_acceleration,
@@ -101,18 +125,25 @@ def _apply_runtime_bootstrap(argv: list[str] | None) -> None:
     if not _stage_uses_training_runtime(selection.stage):
         return
 
-    selected_candidate_indices = _resolve_selected_candidate_indices(runtime_config, selection)
-    if not selected_candidate_indices or runtime_config.task_type is None:
+    if runtime_config.task_type is None:
+        return
+
+    if selection.stage == "screening":
+        configured_candidates = _filter_compatible_screening_candidates(
+            runtime_config.screening_candidates,
+            runtime_config.task_type,
+            REPRESENTATION_REGISTRY,
+            resolve_candidate_model_id,
+            validate_model_preprocessing_compatibility,
+        )
+    else:
+        configured_candidates = runtime_config.experiment_candidates
+
+    selected_candidate_indices = _resolve_selected_candidate_indices(configured_candidates, selection)
+    if not selected_candidate_indices:
         return
 
     capabilities = detect_runtime_capabilities()
-    from tabular_shenanigans.representations.registry import REPRESENTATION_REGISTRY
-
-    configured_candidates = (
-        runtime_config.screening_candidates
-        if selection.stage == "screening"
-        else runtime_config.experiment_candidates
-    )
     selected_model_contexts = []
     for candidate_index in selected_candidate_indices:
         candidate = configured_candidates[candidate_index]
