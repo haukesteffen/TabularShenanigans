@@ -6,6 +6,11 @@ import pandas as pd
 
 from tabular_shenanigans.representations.feature_schema import ResolvedFeatureSchema
 from tabular_shenanigans.representations.fitted import FittedRepresentation
+from tabular_shenanigans.representations.steps import (
+    bind_step_columns,
+    is_categorical_step,
+    is_numeric_step,
+)
 from tabular_shenanigans.representations.types import FittedStep, RepresentationDefinition
 
 
@@ -13,13 +18,14 @@ from tabular_shenanigans.representations.types import FittedStep, Representation
 class CompiledRepresentation:
     definition: RepresentationDefinition
     feature_schema: ResolvedFeatureSchema
+    bound_steps: tuple[object, ...]
     matrix_output_kind: str
     preprocessing_backend: str
 
     def fit(self, X_train: pd.DataFrame, y_train: pd.Series) -> FittedRepresentation:
         current = X_train.copy()
         fitted_steps: list[FittedStep] = []
-        for step in self.definition.steps:
+        for step in self.bound_steps:
             y_arg = y_train if step.fit_mode == "supervised" else None
             fitted_step = step.fit(current, y_arg)
             current = fitted_step.transform(current)
@@ -62,9 +68,20 @@ def compile_representation(
         categorical_preprocessor_id=definition.categorical_preprocessor_id,
         matrix_output_kind=matrix_output_kind,
     )
+
+    bound_steps: list[object] = []
+    for step in definition.steps:
+        if is_numeric_step(step) and hasattr(step, "columns") and step.columns is None:
+            bound_steps.append(bind_step_columns(step, list(feature_schema.numeric_columns)))
+        elif is_categorical_step(step) and hasattr(step, "columns") and step.columns is None:
+            bound_steps.append(bind_step_columns(step, list(feature_schema.categorical_columns)))
+        else:
+            bound_steps.append(step)
+
     return CompiledRepresentation(
         definition=definition,
         feature_schema=feature_schema,
+        bound_steps=tuple(bound_steps),
         matrix_output_kind=execution_plan.matrix_output_kind,
         preprocessing_backend=execution_plan.preprocessing_backend,
     )

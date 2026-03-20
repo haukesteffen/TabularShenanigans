@@ -416,11 +416,22 @@ def _run_cv_evaluation(
             cv_random_state,
             parameter_overrides=model_spec.parameter_overrides,
         )
+        if matrix_output_kind == "native_frame" and isinstance(x_fold_train_processed, pd.DataFrame):
+            processed_categorical_columns = [
+                c for c in x_fold_train_processed.columns
+                if x_fold_train_processed[c].dtype == object or pd.api.types.is_string_dtype(x_fold_train_processed[c])
+            ]
+            processed_numeric_columns = [
+                c for c in x_fold_train_processed.columns if c not in processed_categorical_columns
+            ]
+        else:
+            processed_numeric_columns = training_context.feature_schema.numeric_columns
+            processed_categorical_columns = training_context.feature_schema.categorical_columns
         model_fit_kwargs = build_model_fit_kwargs(
             model_definition=model_definition,
             x_train_processed=x_fold_train_processed,
-            numeric_columns=training_context.feature_schema.numeric_columns,
-            categorical_columns=training_context.feature_schema.categorical_columns,
+            numeric_columns=processed_numeric_columns,
+            categorical_columns=processed_categorical_columns,
             uses_native_categorical_preprocessing=matrix_output_kind == "native_frame",
         )
         fit_started = time.perf_counter()

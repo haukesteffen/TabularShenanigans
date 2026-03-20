@@ -39,13 +39,17 @@ class _FittedSklearnStep:
 
     def transform(self, X: pd.DataFrame) -> pd.DataFrame:
         if not self.columns:
-            return pd.DataFrame(index=X.index)
+            return X
         transformed_values = self.transformer.transform(X.loc[:, self.columns])
-        return pd.DataFrame(
+        transformed_df = pd.DataFrame(
             _ensure_dense_array(transformed_values),
             index=X.index,
             columns=self.output_columns,
         )
+        passthrough_columns = [c for c in X.columns if c not in self.columns]
+        if not passthrough_columns:
+            return transformed_df
+        return pd.concat([transformed_df, X.loc[:, passthrough_columns]], axis=1)
 
 
 @dataclass
@@ -94,17 +98,17 @@ class _FittedOrdinalEncodeStep:
 class _FittedOneHotEncodeStep:
     columns: list[str]
     transformer: object
+    feature_names: list[str]
 
     def transform(self, X: pd.DataFrame) -> pd.DataFrame:
         if not self.columns:
             return X
         non_cat = X.drop(columns=self.columns)
         transformed = self.transformer.transform(X.loc[:, self.columns])
-        feature_names = self.transformer.get_feature_names_out(self.columns)
         onehot_df = pd.DataFrame(
             _ensure_dense_array(transformed),
             index=X.index,
-            columns=[str(name) for name in feature_names],
+            columns=self.feature_names,
         )
         return pd.concat([non_cat, onehot_df], axis=1)
 
@@ -146,9 +150,43 @@ def _resolve_transformed_columns(transformer: object, columns: list[str]) -> lis
     return list(columns)
 
 
+# --- Column binding ---
+
+# Maps step classes to whether they operate on numeric or categorical columns.
+_NUMERIC_STEP_TYPES: set[type] = set()
+_CATEGORICAL_STEP_TYPES: set[type] = set()
+
+
+def _mark_numeric(cls: type) -> type:
+    _NUMERIC_STEP_TYPES.add(cls)
+    return cls
+
+
+def _mark_categorical(cls: type) -> type:
+    _CATEGORICAL_STEP_TYPES.add(cls)
+    return cls
+
+
+def is_numeric_step(step: object) -> bool:
+    return type(step) in _NUMERIC_STEP_TYPES
+
+
+def is_categorical_step(step: object) -> bool:
+    return type(step) in _CATEGORICAL_STEP_TYPES
+
+
+def bind_step_columns(step: object, columns: list[str]) -> object:
+    """Return a copy of the step with its columns field bound to the given list."""
+    from dataclasses import replace
+    if not hasattr(step, "columns"):
+        return step
+    return replace(step, columns=columns)
+
+
 # --- Step implementations ---
 
 
+@_mark_numeric
 @dataclass(frozen=True)
 class MedianImputeStep:
     step_id: str = "median_impute"
@@ -169,6 +207,7 @@ class MedianImputeStep:
         )
 
 
+@_mark_numeric
 @dataclass(frozen=True)
 class StandardizeStep:
     step_id: str = "standardize"
@@ -194,6 +233,7 @@ class StandardizeStep:
         )
 
 
+@_mark_numeric
 @dataclass(frozen=True)
 class KBinsStep:
     step_id: str = "kbins"
@@ -229,6 +269,7 @@ class KBinsStep:
         )
 
 
+@_mark_categorical
 @dataclass(frozen=True)
 class OrdinalEncodeStep:
     step_id: str = "ordinal_encode"
@@ -260,6 +301,7 @@ class OrdinalEncodeStep:
         )
 
 
+@_mark_categorical
 @dataclass(frozen=True)
 class OneHotEncodeStep:
     step_id: str = "onehot_encode"
@@ -277,14 +319,19 @@ class OneHotEncodeStep:
                 ("onehot", OneHotEncoder(handle_unknown="ignore", sparse_output=self.sparse_output)),
             ]
         )
+        feature_names: list[str] = []
         if categorical_columns:
             transformer.fit(X.loc[:, categorical_columns])
+            onehot_encoder = transformer.named_steps["onehot"]
+            feature_names = [str(name) for name in onehot_encoder.get_feature_names_out(categorical_columns)]
         return _FittedOneHotEncodeStep(
             columns=categorical_columns,
             transformer=transformer,
+            feature_names=feature_names,
         )
 
 
+@_mark_categorical
 @dataclass(frozen=True)
 class FrequencyEncodeStep:
     step_id: str = "frequency_encode"
@@ -312,6 +359,7 @@ class FrequencyEncodeStep:
         )
 
 
+@_mark_categorical
 @dataclass(frozen=True)
 class NativeCategoricalStep:
     step_id: str = "native_categorical"
