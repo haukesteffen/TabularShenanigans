@@ -798,8 +798,11 @@ def build_realmlp_regressor(
     runtime_execution_context = get_runtime_execution_context()
     params = merge_model_params(
         {
+            "batch_size": 4096,
             "device": "cuda" if runtime_execution_context.resolved_compute_target == "gpu" else "cpu",
+            "n_epochs": 256,
             "random_state": random_state,
+            "use_early_stopping": True,
         },
         parameter_overrides,
     )
@@ -821,8 +824,11 @@ def build_realmlp_classifier(
     runtime_execution_context = get_runtime_execution_context()
     params = merge_model_params(
         {
+            "batch_size": 4096,
             "device": "cuda" if runtime_execution_context.resolved_compute_target == "gpu" else "cpu",
+            "n_epochs": 256,
             "random_state": random_state,
+            "use_early_stopping": True,
         },
         parameter_overrides,
     )
@@ -1027,25 +1033,24 @@ def build_realmlp_tuning_space(
 ) -> dict[str, object]:
     params: dict[str, object] = {
         "act": trial.suggest_categorical("act", ["relu", "selu", "mish"]),
-        "batch_size": trial.suggest_categorical("batch_size", [128, 256, 512]),
-        "hidden_width": trial.suggest_categorical("hidden_width", [64, 128, 192, 256, 384]),
+        "batch_size": 4096,
+        "hidden_width": trial.suggest_categorical("hidden_width", [64, 128, 256]),
         "lr": trial.suggest_float("lr", 3e-5, 3e-2, log=True),
         "lr_sched": trial.suggest_categorical("lr_sched", ["constant", "coslog4"]),
-        "n_epochs": trial.suggest_int("n_epochs", 100, 600, step=50),
+        "n_epochs": 256,
         "n_hidden_layers": trial.suggest_int("n_hidden_layers", 1, 4),
         "p_drop": trial.suggest_float("p_drop", 0.0, 0.4),
         "p_drop_sched": trial.suggest_categorical("p_drop_sched", ["constant", "flat_cos"]),
-        "use_early_stopping": trial.suggest_categorical("use_early_stopping", [True, False]),
+        "use_early_stopping": True,
         "wd": trial.suggest_float("wd", 1e-7, 3e-2, log=True),
         "wd_sched": trial.suggest_categorical("wd_sched", ["constant", "flat_cos"]),
     }
-    if params["use_early_stopping"]:
-        params["early_stopping_additive_patience"] = trial.suggest_int(
-            "early_stopping_additive_patience", 10, 40, step=5
-        )
-        params["early_stopping_multiplicative_patience"] = trial.suggest_float(
-            "early_stopping_multiplicative_patience", 1.0, 3.0
-        )
+    params["early_stopping_additive_patience"] = trial.suggest_int(
+        "early_stopping_additive_patience", 10, 40, step=5
+    )
+    params["early_stopping_multiplicative_patience"] = trial.suggest_float(
+        "early_stopping_multiplicative_patience", 1.0, 3.0
+    )
     if task_type == "binary":
         params["use_ls"] = trial.suggest_categorical("use_ls", [True, False])
         if params["use_ls"]:
