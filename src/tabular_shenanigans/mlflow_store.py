@@ -4,7 +4,7 @@ import tempfile
 from collections.abc import Mapping
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any
+from typing import Any, Literal
 
 from tabular_shenanigans.candidate_artifacts import (
     CANDIDATE_ARTIFACT_DIRNAME,
@@ -14,11 +14,15 @@ from tabular_shenanigans.candidate_artifacts import (
     load_candidate_manifest,
 )
 from tabular_shenanigans.config import AppConfig
-from tabular_shenanigans.submission_history import CandidateSubmissionHistory
+from tabular_shenanigans.submission_history import CandidateSubmissionHistory, SubmissionEvent
 
-TRACKING_SCHEMA_VERSION = "3"
-RUN_KIND_CANDIDATE = "candidate"
+TRACKING_SCHEMA_VERSION = "4"
+RUN_KIND_SCREENING = "screening"
+RUN_KIND_CANONICAL = "canonical"
+RUN_KIND_SUBMISSION = "submission"
+RUN_KIND_OPTIMIZATION_TRIAL = "optimization_trial"
 SUBMISSION_HISTORY_ARTIFACT_PATH = "submissions/history.json"
+SUBMISSION_EVENT_ARTIFACT_PATH = "submissions/event.json"
 CANDIDATE_BUNDLE_REQUIRED_ARTIFACT_PATHS = (
     "logs/runtime.log",
     "config/runtime_config.json",
@@ -31,6 +35,7 @@ CANDIDATE_BUNDLE_REQUIRED_ARTIFACT_PATHS = (
 )
 CANDIDATE_BUNDLE_ROOT_PATHS = ("logs", "config", "context", "candidate")
 ACTIVE_MLFLOW_RUN_STATUSES = {"RUNNING", "SCHEDULED"}
+ExperimentRole = Literal["screening", "candidates", "submissions"]
 
 
 @dataclass(frozen=True)
@@ -38,6 +43,7 @@ class CandidateRunRef:
     run_id: str
     experiment_id: str
     candidate_id: str
+    run_kind: str
 
 
 @dataclass(frozen=True)
@@ -53,6 +59,14 @@ class DownloadedCandidateBundle:
 class TrialRunRef:
     run_id: str
     trial_number: int
+
+
+@dataclass(frozen=True)
+class SubmissionRunRef:
+    run_id: str
+    experiment_id: str
+    candidate_id: str
+    submission_event_id: str
 
 
 @dataclass(frozen=True)
@@ -103,11 +117,27 @@ def _client(config: AppConfig):
     return mlflow.tracking.MlflowClient()
 
 
-def _experiment_id(config: AppConfig) -> str:
+def _experiment_name(config: AppConfig, role: ExperimentRole) -> str:
+    return f"{config.competition.slug}__{role}"
+
+
+def _experiment_id(config: AppConfig, role: ExperimentRole) -> str:
     mlflow = _load_mlflow()
     mlflow.set_tracking_uri(config.experiment.tracking.tracking_uri)
-    experiment = mlflow.set_experiment(config.competition.slug)
+    experiment = mlflow.set_experiment(_experiment_name(config, role))
     return experiment.experiment_id
+
+
+def _training_experiment_role(config: AppConfig) -> ExperimentRole:
+    if config.active_run_stage == "screening":
+        return "screening"
+    return "candidates"
+
+
+def _training_run_kind(config: AppConfig) -> str:
+    if config.active_run_stage == "screening":
+        return RUN_KIND_SCREENING
+    return RUN_KIND_CANONICAL
 
 
 def _git_output(args: list[str]) -> str | None:
@@ -161,21 +191,29 @@ def _log_metrics(client, run_id: str, metrics: dict[str, float | int | None]) ->
         client.log_metric(run_id, key, float(value))
 
 
-def _candidate_search_filter(candidate_id: str) -> str:
+def _candidate_search_filter(candidate_id: str, run_kind: str) -> str:
     return (
-        f"tags.run_kind = '{RUN_KIND_CANDIDATE}' "
+        f"tags.run_kind = '{run_kind}' "
         f"and tags.candidate_id = '{candidate_id}'"
     )
+
+
+def _submission_run_search_filter() -> str:
+    return f"tags.run_kind = '{RUN_KIND_SUBMISSION}'"
 
 
 def _candidate_run_ref_from_run(run) -> CandidateRunRef:
     candidate_id = run.data.tags.get("candidate_id")
     if candidate_id is None:
         raise ValueError(f"Candidate run {run.info.run_id} is missing tag 'candidate_id'.")
+    run_kind = run.data.tags.get("run_kind")
+    if run_kind is None:
+        raise ValueError(f"Candidate run {run.info.run_id} is missing tag 'run_kind'.")
     return CandidateRunRef(
         run_id=run.info.run_id,
         experiment_id=run.info.experiment_id,
         candidate_id=str(candidate_id),
+        run_kind=str(run_kind),
     )
 
 
@@ -226,11 +264,7 @@ def _required_candidate_artifact_paths(manifest: Mapping[str, object] | None = N
     return required_paths
 
 
-def _assess_candidate_run(
-    client,
-    run,
-    destination_dir: Path,
-) -> CandidateRunAssessment:
+def _assess_candidate_run(client, run, destination_dir: Path) -> CandidateRunAssessment:
     run_ref = _candidate_run_ref_from_run(run)
     artifact_paths = _collect_candidate_bundle_artifact_paths(client, run_ref.run_id)
     required_paths = _required_candidate_artifact_paths()
@@ -277,11 +311,7 @@ def _candidate_run_guidance(lookup: CandidateRunLookup) -> str:
     return "Retry training to create a fresh canonical run or repair/delete the broken runs."
 
 
-def _build_candidate_lookup_from_runs(
-    candidate_id: str,
-    client,
-    runs: list[Any],
-) -> CandidateRunLookup:
+def _build_candidate_lookup_from_runs(candidate_id: str, client, runs: list[Any]) -> CandidateRunLookup:
     with tempfile.TemporaryDirectory(prefix="tabular-shenanigans-candidate-lookup-") as temp_dir:
         temp_root = Path(temp_dir)
         assessments = tuple(
@@ -310,10 +340,10 @@ def _build_candidate_lookup_from_runs(
 
 def _candidate_run_lookup(config: AppConfig, candidate_id: str) -> CandidateRunLookup:
     client = _client(config)
-    experiment_id = _experiment_id(config)
+    experiment_id = _experiment_id(config, "candidates")
     runs = client.search_runs(
         experiment_ids=[experiment_id],
-        filter_string=_candidate_search_filter(candidate_id),
+        filter_string=_candidate_search_filter(candidate_id, RUN_KIND_CANONICAL),
         max_results=100,
     )
     return _build_candidate_lookup_from_runs(
@@ -327,7 +357,7 @@ def find_candidate_run(config: AppConfig, candidate_id: str) -> CandidateRunRef:
     lookup = _candidate_run_lookup(config=config, candidate_id=candidate_id)
     if not lookup.matching_runs:
         raise ValueError(
-            f"Candidate '{candidate_id}' was not found in MLflow experiment '{config.competition.slug}'."
+            f"Candidate '{candidate_id}' was not found in MLflow experiment '{_experiment_name(config, 'candidates')}'."
         )
     if lookup.canonical_run is None:
         matching_runs = "; ".join(_format_candidate_run_assessment(assessment) for assessment in lookup.matching_runs)
@@ -371,7 +401,7 @@ def candidate_run_exists(config: AppConfig, candidate_id: str) -> bool:
 def _base_candidate_tags(config: AppConfig, candidate_id: str, candidate_type: str) -> dict[str, object]:
     runtime_execution_context = config.runtime_execution_context
     tags: dict[str, object] = {
-        "run_kind": RUN_KIND_CANDIDATE,
+        "run_kind": _training_run_kind(config),
         "tracking_schema_version": TRACKING_SCHEMA_VERSION,
         "competition_slug": config.competition.slug,
         "candidate_id": candidate_id,
@@ -390,14 +420,12 @@ def _base_candidate_tags(config: AppConfig, candidate_id: str, candidate_type: s
     return tags
 
 
-def create_candidate_run(
-    config: AppConfig,
-    candidate_id: str,
-    candidate_type: str,
-) -> CandidateRunRef:
-    ensure_candidate_run_absent(config=config, candidate_id=candidate_id)
+def create_candidate_run(config: AppConfig, candidate_id: str, candidate_type: str) -> CandidateRunRef:
+    if config.active_run_stage != "screening":
+        ensure_candidate_run_absent(config=config, candidate_id=candidate_id)
     client = _client(config)
-    experiment_id = _experiment_id(config)
+    role = _training_experiment_role(config)
+    experiment_id = _experiment_id(config, role)
     run = client.create_run(
         experiment_id=experiment_id,
         tags=_base_candidate_tags(config=config, candidate_id=candidate_id, candidate_type=candidate_type),
@@ -407,14 +435,11 @@ def create_candidate_run(
         run_id=run.info.run_id,
         experiment_id=experiment_id,
         candidate_id=candidate_id,
+        run_kind=_training_run_kind(config),
     )
 
 
-def terminate_run(
-    config: AppConfig,
-    run_id: str,
-    status: str,
-) -> None:
+def terminate_run(config: AppConfig, run_id: str, status: str) -> None:
     _client(config).set_terminated(run_id=run_id, status=status)
 
 
@@ -467,7 +492,8 @@ def _candidate_run_params(config: AppConfig, manifest: dict[str, object]) -> dic
 
 
 def _candidate_run_tags(config: AppConfig, manifest: dict[str, object]) -> dict[str, object]:
-    tags = {
+    return {
+        "run_kind": _training_run_kind(config),
         "competition_slug": manifest.get("competition_slug"),
         "candidate_id": manifest.get("candidate_id"),
         "candidate_type": manifest.get("candidate_type"),
@@ -475,7 +501,6 @@ def _candidate_run_tags(config: AppConfig, manifest: dict[str, object]) -> dict[
         "primary_metric": manifest.get("primary_metric"),
         "config_fingerprint": manifest.get("config_fingerprint"),
     }
-    return tags
 
 
 def _candidate_run_metrics(
@@ -513,30 +538,6 @@ def _candidate_run_metrics(
     return metrics
 
 
-def _trial_run_context_params(
-    config: AppConfig,
-    trial_number: int,
-    hyperparams: dict[str, object],
-    representation_id: str,
-    model_family: str,
-    model_registry_key: str,
-    preprocessing_backend: str,
-) -> dict[str, object]:
-    runtime_execution_context = config.runtime_execution_context
-    params: dict[str, object] = {
-        "trial_number": trial_number,
-        "representation_id": representation_id,
-        "model_family": model_family,
-        "model_registry_key": model_registry_key,
-        "runtime__resolved_compute_target": runtime_execution_context.resolved_compute_target,
-        "runtime__resolved_gpu_backend": runtime_execution_context.resolved_gpu_backend,
-        "runtime__preprocessing_backend": preprocessing_backend,
-    }
-    for key, value in hyperparams.items():
-        params[f"hp__{key}"] = value
-    return params
-
-
 def create_trial_run(
     config: AppConfig,
     candidate_run: CandidateRunRef,
@@ -552,7 +553,8 @@ def create_trial_run(
         experiment_id=candidate_run.experiment_id,
         run_name=f"trial_{trial_number}",
         tags={
-            "run_kind": "optimization_trial",
+            "run_kind": RUN_KIND_OPTIMIZATION_TRIAL,
+            "tracking_schema_version": TRACKING_SCHEMA_VERSION,
             "mlflow.parentRunId": candidate_run.run_id,
             "candidate_id": candidate_run.candidate_id,
             "model_family": model_family,
@@ -563,15 +565,16 @@ def create_trial_run(
     _log_params(
         client,
         trial_run_id,
-        _trial_run_context_params(
-            config=config,
-            trial_number=trial_number,
-            hyperparams=hyperparams,
-            representation_id=representation_id,
-            model_family=model_family,
-            model_registry_key=model_registry_key,
-            preprocessing_backend=preprocessing_backend,
-        ),
+        {
+            "trial_number": trial_number,
+            "representation_id": representation_id,
+            "model_family": model_family,
+            "model_registry_key": model_registry_key,
+            "runtime__resolved_compute_target": config.runtime_execution_context.resolved_compute_target,
+            "runtime__resolved_gpu_backend": config.runtime_execution_context.resolved_gpu_backend,
+            "runtime__preprocessing_backend": preprocessing_backend,
+            **{f"hp__{key}": value for key, value in hyperparams.items()},
+        },
     )
     return TrialRunRef(run_id=trial_run_id, trial_number=trial_number)
 
@@ -583,14 +586,15 @@ def finalize_trial_run(
     cv_score_mean: float | None,
     cv_score_std: float | None,
     duration_seconds: float | None,
-    trial_state: str,  # "COMPLETE" | "FAIL"
+    trial_state: str,
 ) -> None:
     client = _client(config)
     if isinstance(model_params, dict):
-        params: dict[str, object] = {}
-        for key, value in model_params.items():
-            params[f"mp__{key}"] = value
-        _log_params(client, trial_run.run_id, params)
+        _log_params(
+            client,
+            trial_run.run_id,
+            {f"mp__{key}": value for key, value in model_params.items()},
+        )
     _log_metrics(
         client,
         trial_run.run_id,
@@ -634,25 +638,15 @@ def log_candidate_run(
     )
 
 
-def upload_run_log(
-    config: AppConfig,
-    run_id: str,
-    log_path: Path,
-    artifact_dir: str = "logs",
-) -> None:
+def upload_run_log(config: AppConfig, run_id: str, log_path: Path, artifact_dir: str = "logs") -> None:
     if not log_path.exists():
         raise ValueError(f"Runtime log artifact does not exist: {log_path}")
     _client(config).log_artifact(run_id, str(log_path), artifact_dir)
 
 
-def download_candidate_manifest(
-    config: AppConfig,
-    run_id: str,
-    destination_dir: Path,
-) -> dict[str, object]:
-    client = _client(config)
+def download_candidate_manifest(config: AppConfig, run_id: str, destination_dir: Path) -> dict[str, object]:
     return _download_json_artifact(
-        client=client,
+        client=_client(config),
         run_id=run_id,
         artifact_path=f"{CANDIDATE_ARTIFACT_DIRNAME}/{CANDIDATE_MANIFEST_FILENAME}",
         destination_dir=destination_dir,
@@ -688,11 +682,7 @@ def _validate_downloaded_candidate_artifact_dir(
         )
 
 
-def download_candidate_bundle(
-    config: AppConfig,
-    candidate_id: str,
-    destination_dir: Path,
-) -> DownloadedCandidateBundle:
+def download_candidate_bundle(config: AppConfig, candidate_id: str, destination_dir: Path) -> DownloadedCandidateBundle:
     candidate_run = find_candidate_run(config=config, candidate_id=candidate_id)
     client = _client(config)
     candidate_dir_path = Path(
@@ -718,11 +708,74 @@ def download_candidate_bundle(
     )
 
 
-def download_submission_history(
-    config: AppConfig,
-    run_id: str,
-    destination_dir: Path,
-) -> CandidateSubmissionHistory:
+def create_submission_run(config: AppConfig, submission_event: SubmissionEvent) -> SubmissionRunRef:
+    client = _client(config)
+    experiment_id = _experiment_id(config, "submissions")
+    run = client.create_run(
+        experiment_id=experiment_id,
+        run_name=submission_event.submission_event_id,
+        tags={
+            "run_kind": RUN_KIND_SUBMISSION,
+            "tracking_schema_version": TRACKING_SCHEMA_VERSION,
+            "competition_slug": submission_event.competition_slug,
+            "candidate_id": submission_event.candidate_id,
+            "candidate_type": submission_event.candidate_type,
+            "submission_event_id": submission_event.submission_event_id,
+            "representation_id": submission_event.representation_id,
+            "model_registry_key": submission_event.model_registry_key,
+            **_git_metadata(),
+        },
+    )
+    _log_params(
+        client,
+        run.info.run_id,
+        {
+            "candidate_id": submission_event.candidate_id,
+            "candidate_type": submission_event.candidate_type,
+            "config_fingerprint": submission_event.config_fingerprint,
+            "representation_id": submission_event.representation_id,
+            "model_registry_key": submission_event.model_registry_key,
+            "estimator_name": submission_event.estimator_name,
+            "cv_metric_name": submission_event.cv_metric_name,
+            "cv_metric_mean": submission_event.cv_metric_mean,
+            "cv_metric_std": submission_event.cv_metric_std,
+            "submission_file_name": submission_event.submission_file_name,
+        },
+    )
+    return SubmissionRunRef(
+        run_id=run.info.run_id,
+        experiment_id=experiment_id,
+        candidate_id=submission_event.candidate_id,
+        submission_event_id=submission_event.submission_event_id,
+    )
+
+
+def list_submission_runs(config: AppConfig) -> list[SubmissionRunRef]:
+    client = _client(config)
+    experiment_id = _experiment_id(config, "submissions")
+    runs = client.search_runs(
+        experiment_ids=[experiment_id],
+        filter_string=_submission_run_search_filter(),
+        max_results=1000,
+    )
+    results: list[SubmissionRunRef] = []
+    for run in runs:
+        candidate_id = run.data.tags.get("candidate_id")
+        submission_event_id = run.data.tags.get("submission_event_id")
+        if candidate_id is None or submission_event_id is None:
+            continue
+        results.append(
+            SubmissionRunRef(
+                run_id=run.info.run_id,
+                experiment_id=run.info.experiment_id,
+                candidate_id=str(candidate_id),
+                submission_event_id=str(submission_event_id),
+            )
+        )
+    return results
+
+
+def download_submission_history(config: AppConfig, run_id: str, destination_dir: Path) -> CandidateSubmissionHistory:
     client = _client(config)
     artifact_entries = client.list_artifacts(run_id, "submissions")
     if not any(entry.path == SUBMISSION_HISTORY_ARTIFACT_PATH for entry in artifact_entries):
@@ -745,6 +798,11 @@ def upload_submission_history(
     updated_submission_event_ids: list[str] | None = None,
     submission_csv_paths: Mapping[str, Path] | None = None,
 ) -> None:
+    if updated_submission_event_ids is not None and len(updated_submission_event_ids) > 1:
+        raise ValueError(
+            "Submission runs support exactly one submission event per MLflow run. "
+            f"Got updated_submission_event_ids={updated_submission_event_ids}."
+        )
     client = _client(config)
     with tempfile.TemporaryDirectory(prefix="tabular-shenanigans-submission-history-") as temp_dir:
         temp_root = Path(temp_dir)
@@ -758,43 +816,33 @@ def upload_submission_history(
             return
 
         for submission_event_id in updated_submission_event_ids:
-            event_dir = submissions_dir / submission_event_id
-            event_dir.mkdir(parents=True, exist_ok=True)
-            if submission_csv_paths is not None and submission_event_id in submission_csv_paths:
-                client.log_artifact(
-                    run_id,
-                    str(submission_csv_paths[submission_event_id]),
-                    f"submissions/{submission_event_id}",
-                )
             event = history.get_event(submission_event_id)
             if event is None:
                 raise ValueError(f"Submission history is missing event '{submission_event_id}'.")
-            event_path = event_dir / "event.json"
+            if submission_csv_paths is not None and submission_event_id in submission_csv_paths:
+                client.log_artifact(run_id, str(submission_csv_paths[submission_event_id]), "submissions")
+            event_path = submissions_dir / "event.json"
             event_path.write_text(json.dumps(json_ready(event.to_dict()), indent=2, sort_keys=True), encoding="utf-8")
-            client.log_artifact(run_id, str(event_path), f"submissions/{submission_event_id}")
-            observations_path = event_dir / "observations.json"
+            client.log_artifact(run_id, str(event_path), "submissions")
+            observations_path = submissions_dir / "observations.json"
             event_observations = [observation.to_dict() for observation in history.get_observations(submission_event_id)]
             observations_path.write_text(
                 json.dumps(json_ready(event_observations), indent=2, sort_keys=True),
                 encoding="utf-8",
             )
-            client.log_artifact(run_id, str(observations_path), f"submissions/{submission_event_id}")
+            client.log_artifact(run_id, str(observations_path), "submissions")
 
 
-def update_submission_metrics(
-    config: AppConfig,
-    run_id: str,
-    score_metrics: dict[str, float | int | None],
-) -> None:
+def update_submission_metrics(config: AppConfig, run_id: str, score_metrics: dict[str, float | int | None]) -> None:
     _log_metrics(_client(config), run_id, score_metrics)
 
 
 def search_candidate_runs(config: AppConfig) -> list[CandidateRunRef]:
     client = _client(config)
-    experiment_id = _experiment_id(config)
+    experiment_id = _experiment_id(config, "candidates")
     runs = client.search_runs(
         experiment_ids=[experiment_id],
-        filter_string=f"tags.run_kind = '{RUN_KIND_CANDIDATE}'",
+        filter_string=f"tags.run_kind = '{RUN_KIND_CANONICAL}'",
         max_results=1000,
     )
     runs_by_candidate_id: dict[str, list[Any]] = {}

@@ -16,7 +16,8 @@ class BootstrapRuntimeConfig:
     compute_target: str = "auto"
     gpu_backend: str = "auto"
     task_type: str | None = None
-    candidates: tuple[BootstrapCandidateRuntimeConfig, ...] = ()
+    experiment_candidates: tuple[BootstrapCandidateRuntimeConfig, ...] = ()
+    screening_candidates: tuple[BootstrapCandidateRuntimeConfig, ...] = ()
 
 
 def _validate_compute_target(value: object) -> str:
@@ -61,6 +62,14 @@ def _coerce_bootstrap_candidate(candidate: object) -> BootstrapCandidateRuntimeC
     )
 
 
+def _coerce_bootstrap_candidate_list(candidates: object, field_name: str) -> list[BootstrapCandidateRuntimeConfig]:
+    if candidates is None:
+        return []
+    if not isinstance(candidates, list):
+        raise ValueError(f"{field_name} must be a list when provided.")
+    return [_coerce_bootstrap_candidate(candidate_item) for candidate_item in candidates]
+
+
 def load_bootstrap_runtime_config(path: str | Path = "config.yaml") -> BootstrapRuntimeConfig:
     config_path = Path(path)
 
@@ -95,21 +104,28 @@ def load_bootstrap_runtime_config(path: str | Path = "config.yaml") -> Bootstrap
         raise ValueError("Use either experiment.candidate or experiment.candidates, not both.")
     if candidate is not None and not isinstance(candidate, dict):
         raise ValueError("experiment.candidate must be a mapping when provided.")
-    if candidates is not None and not isinstance(candidates, list):
-        raise ValueError("experiment.candidates must be a list when provided.")
     competition = raw_data.get("competition")
     if competition is not None and not isinstance(competition, dict):
         raise ValueError("competition must be a mapping when provided.")
+    screening = raw_data.get("screening")
+    if screening is not None and not isinstance(screening, dict):
+        raise ValueError("screening must be a mapping when provided.")
 
-    candidate_list: list[BootstrapCandidateRuntimeConfig] = []
+    experiment_candidate_list: list[BootstrapCandidateRuntimeConfig] = []
     if candidates is not None:
-        candidate_list = [_coerce_bootstrap_candidate(candidate_item) for candidate_item in candidates]
+        experiment_candidate_list = _coerce_bootstrap_candidate_list(candidates, "experiment.candidates")
     elif candidate is not None:
-        candidate_list = [_coerce_bootstrap_candidate(candidate)]
+        experiment_candidate_list = [_coerce_bootstrap_candidate(candidate)]
+
+    screening_candidate_list = _coerce_bootstrap_candidate_list(
+        None if screening is None else screening.get("candidates"),
+        "screening.candidates",
+    )
 
     return BootstrapRuntimeConfig(
         compute_target=_validate_compute_target(None if runtime is None else runtime.get("compute_target")),
         gpu_backend=_validate_gpu_backend(None if runtime is None else runtime.get("gpu_backend")),
         task_type=None if competition is None else competition.get("task_type"),
-        candidates=tuple(candidate_list),
+        experiment_candidates=tuple(experiment_candidate_list),
+        screening_candidates=tuple(screening_candidate_list),
     )

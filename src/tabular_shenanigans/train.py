@@ -257,8 +257,9 @@ def run_training(
     )
     fit_wall_seconds = time.perf_counter() - evaluation_started
     model_result = evaluation_artifacts.model_result
+    stage_label = "Screening" if config.active_run_stage == "screening" else "Training"
     print(
-        f"Training candidate: {candidate_id} | "
+        f"{stage_label} candidate: {candidate_id} | "
         f"representation={candidate.representation_id} | "
         f"estimator={model_result.estimator_name} | "
         f"features={training_context.x_train_features.shape[1]} | "
@@ -345,7 +346,7 @@ def run_training_workflow(
             try:
                 with capture_runtime_log(log_path):
                     emit_runtime_log_header(
-                        stage_name="train",
+                        stage_name="screening" if config.active_run_stage == "screening" else "train",
                         competition_slug=competition.slug,
                         candidate_id=candidate_run.candidate_id,
                         mlflow_run_id=candidate_run.run_id,
