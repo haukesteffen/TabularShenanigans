@@ -86,9 +86,7 @@ Optional top-level section: `screening`.
 
 `train` drains `experiment.candidates` in order unless narrowed with `--candidate-id` or `--index`. `submit --index <n>` uses a 1-based index into this list.
 
-`screening` evaluates `screening.candidates` in order and prints a copy/paste-ready YAML snippet for the top `screening.promote_top_k` candidates to paste into `experiment.candidates`.
-
-Deprecated: `experiment.candidate` (singular) is still accepted as a one-entry list and emits a deprecation notice.
+`screening` evaluates the valid cross-product of `screening.representation_ids` and `screening.model_families`, then prints a copy/paste-ready YAML snippet for the top `screening.promote_top_k` candidates to paste into `experiment.candidates`.
 
 #### Candidate Shapes
 
@@ -121,11 +119,13 @@ Hard-invalid: representations with `native` categorical preprocessor and any `mo
 
 | Key | Required | Notes |
 | --- | --- | --- |
+| `representation_ids` | yes | registered representation IDs; screening expands these against `model_families` |
+| `model_families` | yes | model families to screen against `representation_ids` |
+| `optimization` | no | optional shared tuning budget applied to each valid screening candidate |
 | `cv.n_splits` | no | defaults to `2` |
 | `cv.shuffle` | no | defaults to `true` |
 | `cv.random_state` | no | defaults to `42` |
-| `promote_top_k` | no | defaults to `3`; must be `<= len(screening.candidates)` |
-| `candidates` | yes | model candidates only; same shape as `experiment.candidates` model entries |
+| `promote_top_k` | no | defaults to `3`; must be `<=` the number of valid cross-product pairs |
 
 ## Commands
 

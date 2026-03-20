@@ -100,10 +100,11 @@ def load_bootstrap_runtime_config(path: str | Path = "config.yaml") -> Bootstrap
         raise ValueError("experiment.runtime must be a mapping when provided.")
     candidate = experiment.get("candidate")
     candidates = experiment.get("candidates")
-    if candidate is not None and candidates is not None:
-        raise ValueError("Use either experiment.candidate or experiment.candidates, not both.")
-    if candidate is not None and not isinstance(candidate, dict):
-        raise ValueError("experiment.candidate must be a mapping when provided.")
+    if candidate is not None:
+        raise ValueError(
+            "Legacy experiment.candidate is no longer supported. "
+            "Use experiment.candidates."
+        )
     competition = raw_data.get("competition")
     if competition is not None and not isinstance(competition, dict):
         raise ValueError("competition must be a mapping when provided.")
@@ -114,8 +115,6 @@ def load_bootstrap_runtime_config(path: str | Path = "config.yaml") -> Bootstrap
     experiment_candidate_list: list[BootstrapCandidateRuntimeConfig] = []
     if candidates is not None:
         experiment_candidate_list = _coerce_bootstrap_candidate_list(candidates, "experiment.candidates")
-    elif candidate is not None:
-        experiment_candidate_list = [_coerce_bootstrap_candidate(candidate)]
 
     screening_candidate_list: list[BootstrapCandidateRuntimeConfig] = []
     if screening is not None:
