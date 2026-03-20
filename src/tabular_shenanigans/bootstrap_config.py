@@ -117,10 +117,20 @@ def load_bootstrap_runtime_config(path: str | Path = "config.yaml") -> Bootstrap
     elif candidate is not None:
         experiment_candidate_list = [_coerce_bootstrap_candidate(candidate)]
 
-    screening_candidate_list = _coerce_bootstrap_candidate_list(
-        None if screening is None else screening.get("candidates"),
-        "screening.candidates",
-    )
+    screening_candidate_list: list[BootstrapCandidateRuntimeConfig] = []
+    if screening is not None:
+        screening_repr_ids = screening.get("representation_ids")
+        screening_model_families = screening.get("model_families")
+        if isinstance(screening_repr_ids, list) and isinstance(screening_model_families, list):
+            for repr_id in screening_repr_ids:
+                for model_family in screening_model_families:
+                    screening_candidate_list.append(
+                        BootstrapCandidateRuntimeConfig(
+                            candidate_type="model",
+                            model_family=model_family if isinstance(model_family, str) else None,
+                            representation_id=repr_id if isinstance(repr_id, str) else None,
+                        )
+                    )
 
     return BootstrapRuntimeConfig(
         compute_target=_validate_compute_target(None if runtime is None else runtime.get("compute_target")),
