@@ -101,7 +101,7 @@ Deprecated: `experiment.candidate` (singular) is still accepted as a one-entry l
 - optional `optimization`
   - logistic regression Optuna trials fix `solver="saga"` and `max_iter=1000`, tune `C`, `tol`, `class_weight`, and `l1_ratio`
 
-Hard-invalid: `categorical_preprocessor: native` with any `model_family` other than `catboost`.
+Hard-invalid: `categorical_preprocessor: native` with any `model_family` other than `catboost` or `realmlp`.
 
 **Blend candidate:**
 - `candidate_type: blend`
@@ -183,7 +183,9 @@ candidate=<candidate_id> | submit=<submission_event_id> | <metric>=<value>
 - `compute_target: auto` picks the best registered GPU implementation per model/preprocessing tuple, falling back to CPU when nothing is registered.
 - `compute_target: gpu` requires a registered GPU implementation and fails fast otherwise.
 - `extra_trees` and `hist_gradient_boosting` always fall back to CPU; no GPU backend is registered.
-- `realmlp` uses the standard CPU preprocessing path and can still train on PyTorch CUDA internally when model routing resolves `compute_target` to GPU.
+- `realmlp` can use `categorical_preprocessor: native` or the existing non-native preprocessors.
+- Native RealMLP keeps repository numeric preprocessing (`median`, `standardize`, or `kbins`) and passes raw categorical columns plus categorical metadata into the upstream estimator.
+- `realmlp` still uses the standard CPU preprocessing path and can train on PyTorch CUDA internally when model routing resolves `compute_target` to GPU.
 - Mixed `gpu_patch` and non-`gpu_patch` batches are rejected because RAPIDS hook installation is process-global; split with `train --index <n>`.
 - GPU preprocessing can resolve independently from model routing; hybrid CPU-model + GPU-preprocessing cases coerce outputs back to CPU before fit.
 
