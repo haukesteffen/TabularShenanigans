@@ -100,15 +100,19 @@ def _apply_runtime_bootstrap(argv: list[str] | None) -> None:
         return
 
     capabilities = detect_runtime_capabilities()
+    from tabular_shenanigans.representations.registry import REPRESENTATION_REGISTRY
+
     selected_model_contexts = []
     for candidate_index in selected_candidate_indices:
         candidate = runtime_config.candidates[candidate_index]
         if (
             candidate.candidate_type != "model"
             or candidate.model_family is None
-            or candidate.numeric_preprocessor is None
-            or candidate.categorical_preprocessor is None
+            or candidate.representation_id is None
         ):
+            continue
+        representation_definition = REPRESENTATION_REGISTRY.get(candidate.representation_id)
+        if representation_definition is None:
             continue
         selected_model_contexts.append(
             resolve_model_candidate_runtime_execution(
@@ -117,8 +121,8 @@ def _apply_runtime_bootstrap(argv: list[str] | None) -> None:
                 capabilities=capabilities,
                 task_type=runtime_config.task_type,
                 model_family=candidate.model_family,
-                numeric_preprocessor=candidate.numeric_preprocessor,
-                categorical_preprocessor=candidate.categorical_preprocessor,
+                numeric_preprocessor=representation_definition.numeric_preprocessor_id,
+                categorical_preprocessor=representation_definition.categorical_preprocessor_id,
             )
         )
 

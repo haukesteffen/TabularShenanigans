@@ -42,10 +42,8 @@ experiment:
   candidates:
     # Remove entries you do not want to include in the current train batch.
     - candidate_type: model
-      feature_recipe_id: fr0
       model_family: logistic_regression
-      numeric_preprocessor: standardize
-      categorical_preprocessor: onehot
+      representation_id: standardize-onehot
       model_params: {}
       # For logistic_regression, use l1_ratio only:
       # model_params:
@@ -61,10 +59,8 @@ experiment:
       #   random_state: 42
 
     - candidate_type: model
-      feature_recipe_id: fr0
       model_family: lightgbm
-      numeric_preprocessor: median
-      categorical_preprocessor: ordinal
+      representation_id: median-ordinal
       model_params: {}
 
     # Optional blend candidate shape:

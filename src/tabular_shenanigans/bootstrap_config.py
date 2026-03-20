@@ -8,8 +8,7 @@ import yaml
 class BootstrapCandidateRuntimeConfig:
     candidate_type: str | None = None
     model_family: str | None = None
-    numeric_preprocessor: str | None = None
-    categorical_preprocessor: str | None = None
+    representation_id: str | None = None
 
 
 @dataclass(frozen=True)
@@ -58,8 +57,7 @@ def _coerce_bootstrap_candidate(candidate: object) -> BootstrapCandidateRuntimeC
     return BootstrapCandidateRuntimeConfig(
         candidate_type=candidate.get("candidate_type"),
         model_family=candidate.get("model_family"),
-        numeric_preprocessor=candidate.get("numeric_preprocessor"),
-        categorical_preprocessor=candidate.get("categorical_preprocessor"),
+        representation_id=candidate.get("representation_id"),
     )
 
 

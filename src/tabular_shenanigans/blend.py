@@ -42,7 +42,6 @@ from tabular_shenanigans.runtime_logging import (
 
 BLEND_REGISTRY_KEY = "blend_weighted_average"
 BLEND_ESTIMATOR_NAME = "WeightedAverageBlend"
-BLEND_PREPROCESSING_SCHEME_ID = "blend"
 
 
 @dataclass(frozen=True)
@@ -53,7 +52,7 @@ class BlendComponent:
     config_fingerprint: str | None
     model_registry_key: str
     estimator_name: str
-    feature_recipe_id: str | None
+    representation_id: str | None
     cv_metric_mean: float
     cv_metric_std: float
     oof_predictions: np.ndarray
@@ -392,7 +391,7 @@ def _load_blend_component(
         config_fingerprint=manifest.get("config_fingerprint"),
         model_registry_key=str(manifest.get("model_registry_key") or "candidate"),
         estimator_name=str(manifest.get("estimator_name") or "Candidate"),
-        feature_recipe_id=manifest.get("feature_recipe_id"),
+        representation_id=manifest.get("representation_id"),
         cv_metric_mean=float(cv_summary["metric_mean"]),
         cv_metric_std=float(cv_summary["metric_std"]),
         oof_predictions=oof_df["y_pred"].to_numpy(dtype=float),
@@ -466,7 +465,7 @@ def _build_blend_summary(
                 "component_mlflow_run_id": component.mlflow_run_id,
                 "component_model_registry_key": component.model_registry_key,
                 "component_estimator_name": component.estimator_name,
-                "component_feature_recipe_id": component.feature_recipe_id,
+                "component_representation_id": component.representation_id,
                 "component_config_fingerprint": component.config_fingerprint,
                 "component_weight": normalized_weights[component_index],
                 "component_cv_metric_mean": component.cv_metric_mean,
@@ -567,7 +566,6 @@ def _build_candidate_manifest(
         "feature_columns": feature_columns,
         "model_registry_key": BLEND_REGISTRY_KEY,
         "estimator_name": BLEND_ESTIMATOR_NAME,
-        "preprocessing_scheme_id": BLEND_PREPROCESSING_SCHEME_ID,
         "cv_summary": {
             "metric_name": competition.primary_metric,
             "metric_mean": metric_mean,
@@ -582,7 +580,7 @@ def _build_candidate_manifest(
                 "config_fingerprint": component.config_fingerprint,
                 "model_registry_key": component.model_registry_key,
                 "estimator_name": component.estimator_name,
-                "feature_recipe_id": component.feature_recipe_id,
+                "representation_id": component.representation_id,
                 "weight": weight,
                 "cv_summary": {
                     "metric_name": competition.primary_metric,

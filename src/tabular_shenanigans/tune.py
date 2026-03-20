@@ -46,9 +46,7 @@ def _build_optimization_config_snapshot(
         label_column=training_context.label_column,
     )
     config_snapshot["resolved_model_registry_key"] = tuning_model_spec.model_registry_key
-    config_snapshot["resolved_numeric_preprocessor"] = training_context.numeric_preprocessor
-    config_snapshot["resolved_categorical_preprocessor"] = training_context.categorical_preprocessor
-    config_snapshot["resolved_preprocessing_scheme_id"] = training_context.preprocessing_scheme_id
+    config_snapshot["resolved_representation_id"] = training_context.representation_id
     return config_snapshot
 
 
@@ -81,7 +79,7 @@ def _build_optimization_summary(
     optimization_config_snapshot: dict[str, object],
     tuning_model_spec: TrainingModelSpec,
     estimator_name: str,
-    preprocessing_scheme_id: str,
+    representation_id: str,
     target_summary: dict[str, object],
     best_parameter_overrides: dict[str, object],
 ) -> dict[str, object]:
@@ -101,7 +99,7 @@ def _build_optimization_summary(
         "config_snapshot": optimization_config_snapshot,
         "model_registry_key": tuning_model_spec.model_registry_key,
         "estimator_name": estimator_name,
-        "preprocessing_scheme_id": preprocessing_scheme_id,
+        "representation_id": representation_id,
         "trial_count": len(study.trials),
         "completed_trial_count": len(
             [trial for trial in study.trials if trial.state == optuna.trial.TrialState.COMPLETE]
@@ -160,10 +158,7 @@ def run_optimization(
             candidate_run=candidate_run,
             trial_number=trial.number,
             hyperparams=parameter_overrides,
-            feature_recipe_id=config.experiment.candidate.feature_recipe_id,
-            numeric_preprocessor=training_context.numeric_preprocessor,
-            categorical_preprocessor=training_context.categorical_preprocessor,
-            preprocessing_scheme_id=training_context.preprocessing_scheme_id,
+            representation_id=training_context.representation_id,
             model_family=config.experiment.candidate.model_family,
             model_registry_key=tuning_model_spec.model_registry_key,
             preprocessing_backend=training_context.preprocessing_backend,
@@ -238,7 +233,7 @@ def run_optimization(
         optimization_config_snapshot=optimization_config_snapshot,
         tuning_model_spec=tuning_model_spec,
         estimator_name=model_definition.model_name,
-        preprocessing_scheme_id=training_context.preprocessing_scheme_id,
+        representation_id=training_context.representation_id,
         target_summary=training_context.target_summary,
         best_parameter_overrides=best_parameter_overrides,
     )

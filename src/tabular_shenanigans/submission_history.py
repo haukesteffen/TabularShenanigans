@@ -19,8 +19,7 @@ class SubmissionEvent:
     candidate_id: str
     candidate_type: str
     config_fingerprint: str | None
-    feature_recipe_id: str | None
-    preprocessing_scheme_id: str | None
+    representation_id: str | None
     model_registry_key: str
     estimator_name: str
     cv_metric_name: str
@@ -38,8 +37,7 @@ class SubmissionEvent:
             "candidate_id": self.candidate_id,
             "candidate_type": self.candidate_type,
             "config_fingerprint": self.config_fingerprint,
-            "feature_recipe_id": self.feature_recipe_id,
-            "preprocessing_scheme_id": self.preprocessing_scheme_id,
+            "representation_id": self.representation_id,
             "model_registry_key": self.model_registry_key,
             "estimator_name": self.estimator_name,
             "cv_metric_name": self.cv_metric_name,
@@ -59,10 +57,7 @@ class SubmissionEvent:
             candidate_id=str(value["candidate_id"]),
             candidate_type=str(value["candidate_type"]),
             config_fingerprint=str(value["config_fingerprint"]) if value.get("config_fingerprint") is not None else None,
-            feature_recipe_id=str(value["feature_recipe_id"]) if value.get("feature_recipe_id") is not None else None,
-            preprocessing_scheme_id=(
-                str(value["preprocessing_scheme_id"]) if value.get("preprocessing_scheme_id") is not None else None
-            ),
+            representation_id=str(value["representation_id"]) if value.get("representation_id") is not None else None,
             model_registry_key=str(value["model_registry_key"]),
             estimator_name=str(value["estimator_name"]),
             cv_metric_name=str(value["cv_metric_name"]),

@@ -78,9 +78,7 @@ def _build_config_snapshot(
         label_column=label_column,
     )
     config_snapshot["resolved_model_registry_key"] = model_spec.model_registry_key
-    config_snapshot["resolved_numeric_preprocessor"] = candidate.numeric_preprocessor
-    config_snapshot["resolved_categorical_preprocessor"] = candidate.categorical_preprocessor
-    config_snapshot["resolved_preprocessing_scheme_id"] = candidate.preprocessing_scheme_id
+    config_snapshot["resolved_representation_id"] = candidate.representation_id
     if model_spec.parameter_overrides:
         config_snapshot["resolved_model_parameter_overrides"] = model_spec.parameter_overrides
     if tuning_provenance is not None:
@@ -125,14 +123,11 @@ def _build_candidate_manifest(
         "config_snapshot": config_snapshot,
         "mlflow_run_id": mlflow_run_id,
         "model_family": candidate.model_family,
-        "feature_recipe_id": candidate.feature_recipe_id,
+        "representation_id": candidate.representation_id,
         "feature_columns": training_context.x_train_features.columns.tolist(),
-        "numeric_preprocessor": candidate.numeric_preprocessor,
-        "categorical_preprocessor": candidate.categorical_preprocessor,
         "preprocessing_backend": training_context.preprocessing_backend,
         "model_registry_key": model_result.model_registry_key,
         "estimator_name": model_result.estimator_name,
-        "preprocessing_scheme_id": model_result.preprocessing_scheme_id,
         "model_params": model_result.model_params,
         "cv_summary": model_result.cv_summary.to_dict(),
         "observed_label_pair": (
@@ -264,9 +259,8 @@ def run_training(
     model_result = evaluation_artifacts.model_result
     print(
         f"Training candidate: {candidate_id} | "
-        f"feature_recipe={candidate.feature_recipe_id} | "
+        f"representation={candidate.representation_id} | "
         f"estimator={model_result.estimator_name} | "
-        f"preprocessing={model_result.preprocessing_scheme_id} | "
         f"features={training_context.x_train_features.shape[1]} | "
         f"CV {competition.primary_metric}: mean={model_result.cv_summary.metric_mean:.6f}, "
         f"std={model_result.cv_summary.metric_std:.6f}"

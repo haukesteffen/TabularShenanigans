@@ -30,15 +30,11 @@ def normalize_blend_weights(
 
 
 def build_model_candidate_id(
-    feature_recipe_id: str,
-    preprocessing_scheme_id: str,
     model_registry_key: str,
+    representation_id: str,
     fingerprint_payload: dict[str, object],
 ) -> str:
-    return (
-        f"{feature_recipe_id}--{preprocessing_scheme_id}--{model_registry_key}--"
-        f"{_short_hash(fingerprint_payload)}"
-    )
+    return f"{model_registry_key}-{representation_id}-{_short_hash(fingerprint_payload)}"
 
 
 def build_blend_candidate_id(

@@ -42,8 +42,7 @@ class SubmissionContext:
     competition_slug: str
     task_type: str
     primary_metric: str
-    feature_recipe_id: str | None
-    preprocessing_scheme_id: str | None
+    representation_id: str | None
     model_registry_key: str
     estimator_name: str
     cv_metric_name: str
@@ -120,14 +119,9 @@ def _load_submission_context(
         competition_slug=str(_require_manifest_value(candidate_manifest, "competition_slug")),
         task_type=str(_require_manifest_value(candidate_manifest, "task_type")),
         primary_metric=str(_require_manifest_value(candidate_manifest, "primary_metric")),
-        feature_recipe_id=(
-            str(candidate_manifest["feature_recipe_id"])
-            if candidate_manifest.get("feature_recipe_id") is not None
-            else None
-        ),
-        preprocessing_scheme_id=(
-            str(candidate_manifest["preprocessing_scheme_id"])
-            if candidate_manifest.get("preprocessing_scheme_id") is not None
+        representation_id=(
+            str(candidate_manifest["representation_id"])
+            if candidate_manifest.get("representation_id") is not None
             else None
         ),
         model_registry_key=str(_require_manifest_value(candidate_manifest, "model_registry_key")),
@@ -325,8 +319,7 @@ def _build_submission_event(
         candidate_id=submission_context.candidate_id,
         candidate_type=submission_context.candidate_type,
         config_fingerprint=submission_context.config_fingerprint,
-        feature_recipe_id=submission_context.feature_recipe_id,
-        preprocessing_scheme_id=submission_context.preprocessing_scheme_id,
+        representation_id=submission_context.representation_id,
         model_registry_key=submission_context.model_registry_key,
         estimator_name=submission_context.estimator_name,
         cv_metric_name=submission_context.cv_metric_name,
@@ -352,8 +345,7 @@ def _build_recovered_submission_event(
         candidate_id=submission_context.candidate_id,
         candidate_type=submission_context.candidate_type,
         config_fingerprint=submission_context.config_fingerprint,
-        feature_recipe_id=submission_context.feature_recipe_id,
-        preprocessing_scheme_id=submission_context.preprocessing_scheme_id,
+        representation_id=submission_context.representation_id,
         model_registry_key=submission_context.model_registry_key,
         estimator_name=submission_context.estimator_name,
         cv_metric_name=submission_context.cv_metric_name,

@@ -1,8 +1,5 @@
 from dataclasses import dataclass
 
-from tabular_shenanigans.gpu_cuml_preprocess import build_gpu_cuml_dense_preprocessor_from_schema
-from tabular_shenanigans.gpu_preprocess import build_gpu_native_preprocessor_from_schema
-from tabular_shenanigans.preprocess import ResolvedFeatureSchema, build_preprocessor_from_schema
 from tabular_shenanigans.runtime_execution import PATCH_GPU_BACKEND, RuntimeExecutionContext
 
 CPU_SKLEARN_PREPROCESSING_BACKEND = "cpu_sklearn"
@@ -100,33 +97,4 @@ def resolve_preprocessing_execution_plan(
     return PreprocessingExecutionPlan(
         preprocessing_backend=CPU_SKLEARN_PREPROCESSING_BACKEND,
         matrix_output_kind=matrix_output_kind,
-    )
-
-
-def build_preprocessor_for_execution_plan(
-    *,
-    feature_schema: ResolvedFeatureSchema,
-    numeric_preprocessor_id: str,
-    categorical_preprocessor_id: str,
-    execution_plan: PreprocessingExecutionPlan,
-) -> object:
-    if execution_plan.preprocessing_backend == GPU_CUML_PREPROCESSING_BACKEND:
-        return build_gpu_cuml_dense_preprocessor_from_schema(
-            feature_schema=feature_schema,
-            numeric_preprocessor_id=numeric_preprocessor_id,
-            categorical_preprocessor_id=categorical_preprocessor_id,
-        )
-
-    if execution_plan.preprocessing_backend == GPU_NATIVE_FREQUENCY_PREPROCESSING_BACKEND:
-        return build_gpu_native_preprocessor_from_schema(
-            feature_schema=feature_schema,
-            numeric_preprocessor_id=numeric_preprocessor_id,
-            categorical_preprocessor_id=categorical_preprocessor_id,
-        )
-
-    return build_preprocessor_from_schema(
-        feature_schema=feature_schema,
-        numeric_preprocessor_id=numeric_preprocessor_id,
-        categorical_preprocessor_id=categorical_preprocessor_id,
-        matrix_output_kind=execution_plan.matrix_output_kind,
     )
