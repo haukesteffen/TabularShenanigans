@@ -15,9 +15,9 @@ For setup, commands, and config reference, see [USAGE.md](/USAGE.md).
 7. Load one shared dataset context from `train.csv`, `test.csv`, and `sample_submission.csv`.
 8. Resolve `id_column` and `label_column`, then prepare raw feature frames with the resolved ID column excluded from modeled features.
 9. For each selected configured candidate, resolve its candidate-specific runtime execution context.
-10. For model candidates, apply the selected deterministic feature recipe.
+10. For model candidates, compile the selected representation (resolves feature schema, validates model compatibility, selects preprocessing backend).
 11. Build the competition fold assignments in memory from the configured CV settings.
-12. For model candidates, fit the selected preprocessing + model combination fold-locally and produce OOF/test predictions.
+12. For model candidates, fit the compiled representation per fold (all steps fit inside the CV loop) and produce OOF/test predictions.
 13. For blend candidates, download compatible base candidates from the competition MLflow experiment, validate compatibility, and combine their saved predictions without retraining the base candidates.
 14. Stage the candidate bundle into a temp directory:
     - `config/runtime_config.json`
@@ -42,7 +42,7 @@ For setup, commands, and config reference, see [USAGE.md](/USAGE.md).
 - `submit` resolves candidates from MLflow, not from local artifact directories.
 - `refresh-submissions` updates existing candidate runs and does not create standalone tracking runs.
 - Untuned model candidates use upstream library estimator defaults for all hyperparameters. The repo sets only runtime and task-contract params: determinism (`random_state`/`random_seed`), parallelism (`n_jobs`/`thread_count`), logging/file-writing controls (`verbosity`, `verbose`, `allow_writing_files`), problem-definition params (`objective`, `eval_metric`, `loss_function`), and GPU routing. Users who want a stronger untuned baseline should set `model_params` explicitly or enable optimization.
-- Feature recipes must be deterministic, leakage-safe, and schema-preserving across train/test.
+- Representation steps must be deterministic and schema-preserving across train/test. All steps fit per fold inside the CV loop.
 - Binary probability blends require matching saved class metadata across all base candidates.
 - Binary `accuracy` blends require the saved probability sidecar and current probability-average blend rule metadata across all base candidates.
 - Dry-run submit validates predictions but does not persist submission history.
@@ -100,10 +100,7 @@ Each candidate run is named with `candidate_id`.
 - `runtime__rapids_hooks_installed`
 - `runtime__fallback_reason` when CPU fallback happened under `compute_target=auto`
 - model candidates:
-  - `feature_recipe_id`
-  - `numeric_preprocessor`
-  - `categorical_preprocessor`
-  - `preprocessing_scheme_id`
+  - `representation_id`
   - `model_family`
   - `model_registry_key`
   - `model__*` for resolved model params
@@ -167,10 +164,7 @@ Trial child-run tags:
 
 Trial child-run params:
 - `trial_number`
-- `feature_recipe_id`
-- `numeric_preprocessor`
-- `categorical_preprocessor`
-- `preprocessing_scheme_id`
+- `representation_id`
 - `model_family`
 - `model_registry_key`
 - `runtime__resolved_compute_target`
@@ -232,7 +226,7 @@ Model candidate manifests currently record:
 - runtime execution: requested/resolved compute target, acceleration backend, RAPIDS hook status, and hardware capability snapshot
 - runtime profiling: training-context build time, fold-stage CV timings, artifact staging time, and first-fold matrix residency snapshots when collected
 - model info: `model_family`, `model_registry_key`, `estimator_name`
-- feature/preprocessing info: `feature_recipe_id`, `feature_columns`, `numeric_preprocessor`, `categorical_preprocessor`, `preprocessing_scheme_id`
+- representation info: `representation_id`, `feature_columns`
 - runtime-selected preprocessing backend: `preprocessing_backend`
 - CV summary: `cv_summary`
 - schema/label metadata: `id_column`, `label_column`, `positive_label`, `negative_label`, `observed_label_pair`
@@ -243,7 +237,6 @@ Blend candidate manifests currently record:
 - the same identity/provenance/schema fields
 - `model_registry_key=blend_weighted_average`
 - `estimator_name=WeightedAverageBlend`
-- `preprocessing_scheme_id=blend`
 - `component_candidates` with candidate IDs, MLflow run IDs, normalized weights, and component CV summaries
 
 ## GPU Runtime Contracts
@@ -353,7 +346,7 @@ Current preprocessing selection on GPU hosts:
 - [execution_routing.py](/src/tabular_shenanigans/execution_routing.py): repo-owned tuple support registry and routing resolver for `cpu`, `gpu_patch`, and `gpu_native`.
 - [cli.py](/src/tabular_shenanigans/cli.py): CLI parser and linear stage dispatch after bootstrap completes.
 - [runtime_execution.py](/src/tabular_shenanigans/runtime_execution.py): runtime capability detection, RAPIDS hook activation, requested-versus-resolved execution context, and bootstrap/runtime metadata helpers.
-- [preprocess_execution.py](/src/tabular_shenanigans/preprocess_execution.py): preprocessing backend selection and preprocessor construction for CPU, `gpu_patch`, and the current explicit GPU-native frequency path.
+- [preprocess_execution.py](/src/tabular_shenanigans/preprocess_execution.py): preprocessing backend selection for CPU, `gpu_patch`, and explicit GPU-native paths.
 - [gpu_cuml_preprocess.py](/src/tabular_shenanigans/gpu_cuml_preprocess.py): explicit dense GPU preprocessing adapters built on maintained cuML preprocessing constructors.
 - [lightgbm_cuda_backend.py](/src/tabular_shenanigans/lightgbm_cuda_backend.py): repo-owned LightGBM adapter, input-coercion helpers, and CUDA build validation probe for the `gpu_native` LightGBM path.
 - [competition.py](/src/tabular_shenanigans/competition.py): in-memory competition preparation, fold assignment materialization, and prepared-context construction.
@@ -361,10 +354,10 @@ Current preprocessing selection on GPU hosts:
 - [candidate_artifacts.py](/src/tabular_shenanigans/candidate_artifacts.py): shared manifest/config helpers and temp-bundle file writers for candidate/context artifacts.
 - [data.py](/src/tabular_shenanigans/data.py): Kaggle downloads, zip access, schema inference, and sample-submission loading.
 - [eda.py](/src/tabular_shenanigans/eda.py): local EDA report generation.
-- [feature_recipes](/src/tabular_shenanigans/feature_recipes): deterministic feature recipes such as `fr0`, `fr1`, `fr2`, `fr3`, and the `fr2_ablate_*`/`fr3_ablate_*` grouped ablation variants used for `s6e3` recipe studies.
+- [representations/](/src/tabular_shenanigans/representations): representation runtime — types, steps (numeric/categorical/feature-engineering), output adapters, compilation, fitted representation, and registry. Replaces the former `feature_recipes/` and split preprocessing configuration with a single `representation_id` contract.
 - [model_evaluation.py](/src/tabular_shenanigans/model_evaluation.py): shared prepared training context, reusable CV evaluation logic for train/tune, and fold-stage runtime profiling for benchmark checkpoints.
 - [models.py](/src/tabular_shenanigans/models.py): model registry, capability checks, estimator construction (runtime/task-contract params only; hyperparameter defaults are upstream), and tuning space definitions.
-- [preprocess.py](/src/tabular_shenanigans/preprocess.py): raw feature-frame preparation and split preprocessing components.
+- [preprocess.py](/src/tabular_shenanigans/preprocess.py): raw feature-frame preparation, `NativeFramePreprocessor`, and `FrequencyFramePreprocessor` backends used by GPU preprocessing paths.
 - [cv.py](/src/tabular_shenanigans/cv.py): splitters and task-aware metric scoring.
 - [train.py](/src/tabular_shenanigans/train.py): model training workflow, candidate manifest construction, temp bundle staging, MLflow candidate logging, and training-stage runtime profiling capture.
 - [training_orchestration.py](/src/tabular_shenanigans/training_orchestration.py): configured-candidate selection, sequential batch execution, optional skip-existing behavior, and batch summary reporting.
