@@ -21,6 +21,7 @@ from tabular_shenanigans._model_builders import (
     build_naive_bayes_classifier,
     build_naive_bayes_tuning_space,
     build_realmlp_classifier,
+    build_realmlp_fit_kwargs,
     build_realmlp_regressor,
     build_realmlp_tuning_space,
     build_random_forest_classifier,
@@ -150,11 +151,18 @@ MODEL_REGISTRY: dict[str, dict[str, ModelDefinition]] = {
             model_id="realmlp",
             model_name="RealMLP_TD_Regressor",
             builder=build_realmlp_regressor,
+            fit_kwargs_builder=build_realmlp_fit_kwargs,
             tuning_space_builder=build_realmlp_tuning_space,
+            supports_native_categorical_preprocessing=True,
             gpu_routing_rules=(
                 gpu_routing_rule(
                     numeric_preprocessors=ALL_NUMERIC_PREPROCESSORS,
                     categorical_preprocessors=ALL_NON_NATIVE_CATEGORICAL_PREPROCESSORS,
+                    gpu_backends=(CPU_GPU_BACKEND,),
+                ),
+                gpu_routing_rule(
+                    numeric_preprocessors=ALL_NUMERIC_PREPROCESSORS,
+                    categorical_preprocessors=("native",),
                     gpu_backends=(CPU_GPU_BACKEND,),
                 ),
             ),
@@ -278,11 +286,18 @@ MODEL_REGISTRY: dict[str, dict[str, ModelDefinition]] = {
             model_id="realmlp",
             model_name="RealMLP_TD_Classifier",
             builder=build_realmlp_classifier,
+            fit_kwargs_builder=build_realmlp_fit_kwargs,
             tuning_space_builder=build_realmlp_tuning_space,
+            supports_native_categorical_preprocessing=True,
             gpu_routing_rules=(
                 gpu_routing_rule(
                     numeric_preprocessors=ALL_NUMERIC_PREPROCESSORS,
                     categorical_preprocessors=ALL_NON_NATIVE_CATEGORICAL_PREPROCESSORS,
+                    gpu_backends=(CPU_GPU_BACKEND,),
+                ),
+                gpu_routing_rule(
+                    numeric_preprocessors=ALL_NUMERIC_PREPROCESSORS,
+                    categorical_preprocessors=("native",),
                     gpu_backends=(CPU_GPU_BACKEND,),
                 ),
             ),
@@ -426,9 +441,15 @@ def validate_model_preprocessing_compatibility(
         return
     if model_definition.supports_native_categorical_preprocessing:
         return
+    native_model_families = sorted(
+        candidate_model_id
+        for candidate_model_id, candidate_definition in get_task_model_registry(task_type).items()
+        if candidate_definition.supports_native_categorical_preprocessing
+    )
     raise ValueError(
         f"Model family '{model_definition.model_id}' does not support "
-        "categorical_preprocessor='native'. Use model_family='catboost' for native categorical handling."
+        "categorical_preprocessor='native'. "
+        f"Supported native categorical model families: {native_model_families}."
     )
 
 
@@ -491,6 +512,8 @@ def build_tuning_space(task_type: str, model_id: str, trial: object) -> dict[str
             f"Model id '{model_definition.model_id}' does not support tuning for task_type '{task_type}'. "
             f"Supported tunable model_ids: {supported_model_ids}"
         )
+    if model_definition.model_id == "realmlp":
+        return model_definition.tuning_space_builder(trial, task_type=task_type)
     return model_definition.tuning_space_builder(trial)
 
 

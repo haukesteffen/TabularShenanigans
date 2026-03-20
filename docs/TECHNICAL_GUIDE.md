@@ -260,6 +260,7 @@ Current `compute_target: auto` routing on supported Linux NVIDIA hosts:
 | `lightgbm` | `gpu_native` | `onehot` keeps the existing sparse CSR boundary; the model trains through the explicit CUDA adapter |
 | `xgboost` | `gpu_native` for `frequency + median\|standardize`; `gpu_patch` for the remaining registered `ordinal`/`frequency` tuples; CPU fallback otherwise | sparse GPU-native inputs remain unsupported |
 | `catboost` | `gpu_native` for `categorical_preprocessor: native`; CPU fallback otherwise | preprocessing stays on `cpu_native_frame` |
+| `realmlp` | `cpu` backend with `compute_target=gpu` semantics for all registered tuples, including `categorical_preprocessor: native` | preprocessing stays on CPU; the estimator still receives `device="cuda"` when runtime routing resolves to GPU |
 | `ridge`, `elasticnet` | `gpu_native` for `frequency + median\|standardize`; CPU fallback otherwise | explicit cuML regressors stay on dense inputs only |
 | `random_forest` | `gpu_native` for `onehot + median\|standardize\|kbins` and `frequency + median\|standardize`; CPU fallback otherwise | explicit cuML random forest stays on dense inputs only |
 | `extra_trees`, `hist_gradient_boosting` | CPU fallback | intentional fallback because no maintained official GPU backend is registered |
@@ -320,6 +321,13 @@ Current preprocessing selection on GPU hosts:
 
 - `gpu_native` for `categorical_preprocessor: native` only; uses CatBoost's own GPU mode, not the RAPIDS patch layer.
 - Preprocessing stays on `cpu_native_frame`.
+
+### RealMLP Native Categorical Path
+
+- `realmlp` now accepts `categorical_preprocessor: native` in both binary and regression configs.
+- Native RealMLP uses the existing `cpu_native_frame` preprocessing backend: repository numeric preprocessing still runs first, while categorical columns stay as raw pandas object/string columns.
+- During fold-local fit, the runtime passes `cat_col_names` so the upstream `RealMLP_TD_*` estimators can distinguish native categorical columns.
+- Existing non-native RealMLP paths (`onehot`, `ordinal`, `frequency`) are unchanged.
 
 ### GPU Preprocessing
 

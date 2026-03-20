@@ -829,6 +829,19 @@ def build_realmlp_classifier(
     return RealMLP_TD_Classifier(**params), params
 
 
+def build_realmlp_fit_kwargs(
+    x_train_processed: object,
+    numeric_columns: list[str],
+    categorical_columns: list[str],
+) -> dict[str, object]:
+    del numeric_columns
+    if not categorical_columns:
+        return {}
+    if not isinstance(x_train_processed, pd.DataFrame):
+        raise ValueError("RealMLP native preprocessing must produce a pandas DataFrame.")
+    return {"cat_col_names": list(categorical_columns)}
+
+
 def build_lightgbm_regressor(
     random_state: int,
     parameter_overrides: dict[str, object] | None = None,
@@ -1008,18 +1021,37 @@ def build_hist_gradient_boosting_tuning_space(trial: object) -> dict[str, object
     }
 
 
-def build_realmlp_tuning_space(trial: object) -> dict[str, object]:
-    return {
-        "n_epochs": trial.suggest_int("n_epochs", 50, 500, step=50),
+def build_realmlp_tuning_space(
+    trial: object,
+    task_type: str | None = None,
+) -> dict[str, object]:
+    params: dict[str, object] = {
+        "act": trial.suggest_categorical("act", ["relu", "selu", "mish"]),
         "batch_size": trial.suggest_categorical("batch_size", [128, 256, 512]),
-        "lr": trial.suggest_float("lr", 1e-4, 1e-2, log=True),
-        "hidden_sizes": trial.suggest_categorical(
-            "hidden_sizes",
-            [[128], [256], [128, 128], [256, 128]],
-        ),
-        "p_drop": trial.suggest_float("p_drop", 0.0, 0.5),
-        "wd": trial.suggest_float("wd", 1e-6, 1e-2, log=True),
+        "hidden_width": trial.suggest_categorical("hidden_width", [64, 128, 192, 256, 384]),
+        "lr": trial.suggest_float("lr", 3e-5, 3e-2, log=True),
+        "lr_sched": trial.suggest_categorical("lr_sched", ["constant", "coslog4"]),
+        "n_epochs": trial.suggest_int("n_epochs", 100, 600, step=50),
+        "n_hidden_layers": trial.suggest_int("n_hidden_layers", 1, 4),
+        "p_drop": trial.suggest_float("p_drop", 0.0, 0.4),
+        "p_drop_sched": trial.suggest_categorical("p_drop_sched", ["constant", "flat_cos"]),
+        "use_early_stopping": trial.suggest_categorical("use_early_stopping", [True, False]),
+        "wd": trial.suggest_float("wd", 1e-7, 3e-2, log=True),
+        "wd_sched": trial.suggest_categorical("wd_sched", ["constant", "flat_cos"]),
     }
+    if params["use_early_stopping"]:
+        params["early_stopping_additive_patience"] = trial.suggest_int(
+            "early_stopping_additive_patience", 10, 40, step=5
+        )
+        params["early_stopping_multiplicative_patience"] = trial.suggest_float(
+            "early_stopping_multiplicative_patience", 1.0, 3.0
+        )
+    if task_type == "binary":
+        params["use_ls"] = trial.suggest_categorical("use_ls", [True, False])
+        if params["use_ls"]:
+            params["ls_eps"] = trial.suggest_float("ls_eps", 1e-3, 0.2, log=True)
+            params["ls_eps_sched"] = trial.suggest_categorical("ls_eps_sched", ["constant", "flat_cos"])
+    return params
 
 
 def build_knn_tuning_space(trial: object) -> dict[str, object]:
