@@ -105,7 +105,7 @@ MODEL_REGISTRY: dict[str, dict[str, ModelDefinition]] = {
             fit_kwargs_builder=build_realmlp_fit_kwargs,
             tuning_space_builder=build_realmlp_tuning_space,
             supports_native_categorical_preprocessing=True,
-            is_cpu_only=True,
+            gpu_routing_rules=(GpuRoutingRule(gpu_backends=(NATIVE_GPU_BACKEND,)),),
         ),
         "knn": ModelDefinition(
             model_id="knn",
@@ -208,7 +208,7 @@ MODEL_REGISTRY: dict[str, dict[str, ModelDefinition]] = {
             fit_kwargs_builder=build_realmlp_fit_kwargs,
             tuning_space_builder=build_realmlp_tuning_space,
             supports_native_categorical_preprocessing=True,
-            is_cpu_only=True,
+            gpu_routing_rules=(GpuRoutingRule(gpu_backends=(NATIVE_GPU_BACKEND,)),),
         ),
         "knn": ModelDefinition(
             model_id="knn",
