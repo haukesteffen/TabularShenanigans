@@ -66,11 +66,11 @@ def _build_bootstrap_representation_summary(
     )
 
     routing_numeric_preprocessor = "custom"
-    if operator_ids == {"standardize_numeric"}:
+    if "standardize_numeric" in operator_ids and "native_numeric" not in operator_ids:
         routing_numeric_preprocessor = "standardize"
-    elif operator_ids == {"native_numeric"}:
+    elif "native_numeric" in operator_ids:
         routing_numeric_preprocessor = "median"
-    elif "standardize_numeric" in operator_ids and "native_numeric" not in operator_ids:
+    elif "robust_scale_numeric" in operator_ids:
         routing_numeric_preprocessor = "standardize"
 
     routing_categorical_preprocessor = "custom"
