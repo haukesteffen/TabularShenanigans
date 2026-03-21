@@ -156,8 +156,8 @@ def _apply_runtime_bootstrap(argv: list[str] | None) -> None:
                 capabilities=capabilities,
                 task_type=runtime_config.task_type,
                 model_family=candidate.model_family,
-                numeric_preprocessor=candidate.routing_numeric_preprocessor,
-                categorical_preprocessor=candidate.routing_categorical_preprocessor,
+                has_native_categorical=candidate.has_native_categorical,
+                has_sparse_numeric=candidate.has_sparse_numeric,
             )
         )
 

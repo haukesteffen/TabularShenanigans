@@ -640,8 +640,8 @@ class AppConfig(BaseModel):
             capabilities=runtime_execution_context.capabilities,
             task_type=self.competition.task_type,
             model_family=candidate.model_family,
-            numeric_preprocessor=representation_contract.routing_numeric_preprocessor,
-            categorical_preprocessor=representation_contract.routing_categorical_preprocessor,
+            has_native_categorical=representation_contract.has_native_categorical,
+            has_sparse_numeric=representation_contract.has_sparse_numeric,
         )
         return resolved_runtime_execution_context.__class__(
             requested_compute_target=resolved_runtime_execution_context.requested_compute_target,
@@ -662,9 +662,7 @@ class AppConfig(BaseModel):
         runtime_execution_context = self.runtime_execution_context_for_index(candidate_index)
         return resolve_preprocessing_execution_plan(
             runtime_execution_context=runtime_execution_context,
-            numeric_preprocessor_id=representation_contract.routing_numeric_preprocessor,
-            categorical_preprocessor_id=representation_contract.routing_categorical_preprocessor,
-            matrix_output_kind=representation_contract.matrix_output_kind,
+            representation_contract=representation_contract,
         )
 
     def resolve_candidate_id_for_index(self, candidate_index: int | None = None) -> str:

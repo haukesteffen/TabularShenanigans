@@ -134,25 +134,12 @@ def build_representation_contract(
     else:
         matrix_output_kind = "dense_array"
 
-    routing_numeric_preprocessor = "custom"
-    if operator_ids == {"standardize_numeric"}:
-        routing_numeric_preprocessor = "standardize"
-    elif operator_ids == {"native_numeric"}:
-        routing_numeric_preprocessor = "median"
-    elif "standardize_numeric" in operator_ids and "native_numeric" not in operator_ids:
-        routing_numeric_preprocessor = "standardize"
-
-    routing_categorical_preprocessor = "custom"
-    if has_native_categorical and not has_sparse_numeric:
-        routing_categorical_preprocessor = "native"
-    elif operator_ids.intersection({"onehot_encode_low_cardinality_categoricals"}):
-        routing_categorical_preprocessor = "onehot"
-    elif operator_ids.intersection({"target_encode_categoricals"}):
-        routing_categorical_preprocessor = "target"
-    elif operator_ids.intersection({"frequency_encode_categoricals"}):
-        routing_categorical_preprocessor = "frequency"
-    elif operator_ids.intersection({"ordinal_encode_categoricals"}):
-        routing_categorical_preprocessor = "ordinal"
+    has_frequency_categorical = "frequency_encode_categoricals" in operator_ids
+    has_cuml_compatible_numerics = (
+        "standardize_numeric" in operator_ids and not has_native_numeric
+    ) or (
+        has_native_numeric and "standardize_numeric" not in operator_ids
+    )
 
     return RepresentationContract(
         representation_id=representation_spec.representation_id,
@@ -170,9 +157,9 @@ def build_representation_contract(
         has_native_tabular=has_native_tabular,
         has_native_categorical=has_native_categorical,
         has_native_numeric=has_native_numeric,
+        has_frequency_categorical=has_frequency_categorical,
+        has_cuml_compatible_numerics=has_cuml_compatible_numerics,
         matrix_output_kind=matrix_output_kind,
-        routing_numeric_preprocessor=routing_numeric_preprocessor,
-        routing_categorical_preprocessor=routing_categorical_preprocessor,
     )
 
 

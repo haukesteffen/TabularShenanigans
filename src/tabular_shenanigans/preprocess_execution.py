@@ -1,5 +1,6 @@
 from dataclasses import dataclass
 
+from tabular_shenanigans.representations.types import RepresentationContract
 from tabular_shenanigans.runtime_execution import PATCH_GPU_BACKEND, RuntimeExecutionContext
 
 CPU_SKLEARN_PREPROCESSING_BACKEND = "cpu_sklearn"
@@ -23,17 +24,17 @@ class PreprocessingExecutionPlan:
 def resolve_preprocessing_execution_plan(
     *,
     runtime_execution_context: RuntimeExecutionContext,
-    numeric_preprocessor_id: str,
-    categorical_preprocessor_id: str,
-    matrix_output_kind: str,
+    representation_contract: RepresentationContract,
 ) -> PreprocessingExecutionPlan:
+    matrix_output_kind = representation_contract.matrix_output_kind
+
     if runtime_execution_context.requested_compute_target == "cpu":
-        if categorical_preprocessor_id == "native":
+        if representation_contract.has_native_categorical:
             return PreprocessingExecutionPlan(
                 preprocessing_backend=CPU_NATIVE_FRAME_PREPROCESSING_BACKEND,
                 matrix_output_kind=matrix_output_kind,
             )
-        if categorical_preprocessor_id == "frequency":
+        if representation_contract.has_frequency_categorical:
             return PreprocessingExecutionPlan(
                 preprocessing_backend=CPU_FREQUENCY_PREPROCESSING_BACKEND,
                 matrix_output_kind=matrix_output_kind,
@@ -43,7 +44,7 @@ def resolve_preprocessing_execution_plan(
             matrix_output_kind=matrix_output_kind,
         )
 
-    if categorical_preprocessor_id == "native":
+    if representation_contract.has_native_categorical:
         return PreprocessingExecutionPlan(
             preprocessing_backend=CPU_NATIVE_FRAME_PREPROCESSING_BACKEND,
             matrix_output_kind=matrix_output_kind,
@@ -53,19 +54,9 @@ def resolve_preprocessing_execution_plan(
 
     if (
         gpu_available
-        and categorical_preprocessor_id == "ordinal"
-        and numeric_preprocessor_id in {"median", "standardize", "kbins"}
-    ):
-        return PreprocessingExecutionPlan(
-            preprocessing_backend=GPU_CUML_PREPROCESSING_BACKEND,
-            matrix_output_kind="dense_array",
-        )
-
-    if (
-        gpu_available
         and matrix_output_kind == "dense_array"
-        and categorical_preprocessor_id == "onehot"
-        and numeric_preprocessor_id in {"median", "standardize", "kbins"}
+        and not representation_contract.has_frequency_categorical
+        and representation_contract.has_cuml_compatible_numerics
     ):
         return PreprocessingExecutionPlan(
             preprocessing_backend=GPU_CUML_PREPROCESSING_BACKEND,
@@ -74,8 +65,8 @@ def resolve_preprocessing_execution_plan(
 
     if (
         gpu_available
-        and categorical_preprocessor_id == "frequency"
-        and numeric_preprocessor_id in {"median", "standardize", "kbins"}
+        and representation_contract.has_frequency_categorical
+        and representation_contract.has_cuml_compatible_numerics
     ):
         return PreprocessingExecutionPlan(
             preprocessing_backend=GPU_NATIVE_FREQUENCY_PREPROCESSING_BACKEND,
@@ -88,7 +79,7 @@ def resolve_preprocessing_execution_plan(
             matrix_output_kind=matrix_output_kind,
         )
 
-    if categorical_preprocessor_id == "frequency":
+    if representation_contract.has_frequency_categorical:
         return PreprocessingExecutionPlan(
             preprocessing_backend=CPU_FREQUENCY_PREPROCESSING_BACKEND,
             matrix_output_kind=matrix_output_kind,

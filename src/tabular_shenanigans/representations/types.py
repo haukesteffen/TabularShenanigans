@@ -49,9 +49,9 @@ class RepresentationContract:
     has_native_tabular: bool
     has_native_categorical: bool
     has_native_numeric: bool
+    has_frequency_categorical: bool
+    has_cuml_compatible_numerics: bool
     matrix_output_kind: MatrixOutputKind
-    routing_numeric_preprocessor: str
-    routing_categorical_preprocessor: str
 
 
 class FittedFeatureGenerator(Protocol):
