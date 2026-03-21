@@ -195,6 +195,8 @@ The default pipeline stops after `train`; `submit` is always a separate explicit
 - Failed or incomplete retry attempts may coexist as non-canonical top-level runs for the same canonical `candidate_id`.
 - There are no stage-specific MLflow runs for `prepare` or `refresh-submissions`.
 - There is no local canonical `artifacts/` workflow.
+- Model runs log exact representation operators and pruners into MLflow params, alongside a concise `representation__summary`.
+- Model runs log `hp__*` only for the resolved configured or tuned overrides; the full resolved estimator config is kept in `model__resolved_params_json`.
 
 Real Kaggle submissions use auto-generated messages:
 ```text
