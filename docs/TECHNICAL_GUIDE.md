@@ -78,7 +78,7 @@ Each candidate run is named with `candidate_id`.
 
 Screening runs use:
 - `run_kind=screening`
-- `tracking_schema_version=4`
+- `tracking_schema_version=5`
 
 Screening runs use the same candidate artifact bundle contract as canonical model candidates, but they live in the screening experiment and are not used for canonical lookup or submissions.
 
@@ -86,12 +86,19 @@ Screening runs use the same candidate artifact bundle contract as canonical mode
 
 Canonical candidate runs use:
 - `run_kind=canonical`
-- `tracking_schema_version=4`
+- `tracking_schema_version=5`
 - `competition_slug`
 - `candidate_id`
 - `candidate_type`
 - `task_type`
 - `primary_metric`
+- model candidates also tag:
+  - `model_family`
+  - `model_registry_key`
+  - `representation_id`
+  - `representation_operator_ids`
+  - `representation_pruner_ids`
+  - `hyperparameter_source`
 - `runtime_requested_compute_target`
 - `runtime_resolved_compute_target`
 - `runtime_requested_gpu_backend`
@@ -120,7 +127,26 @@ Canonical candidate runs use:
   - `representation_id`
   - `model_family`
   - `model_registry_key`
-  - `model__*` for resolved model params
+  - `representation__summary`
+  - `representation__operator_ids`
+  - `representation__operator_ids_json`
+  - `representation__operators_json`
+  - `representation__pruner_ids`
+  - `representation__pruner_ids_json`
+  - `representation__pruners_json`
+  - `representation__matrix_output_kind`
+  - `representation__routing_numeric_preprocessor`
+  - `representation__routing_categorical_preprocessor`
+  - `representation__has_native_categorical`
+  - `representation__has_sparse_numeric`
+  - `representation__has_dense_numeric`
+  - `representation__has_native_numeric`
+  - `hp__source`
+  - `hp__override_count`
+  - `hp__overrides_json`
+  - `hp__*` for resolved configured or tuned hyperparameter overrides
+  - `model__resolved_param_count`
+  - `model__resolved_params_json`
   - `opt__*` for optimization settings (logged only when optimization block is present)
 - blend candidates:
   - `blend__base_candidate_ids_json`
@@ -164,13 +190,15 @@ Trial child-run tags:
 - `mlflow.parentRunId=<candidate_run_id>`
 - `candidate_id`
 - `model_family`
+- `model_registry_key`
+- `representation_id`
 - `trial_state`, transitioning from `RUNNING` to `COMPLETE` or `FAIL`
 
 ### Submission Runs
 
 Submission runs use:
 - `run_kind=submission`
-- `tracking_schema_version=4`
+- `tracking_schema_version=5`
 - `competition_slug`
 - `candidate_id`
 - `submission_event_id`
@@ -202,8 +230,26 @@ Trial child-run params:
 - `runtime__resolved_compute_target`
 - `runtime__resolved_gpu_backend`
 - `runtime__preprocessing_backend`
+- `representation__summary`
+- `representation__operator_ids`
+- `representation__operator_ids_json`
+- `representation__operators_json`
+- `representation__pruner_ids`
+- `representation__pruner_ids_json`
+- `representation__pruners_json`
+- `representation__matrix_output_kind`
+- `representation__routing_numeric_preprocessor`
+- `representation__routing_categorical_preprocessor`
+- `representation__has_native_categorical`
+- `representation__has_sparse_numeric`
+- `representation__has_dense_numeric`
+- `representation__has_native_numeric`
+- `hp__source`
+- `hp__override_count`
+- `hp__overrides_json`
 - `hp__*` for sampled Optuna hyperparameters
-- `mp__*` for resolved model params on completed trials
+- `model__resolved_param_count` on completed trials
+- `model__resolved_params_json` on completed trials
 
 Trial child-run metrics:
 - `duration_seconds`

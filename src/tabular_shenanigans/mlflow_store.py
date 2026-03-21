@@ -14,9 +14,13 @@ from tabular_shenanigans.candidate_artifacts import (
     load_candidate_manifest,
 )
 from tabular_shenanigans.config import AppConfig
+from tabular_shenanigans.representations import (
+    build_representation_contract,
+    build_representation_spec_from_payload,
+)
 from tabular_shenanigans.submission_history import CandidateSubmissionHistory, SubmissionEvent
 
-TRACKING_SCHEMA_VERSION = "4"
+TRACKING_SCHEMA_VERSION = "5"
 RUN_KIND_SCREENING = "screening"
 RUN_KIND_CANONICAL = "canonical"
 RUN_KIND_SUBMISSION = "submission"
@@ -36,6 +40,144 @@ CANDIDATE_BUNDLE_REQUIRED_ARTIFACT_PATHS = (
 CANDIDATE_BUNDLE_ROOT_PATHS = ("logs", "config", "context", "candidate")
 ACTIVE_MLFLOW_RUN_STATUSES = {"RUNNING", "SCHEDULED"}
 ExperimentRole = Literal["screening", "candidates", "submissions"]
+
+
+def _normalize_representation_component_payload(
+    component: object,
+    field_name: str,
+) -> dict[str, object]:
+    if not isinstance(component, Mapping):
+        raise ValueError(f"{field_name} entries must be mappings.")
+    component_id = component.get("id")
+    if not isinstance(component_id, str) or not component_id:
+        raise ValueError(f"{field_name} entries must include a non-empty string 'id'.")
+    return {
+        "id": component_id,
+        "params": {
+            str(key): value
+            for key, value in component.items()
+            if key != "id"
+        },
+    }
+
+
+def _extract_representation_components(
+    representation: object,
+) -> tuple[list[dict[str, object]], list[dict[str, object]]]:
+    if not isinstance(representation, Mapping):
+        raise ValueError("representation must be a mapping.")
+    operators = representation.get("operators")
+    pruners = representation.get("pruners", [])
+    if not isinstance(operators, list) or not operators:
+        raise ValueError("representation.operators must be a non-empty list.")
+    if not isinstance(pruners, list):
+        raise ValueError("representation.pruners must be a list when provided.")
+    normalized_operators = [
+        _normalize_representation_component_payload(component, "representation.operators")
+        for component in operators
+    ]
+    normalized_pruners = [
+        _normalize_representation_component_payload(component, "representation.pruners")
+        for component in pruners
+    ]
+    return normalized_operators, normalized_pruners
+
+
+def _component_signature(component: Mapping[str, object]) -> str:
+    component_id = component["id"]
+    params = component["params"]
+    if not isinstance(component_id, str):
+        raise ValueError("representation component id must be a string.")
+    if not isinstance(params, Mapping) or not params:
+        return component_id
+    param_text = ", ".join(
+        f"{key}={json.dumps(json_ready(value), sort_keys=True)}"
+        for key, value in sorted(params.items())
+    )
+    return f"{component_id}({param_text})"
+
+
+def _representation_logging_fields(representation: object) -> dict[str, object]:
+    operators, pruners = _extract_representation_components(representation)
+    operator_ids = [str(component["id"]) for component in operators]
+    pruner_ids = [str(component["id"]) for component in pruners]
+    operator_signature = " -> ".join(_component_signature(component) for component in operators)
+    pruner_signature = " -> ".join(_component_signature(component) for component in pruners) or "none"
+    return {
+        "representation__operator_count": len(operators),
+        "representation__operator_ids": " -> ".join(operator_ids),
+        "representation__operator_ids_json": operator_ids,
+        "representation__operators_json": operators,
+        "representation__pruner_count": len(pruners),
+        "representation__pruner_ids": " -> ".join(pruner_ids) if pruner_ids else "none",
+        "representation__pruner_ids_json": pruner_ids,
+        "representation__pruners_json": pruners,
+        "representation__summary": f"ops: {operator_signature} | pruners: {pruner_signature}",
+    }
+
+
+def _representation_contract_logging_fields(representation: object) -> dict[str, object]:
+    if not isinstance(representation, Mapping):
+        raise ValueError("representation must be a mapping.")
+    representation_spec = build_representation_spec_from_payload(dict(representation))
+    representation_contract = build_representation_contract(representation_spec)
+    return {
+        "representation__matrix_output_kind": representation_contract.matrix_output_kind,
+        "representation__routing_numeric_preprocessor": representation_contract.routing_numeric_preprocessor,
+        "representation__routing_categorical_preprocessor": (
+            representation_contract.routing_categorical_preprocessor
+        ),
+        "representation__has_native_categorical": representation_contract.has_native_categorical,
+        "representation__has_sparse_numeric": representation_contract.has_sparse_numeric,
+        "representation__has_dense_numeric": representation_contract.has_dense_numeric,
+        "representation__has_native_numeric": representation_contract.has_native_numeric,
+    }
+
+
+def _resolved_model_parameter_overrides(manifest: Mapping[str, object]) -> dict[str, object]:
+    config_snapshot = manifest.get("config_snapshot")
+    if not isinstance(config_snapshot, Mapping):
+        return {}
+    parameter_overrides = config_snapshot.get("resolved_model_parameter_overrides")
+    if not isinstance(parameter_overrides, Mapping):
+        return {}
+    return {str(key): value for key, value in parameter_overrides.items()}
+
+
+def _hyperparameter_source(manifest: Mapping[str, object]) -> str:
+    tuning_provenance = manifest.get("tuning_provenance")
+    if isinstance(tuning_provenance, Mapping):
+        return "optimized"
+    if _resolved_model_parameter_overrides(manifest):
+        return "configured"
+    return "default"
+
+
+def _model_logging_fields(manifest: Mapping[str, object]) -> dict[str, object]:
+    params: dict[str, object] = {
+        "representation_id": manifest.get("representation_id"),
+        "model_family": manifest.get("model_family"),
+        "model_registry_key": manifest.get("model_registry_key"),
+    }
+    representation = manifest.get("representation")
+    if representation is not None:
+        params.update(_representation_logging_fields(representation))
+        params.update(_representation_contract_logging_fields(representation))
+
+    parameter_overrides = _resolved_model_parameter_overrides(manifest)
+    params["hp__source"] = _hyperparameter_source(manifest)
+    params["hp__override_count"] = len(parameter_overrides)
+    params["hp__overrides_json"] = parameter_overrides
+    for key, value in parameter_overrides.items():
+        params[f"hp__{key}"] = value
+
+    model_params = manifest.get("model_params")
+    if isinstance(model_params, Mapping):
+        params["model__resolved_param_count"] = len(model_params)
+        params["model__resolved_params_json"] = {
+            str(key): value for key, value in model_params.items()
+        }
+    return params
 
 
 @dataclass(frozen=True)
@@ -463,17 +605,7 @@ def _candidate_run_params(config: AppConfig, manifest: dict[str, object]) -> dic
         params["runtime__fallback_reason"] = runtime_execution_context.fallback_reason
     if config.is_model_candidate:
         params["runtime__preprocessing_backend"] = config.preprocessing_execution_plan.preprocessing_backend
-        params.update(
-            {
-                "representation_id": manifest.get("representation_id"),
-                "model_family": manifest.get("model_family"),
-                "model_registry_key": manifest.get("model_registry_key"),
-            }
-        )
-        model_params = manifest.get("model_params")
-        if isinstance(model_params, dict):
-            for key, value in model_params.items():
-                params[f"model__{key}"] = value
+        params.update(_model_logging_fields(manifest))
         optimization = candidate.optimization
         if optimization is not None:
             params.update(
@@ -492,7 +624,7 @@ def _candidate_run_params(config: AppConfig, manifest: dict[str, object]) -> dic
 
 
 def _candidate_run_tags(config: AppConfig, manifest: dict[str, object]) -> dict[str, object]:
-    return {
+    tags: dict[str, object] = {
         "run_kind": _training_run_kind(config),
         "competition_slug": manifest.get("competition_slug"),
         "candidate_id": manifest.get("candidate_id"),
@@ -500,7 +632,21 @@ def _candidate_run_tags(config: AppConfig, manifest: dict[str, object]) -> dict[
         "task_type": manifest.get("task_type"),
         "primary_metric": manifest.get("primary_metric"),
         "config_fingerprint": manifest.get("config_fingerprint"),
+        "tracking_schema_version": TRACKING_SCHEMA_VERSION,
     }
+    if config.is_model_candidate:
+        model_logging_fields = _model_logging_fields(manifest)
+        tags.update(
+            {
+                "model_family": manifest.get("model_family"),
+                "model_registry_key": manifest.get("model_registry_key"),
+                "representation_id": manifest.get("representation_id"),
+                "representation_operator_ids": model_logging_fields.get("representation__operator_ids"),
+                "representation_pruner_ids": model_logging_fields.get("representation__pruner_ids"),
+                "hyperparameter_source": _hyperparameter_source(manifest),
+            }
+        )
+    return tags
 
 
 def _candidate_run_metrics(
@@ -558,10 +704,17 @@ def create_trial_run(
             "mlflow.parentRunId": candidate_run.run_id,
             "candidate_id": candidate_run.candidate_id,
             "model_family": model_family,
+            "model_registry_key": model_registry_key,
+            "representation_id": representation_id,
             "trial_state": "RUNNING",
         },
     )
     trial_run_id = run.info.run_id
+    representation_payload = config.experiment.candidate.representation.to_payload()
+    representation_logging = {
+        **_representation_logging_fields(representation_payload),
+        **_representation_contract_logging_fields(representation_payload),
+    }
     _log_params(
         client,
         trial_run_id,
@@ -573,6 +726,10 @@ def create_trial_run(
             "runtime__resolved_compute_target": config.runtime_execution_context.resolved_compute_target,
             "runtime__resolved_gpu_backend": config.runtime_execution_context.resolved_gpu_backend,
             "runtime__preprocessing_backend": preprocessing_backend,
+            "hp__source": "optimization_trial",
+            "hp__override_count": len(hyperparams),
+            "hp__overrides_json": hyperparams,
+            **representation_logging,
             **{f"hp__{key}": value for key, value in hyperparams.items()},
         },
     )
@@ -593,7 +750,10 @@ def finalize_trial_run(
         _log_params(
             client,
             trial_run.run_id,
-            {f"mp__{key}": value for key, value in model_params.items()},
+            {
+                "model__resolved_param_count": len(model_params),
+                "model__resolved_params_json": {str(key): value for key, value in model_params.items()},
+            },
         )
     _log_metrics(
         client,
