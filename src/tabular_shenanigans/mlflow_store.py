@@ -123,14 +123,11 @@ def _representation_contract_logging_fields(representation: object) -> dict[str,
     representation_contract = build_representation_contract(representation_spec)
     return {
         "representation__matrix_output_kind": representation_contract.matrix_output_kind,
-        "representation__routing_numeric_preprocessor": representation_contract.routing_numeric_preprocessor,
-        "representation__routing_categorical_preprocessor": (
-            representation_contract.routing_categorical_preprocessor
-        ),
         "representation__has_native_categorical": representation_contract.has_native_categorical,
         "representation__has_sparse_numeric": representation_contract.has_sparse_numeric,
         "representation__has_dense_numeric": representation_contract.has_dense_numeric,
         "representation__has_native_numeric": representation_contract.has_native_numeric,
+        "representation__has_frequency_categorical": representation_contract.has_frequency_categorical,
     }
 
 

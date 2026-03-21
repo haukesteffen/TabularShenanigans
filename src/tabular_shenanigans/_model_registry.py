@@ -39,27 +39,10 @@ from tabular_shenanigans._model_builders import (
 from tabular_shenanigans._model_types import GpuRoutingRule, ModelDefinition
 from tabular_shenanigans.representations.types import RepresentationContract
 from tabular_shenanigans.runtime_execution import (
-    CPU_GPU_BACKEND,
     NATIVE_GPU_BACKEND,
     PATCH_GPU_BACKEND,
     RuntimeExecutionContext,
 )
-
-ALL_NUMERIC_PREPROCESSORS = ("median", "standardize", "kbins")
-ALL_NON_NATIVE_CATEGORICAL_PREPROCESSORS = ("onehot", "ordinal", "frequency")
-
-
-def gpu_routing_rule(
-    *,
-    numeric_preprocessors: tuple[str, ...],
-    categorical_preprocessors: tuple[str, ...],
-    gpu_backends: tuple[str, ...] = (NATIVE_GPU_BACKEND,),
-) -> GpuRoutingRule:
-    return GpuRoutingRule(
-        numeric_preprocessors=numeric_preprocessors,
-        categorical_preprocessors=categorical_preprocessors,
-        gpu_backends=gpu_backends,
-    )
 
 
 DEFAULT_MODEL_ID_BY_TASK = {
@@ -76,22 +59,7 @@ MODEL_REGISTRY: dict[str, dict[str, ModelDefinition]] = {
             supports_sparse_preprocessed_input=True,
             supports_gpu_native_dense_onehot_input=True,
             gpu_routing_rules=(
-                gpu_routing_rule(
-                    numeric_preprocessors=("median", "standardize"),
-                    categorical_preprocessors=("frequency",),
-                ),
-                gpu_routing_rule(
-                    numeric_preprocessors=ALL_NUMERIC_PREPROCESSORS,
-                    categorical_preprocessors=("ordinal",),
-                ),
-                gpu_routing_rule(
-                    numeric_preprocessors=("kbins",),
-                    categorical_preprocessors=("frequency",),
-                ),
-                gpu_routing_rule(
-                    numeric_preprocessors=ALL_NUMERIC_PREPROCESSORS,
-                    categorical_preprocessors=("onehot",),
-                ),
+                GpuRoutingRule(gpu_backends=(NATIVE_GPU_BACKEND,)),
             ),
         ),
         "elasticnet": ModelDefinition(
@@ -101,22 +69,7 @@ MODEL_REGISTRY: dict[str, dict[str, ModelDefinition]] = {
             supports_sparse_preprocessed_input=True,
             supports_gpu_native_dense_onehot_input=True,
             gpu_routing_rules=(
-                gpu_routing_rule(
-                    numeric_preprocessors=("median", "standardize"),
-                    categorical_preprocessors=("frequency",),
-                ),
-                gpu_routing_rule(
-                    numeric_preprocessors=ALL_NUMERIC_PREPROCESSORS,
-                    categorical_preprocessors=("ordinal",),
-                ),
-                gpu_routing_rule(
-                    numeric_preprocessors=("kbins",),
-                    categorical_preprocessors=("frequency",),
-                ),
-                gpu_routing_rule(
-                    numeric_preprocessors=ALL_NUMERIC_PREPROCESSORS,
-                    categorical_preprocessors=("onehot",),
-                ),
+                GpuRoutingRule(gpu_backends=(NATIVE_GPU_BACKEND,)),
             ),
         ),
         "random_forest": ModelDefinition(
@@ -127,10 +80,7 @@ MODEL_REGISTRY: dict[str, dict[str, ModelDefinition]] = {
             supports_sparse_preprocessed_input=True,
             supports_gpu_native_dense_onehot_input=True,
             gpu_routing_rules=(
-                gpu_routing_rule(
-                    numeric_preprocessors=ALL_NUMERIC_PREPROCESSORS,
-                    categorical_preprocessors=ALL_NON_NATIVE_CATEGORICAL_PREPROCESSORS,
-                ),
+                GpuRoutingRule(gpu_backends=(NATIVE_GPU_BACKEND,), rejects_sparse=True),
             ),
         ),
         "extra_trees": ModelDefinition(
@@ -155,18 +105,7 @@ MODEL_REGISTRY: dict[str, dict[str, ModelDefinition]] = {
             fit_kwargs_builder=build_realmlp_fit_kwargs,
             tuning_space_builder=build_realmlp_tuning_space,
             supports_native_categorical_preprocessing=True,
-            gpu_routing_rules=(
-                gpu_routing_rule(
-                    numeric_preprocessors=ALL_NUMERIC_PREPROCESSORS,
-                    categorical_preprocessors=ALL_NON_NATIVE_CATEGORICAL_PREPROCESSORS,
-                    gpu_backends=(CPU_GPU_BACKEND,),
-                ),
-                gpu_routing_rule(
-                    numeric_preprocessors=ALL_NUMERIC_PREPROCESSORS,
-                    categorical_preprocessors=("native",),
-                    gpu_backends=(CPU_GPU_BACKEND,),
-                ),
-            ),
+            gpu_routing_rules=(GpuRoutingRule(gpu_backends=(NATIVE_GPU_BACKEND,)),),
         ),
         "knn": ModelDefinition(
             model_id="knn",
@@ -176,10 +115,7 @@ MODEL_REGISTRY: dict[str, dict[str, ModelDefinition]] = {
             supports_sparse_preprocessed_input=True,
             supports_gpu_native_dense_onehot_input=True,
             gpu_routing_rules=(
-                gpu_routing_rule(
-                    numeric_preprocessors=ALL_NUMERIC_PREPROCESSORS,
-                    categorical_preprocessors=ALL_NON_NATIVE_CATEGORICAL_PREPROCESSORS,
-                ),
+                GpuRoutingRule(gpu_backends=(NATIVE_GPU_BACKEND,), rejects_sparse=True),
             ),
         ),
         "svm": ModelDefinition(
@@ -190,10 +126,7 @@ MODEL_REGISTRY: dict[str, dict[str, ModelDefinition]] = {
             supports_sparse_preprocessed_input=True,
             supports_gpu_native_dense_onehot_input=True,
             gpu_routing_rules=(
-                gpu_routing_rule(
-                    numeric_preprocessors=ALL_NUMERIC_PREPROCESSORS,
-                    categorical_preprocessors=ALL_NON_NATIVE_CATEGORICAL_PREPROCESSORS,
-                ),
+                GpuRoutingRule(gpu_backends=(NATIVE_GPU_BACKEND,)),
             ),
         ),
         "lightgbm": ModelDefinition(
@@ -203,10 +136,7 @@ MODEL_REGISTRY: dict[str, dict[str, ModelDefinition]] = {
             tuning_space_builder=build_lightgbm_tuning_space,
             supports_sparse_preprocessed_input=True,
             gpu_routing_rules=(
-                gpu_routing_rule(
-                    numeric_preprocessors=ALL_NUMERIC_PREPROCESSORS,
-                    categorical_preprocessors=ALL_NON_NATIVE_CATEGORICAL_PREPROCESSORS,
-                ),
+                GpuRoutingRule(gpu_backends=(NATIVE_GPU_BACKEND,)),
             ),
         ),
         "catboost": ModelDefinition(
@@ -218,10 +148,7 @@ MODEL_REGISTRY: dict[str, dict[str, ModelDefinition]] = {
             supports_native_categorical_preprocessing=True,
             supports_sparse_preprocessed_input=True,
             gpu_routing_rules=(
-                gpu_routing_rule(
-                    numeric_preprocessors=ALL_NUMERIC_PREPROCESSORS,
-                    categorical_preprocessors=("native",),
-                ),
+                GpuRoutingRule(gpu_backends=(NATIVE_GPU_BACKEND,), requires_native_categorical=True),
             ),
         ),
         "xgboost": ModelDefinition(
@@ -232,10 +159,7 @@ MODEL_REGISTRY: dict[str, dict[str, ModelDefinition]] = {
             supports_sparse_preprocessed_input=True,
             supports_gpu_native_dense_onehot_input=True,
             gpu_routing_rules=(
-                gpu_routing_rule(
-                    numeric_preprocessors=ALL_NUMERIC_PREPROCESSORS,
-                    categorical_preprocessors=ALL_NON_NATIVE_CATEGORICAL_PREPROCESSORS,
-                ),
+                GpuRoutingRule(gpu_backends=(NATIVE_GPU_BACKEND,)),
             ),
         ),
     },
@@ -248,10 +172,7 @@ MODEL_REGISTRY: dict[str, dict[str, ModelDefinition]] = {
             supports_sparse_preprocessed_input=True,
             supports_gpu_native_dense_onehot_input=True,
             gpu_routing_rules=(
-                gpu_routing_rule(
-                    numeric_preprocessors=ALL_NUMERIC_PREPROCESSORS,
-                    categorical_preprocessors=ALL_NON_NATIVE_CATEGORICAL_PREPROCESSORS,
-                ),
+                GpuRoutingRule(gpu_backends=(NATIVE_GPU_BACKEND,)),
             ),
         ),
         "random_forest": ModelDefinition(
@@ -262,10 +183,7 @@ MODEL_REGISTRY: dict[str, dict[str, ModelDefinition]] = {
             supports_sparse_preprocessed_input=True,
             supports_gpu_native_dense_onehot_input=True,
             gpu_routing_rules=(
-                gpu_routing_rule(
-                    numeric_preprocessors=ALL_NUMERIC_PREPROCESSORS,
-                    categorical_preprocessors=ALL_NON_NATIVE_CATEGORICAL_PREPROCESSORS,
-                ),
+                GpuRoutingRule(gpu_backends=(NATIVE_GPU_BACKEND,), rejects_sparse=True),
             ),
         ),
         "extra_trees": ModelDefinition(
@@ -290,18 +208,7 @@ MODEL_REGISTRY: dict[str, dict[str, ModelDefinition]] = {
             fit_kwargs_builder=build_realmlp_fit_kwargs,
             tuning_space_builder=build_realmlp_tuning_space,
             supports_native_categorical_preprocessing=True,
-            gpu_routing_rules=(
-                gpu_routing_rule(
-                    numeric_preprocessors=ALL_NUMERIC_PREPROCESSORS,
-                    categorical_preprocessors=ALL_NON_NATIVE_CATEGORICAL_PREPROCESSORS,
-                    gpu_backends=(CPU_GPU_BACKEND,),
-                ),
-                gpu_routing_rule(
-                    numeric_preprocessors=ALL_NUMERIC_PREPROCESSORS,
-                    categorical_preprocessors=("native",),
-                    gpu_backends=(CPU_GPU_BACKEND,),
-                ),
-            ),
+            gpu_routing_rules=(GpuRoutingRule(gpu_backends=(NATIVE_GPU_BACKEND,)),),
         ),
         "knn": ModelDefinition(
             model_id="knn",
@@ -311,10 +218,7 @@ MODEL_REGISTRY: dict[str, dict[str, ModelDefinition]] = {
             supports_sparse_preprocessed_input=True,
             supports_gpu_native_dense_onehot_input=True,
             gpu_routing_rules=(
-                gpu_routing_rule(
-                    numeric_preprocessors=ALL_NUMERIC_PREPROCESSORS,
-                    categorical_preprocessors=ALL_NON_NATIVE_CATEGORICAL_PREPROCESSORS,
-                ),
+                GpuRoutingRule(gpu_backends=(NATIVE_GPU_BACKEND,), rejects_sparse=True),
             ),
         ),
         "svm": ModelDefinition(
@@ -325,10 +229,7 @@ MODEL_REGISTRY: dict[str, dict[str, ModelDefinition]] = {
             supports_sparse_preprocessed_input=True,
             supports_gpu_native_dense_onehot_input=True,
             gpu_routing_rules=(
-                gpu_routing_rule(
-                    numeric_preprocessors=ALL_NUMERIC_PREPROCESSORS,
-                    categorical_preprocessors=ALL_NON_NATIVE_CATEGORICAL_PREPROCESSORS,
-                ),
+                GpuRoutingRule(gpu_backends=(NATIVE_GPU_BACKEND,)),
             ),
         ),
         "naive_bayes": ModelDefinition(
@@ -338,10 +239,7 @@ MODEL_REGISTRY: dict[str, dict[str, ModelDefinition]] = {
             tuning_space_builder=build_naive_bayes_tuning_space,
             supports_gpu_native_dense_onehot_input=True,
             gpu_routing_rules=(
-                gpu_routing_rule(
-                    numeric_preprocessors=ALL_NUMERIC_PREPROCESSORS,
-                    categorical_preprocessors=ALL_NON_NATIVE_CATEGORICAL_PREPROCESSORS,
-                ),
+                GpuRoutingRule(gpu_backends=(NATIVE_GPU_BACKEND,)),
             ),
         ),
         "lightgbm": ModelDefinition(
@@ -351,10 +249,7 @@ MODEL_REGISTRY: dict[str, dict[str, ModelDefinition]] = {
             tuning_space_builder=build_lightgbm_tuning_space,
             supports_sparse_preprocessed_input=True,
             gpu_routing_rules=(
-                gpu_routing_rule(
-                    numeric_preprocessors=ALL_NUMERIC_PREPROCESSORS,
-                    categorical_preprocessors=ALL_NON_NATIVE_CATEGORICAL_PREPROCESSORS,
-                ),
+                GpuRoutingRule(gpu_backends=(NATIVE_GPU_BACKEND,)),
             ),
         ),
         "catboost": ModelDefinition(
@@ -366,10 +261,7 @@ MODEL_REGISTRY: dict[str, dict[str, ModelDefinition]] = {
             supports_native_categorical_preprocessing=True,
             supports_sparse_preprocessed_input=True,
             gpu_routing_rules=(
-                gpu_routing_rule(
-                    numeric_preprocessors=ALL_NUMERIC_PREPROCESSORS,
-                    categorical_preprocessors=("native",),
-                ),
+                GpuRoutingRule(gpu_backends=(NATIVE_GPU_BACKEND,), requires_native_categorical=True),
             ),
         ),
         "xgboost": ModelDefinition(
@@ -380,10 +272,7 @@ MODEL_REGISTRY: dict[str, dict[str, ModelDefinition]] = {
             supports_sparse_preprocessed_input=True,
             supports_gpu_native_dense_onehot_input=True,
             gpu_routing_rules=(
-                gpu_routing_rule(
-                    numeric_preprocessors=ALL_NUMERIC_PREPROCESSORS,
-                    categorical_preprocessors=ALL_NON_NATIVE_CATEGORICAL_PREPROCESSORS,
-                ),
+                GpuRoutingRule(gpu_backends=(NATIVE_GPU_BACKEND,)),
             ),
         ),
     },
@@ -579,10 +468,3 @@ def build_model_fit_kwargs(
     return model_definition.fit_kwargs_builder(x_train_processed, numeric_columns, categorical_columns)
 
 
-def iter_model_gpu_routing_entries() -> list[tuple[str, str, GpuRoutingRule]]:
-    entries: list[tuple[str, str, GpuRoutingRule]] = []
-    for task_type, task_registry in MODEL_REGISTRY.items():
-        for model_id, model_definition in task_registry.items():
-            for gpu_routing_rule in model_definition.gpu_routing_rules:
-                entries.append((task_type, model_id, gpu_routing_rule))
-    return entries

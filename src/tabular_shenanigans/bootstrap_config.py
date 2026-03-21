@@ -11,8 +11,6 @@ class BootstrapCandidateRuntimeConfig:
     model_family: str | None = None
     representation: dict[str, object] | None = None
     representation_id: str | None = None
-    routing_numeric_preprocessor: str = "custom"
-    routing_categorical_preprocessor: str = "custom"
     has_native_categorical: bool = False
     has_sparse_numeric: bool = False
 
@@ -31,9 +29,9 @@ def _normalize_representation_component_payload(component: object, field_name: s
 
 def _build_bootstrap_representation_summary(
     representation: dict[str, object] | None,
-) -> tuple[str | None, str, str, bool, bool]:
+) -> tuple[str | None, bool, bool]:
     if representation is None:
-        return None, "custom", "custom", False, False
+        return None, False, False
 
     operators = representation.get("operators")
     pruners = representation.get("pruners", [])
@@ -60,38 +58,14 @@ def _build_bootstrap_representation_summary(
             {
                 "quantile_bin_numeric",
                 "onehot_encode_low_cardinality_categoricals",
+                "cross_low_cardinality_categoricals",
+                "cross_categorical_with_binned_numeric",
                 "rare_category_bucket",
             }
         )
     )
 
-    routing_numeric_preprocessor = "custom"
-    if "standardize_numeric" in operator_ids and "native_numeric" not in operator_ids:
-        routing_numeric_preprocessor = "standardize"
-    elif "native_numeric" in operator_ids:
-        routing_numeric_preprocessor = "median"
-    elif "robust_scale_numeric" in operator_ids:
-        routing_numeric_preprocessor = "standardize"
-
-    routing_categorical_preprocessor = "custom"
-    if has_native_categorical and not has_sparse_numeric:
-        routing_categorical_preprocessor = "native"
-    elif "onehot_encode_low_cardinality_categoricals" in operator_ids:
-        routing_categorical_preprocessor = "onehot"
-    elif "target_encode_categoricals" in operator_ids:
-        routing_categorical_preprocessor = "target"
-    elif "frequency_encode_categoricals" in operator_ids:
-        routing_categorical_preprocessor = "frequency"
-    elif "ordinal_encode_categoricals" in operator_ids:
-        routing_categorical_preprocessor = "ordinal"
-
-    return (
-        representation_id,
-        routing_numeric_preprocessor,
-        routing_categorical_preprocessor,
-        has_native_categorical,
-        has_sparse_numeric,
-    )
+    return representation_id, has_native_categorical, has_sparse_numeric
 
 
 @dataclass(frozen=True)
@@ -139,20 +113,14 @@ def _coerce_bootstrap_candidate(candidate: object) -> BootstrapCandidateRuntimeC
     if not isinstance(candidate, dict):
         raise ValueError("experiment.candidates items must be mappings when provided.")
     representation = candidate.get("representation") if isinstance(candidate.get("representation"), dict) else None
-    (
-        representation_id,
-        routing_numeric_preprocessor,
-        routing_categorical_preprocessor,
-        has_native_categorical,
-        has_sparse_numeric,
-    ) = _build_bootstrap_representation_summary(representation)
+    representation_id, has_native_categorical, has_sparse_numeric = _build_bootstrap_representation_summary(
+        representation
+    )
     return BootstrapCandidateRuntimeConfig(
         candidate_type=candidate.get("candidate_type"),
         model_family=candidate.get("model_family"),
         representation=representation,
         representation_id=representation_id,
-        routing_numeric_preprocessor=routing_numeric_preprocessor,
-        routing_categorical_preprocessor=routing_categorical_preprocessor,
         has_native_categorical=has_native_categorical,
         has_sparse_numeric=has_sparse_numeric,
     )
@@ -221,21 +189,15 @@ def load_bootstrap_runtime_config(path: str | Path = "config.yaml") -> Bootstrap
                     continue
                 model_family = candidate.get("model_family")
                 representation = candidate.get("representation") if isinstance(candidate.get("representation"), dict) else None
-                (
-                    representation_id,
-                    routing_numeric_preprocessor,
-                    routing_categorical_preprocessor,
-                    has_native_categorical,
-                    has_sparse_numeric,
-                ) = _build_bootstrap_representation_summary(representation)
+                representation_id, has_native_categorical, has_sparse_numeric = (
+                    _build_bootstrap_representation_summary(representation)
+                )
                 screening_candidate_list.append(
                     BootstrapCandidateRuntimeConfig(
                         candidate_type="model",
                         model_family=model_family if isinstance(model_family, str) else None,
                         representation=representation,
                         representation_id=representation_id,
-                        routing_numeric_preprocessor=routing_numeric_preprocessor,
-                        routing_categorical_preprocessor=routing_categorical_preprocessor,
                         has_native_categorical=has_native_categorical,
                         has_sparse_numeric=has_sparse_numeric,
                     )

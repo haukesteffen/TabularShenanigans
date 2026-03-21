@@ -12,9 +12,9 @@ TuningSpaceBuilder = Callable[[object], dict[str, object]]
 
 @dataclass(frozen=True)
 class GpuRoutingRule:
-    numeric_preprocessors: tuple[str, ...]
-    categorical_preprocessors: tuple[str, ...]
     gpu_backends: tuple[str, ...]
+    requires_native_categorical: bool = False
+    rejects_sparse: bool = False
 
 
 @dataclass(frozen=True)

@@ -1,6 +1,4 @@
-from dataclasses import dataclass
-
-from tabular_shenanigans.models import MODEL_REGISTRY, iter_model_gpu_routing_entries
+from tabular_shenanigans.models import MODEL_REGISTRY, GpuRoutingRule, ModelDefinition, get_model_definition
 from tabular_shenanigans.runtime_execution import (
     CPU_GPU_BACKEND,
     NATIVE_GPU_BACKEND,
@@ -13,43 +11,6 @@ from tabular_shenanigans.runtime_execution import (
 GPU_EXECUTION_PATHS = (NATIVE_GPU_BACKEND, PATCH_GPU_BACKEND)
 
 
-@dataclass(frozen=True)
-class ModelExecutionRoutingKey:
-    task_type: str
-    model_family: str
-    numeric_preprocessor: str
-    categorical_preprocessor: str
-
-    def to_tuple(self) -> tuple[str, str, str, str]:
-        return (
-            self.task_type,
-            self.model_family,
-            self.numeric_preprocessor,
-            self.categorical_preprocessor,
-        )
-
-
-def _register_model_paths(
-    registry: dict[tuple[str, str, str, str], tuple[str, ...]],
-    *,
-    task_types: tuple[str, ...],
-    model_family: str,
-    numeric_preprocessors: tuple[str, ...],
-    categorical_preprocessors: tuple[str, ...],
-    gpu_paths: tuple[str, ...],
-) -> None:
-    for task_type in task_types:
-        for numeric_preprocessor in numeric_preprocessors:
-            for categorical_preprocessor in categorical_preprocessors:
-                key = ModelExecutionRoutingKey(
-                    task_type=task_type,
-                    model_family=model_family,
-                    numeric_preprocessor=numeric_preprocessor,
-                    categorical_preprocessor=categorical_preprocessor,
-                )
-                registry[key.to_tuple()] = gpu_paths
-
-
 def _build_cpu_only_model_families() -> frozenset[str]:
     cpu_only_model_families: set[str] = set()
     for task_registry in MODEL_REGISTRY.values():
@@ -59,51 +20,30 @@ def _build_cpu_only_model_families() -> frozenset[str]:
     return frozenset(cpu_only_model_families)
 
 
-def _build_gpu_support_registry() -> dict[tuple[str, str, str, str], tuple[str, ...]]:
-    registry: dict[tuple[str, str, str, str], tuple[str, ...]] = {}
-    for task_type, model_family, gpu_routing_rule in iter_model_gpu_routing_entries():
-        _register_model_paths(
-            registry,
-            task_types=(task_type,),
-            model_family=model_family,
-            numeric_preprocessors=gpu_routing_rule.numeric_preprocessors,
-            categorical_preprocessors=gpu_routing_rule.categorical_preprocessors,
-            gpu_paths=gpu_routing_rule.gpu_backends,
-        )
-    return registry
-
-
 CPU_ONLY_MODEL_FAMILIES = _build_cpu_only_model_families()
-GPU_SUPPORT_REGISTRY = _build_gpu_support_registry()
 
 
 def is_cpu_only_model_family(model_family: str) -> bool:
     return model_family in CPU_ONLY_MODEL_FAMILIES
 
 
-def format_model_execution_routing_key(key: ModelExecutionRoutingKey) -> str:
-    return (
-        f"(task_type={key.task_type}, model_family={key.model_family}, "
-        f"numeric_preprocessor={key.numeric_preprocessor}, "
-        f"categorical_preprocessor={key.categorical_preprocessor})"
-    )
+def _find_matching_gpu_rule(
+    model_definition: ModelDefinition,
+    has_native_categorical: bool,
+) -> GpuRoutingRule | None:
+    for rule in model_definition.gpu_routing_rules:
+        if rule.requires_native_categorical == has_native_categorical:
+            return rule
+    return None
 
 
-def get_registered_gpu_execution_paths(key: ModelExecutionRoutingKey) -> tuple[str, ...]:
-    return GPU_SUPPORT_REGISTRY.get(key.to_tuple(), ())
-
-
-def describe_missing_gpu_implementation(key: ModelExecutionRoutingKey) -> str:
-    if is_cpu_only_model_family(key.model_family):
+def describe_missing_gpu_implementation(model_family: str) -> str:
+    if is_cpu_only_model_family(model_family):
         return (
-            f"{key.model_family} is intentionally CPU-only in this runtime because no maintained "
-            "official GPU implementation is registered for "
-            f"{format_model_execution_routing_key(key)}"
+            f"{model_family} is intentionally CPU-only in this runtime because no maintained "
+            "official GPU implementation is registered for this model family."
         )
-    return (
-        "No supported GPU implementation is registered for "
-        f"{format_model_execution_routing_key(key)}"
-    )
+    return f"No supported GPU implementation is registered for model_family={model_family!r}."
 
 
 def resolve_model_candidate_runtime_execution(
@@ -113,16 +53,11 @@ def resolve_model_candidate_runtime_execution(
     capabilities: RuntimeCapabilitySnapshot,
     task_type: str,
     model_family: str,
-    numeric_preprocessor: str,
-    categorical_preprocessor: str,
+    has_native_categorical: bool,
+    has_sparse_numeric: bool,
 ) -> RuntimeExecutionContext:
-    routing_key = ModelExecutionRoutingKey(
-        task_type=task_type,
-        model_family=model_family,
-        numeric_preprocessor=numeric_preprocessor,
-        categorical_preprocessor=categorical_preprocessor,
-    )
-    supported_gpu_paths = get_registered_gpu_execution_paths(routing_key)
+    model_definition = get_model_definition(task_type, model_family)
+    matched_rule = _find_matching_gpu_rule(model_definition, has_native_categorical)
 
     if requested_compute_target == "cpu":
         return RuntimeExecutionContext(
@@ -138,8 +73,7 @@ def resolve_model_candidate_runtime_execution(
     if not capabilities.gpu_available:
         if requested_compute_target == "gpu" or requested_gpu_backend != "auto":
             raise RuntimeError(
-                "Configured GPU execution is unavailable for "
-                f"{format_model_execution_routing_key(routing_key)}. "
+                f"Configured GPU execution is unavailable for model_family={model_family!r}. "
                 f"Reason: {capabilities.unavailable_reason}"
             )
         return RuntimeExecutionContext(
@@ -152,11 +86,26 @@ def resolve_model_candidate_runtime_execution(
             rapids_hooks_installed=False,
         )
 
-    if requested_gpu_backend == "native":
-        if NATIVE_GPU_BACKEND not in supported_gpu_paths:
+    if matched_rule is not None and matched_rule.rejects_sparse and has_sparse_numeric:
+        if requested_compute_target == "gpu" or requested_gpu_backend != "auto":
             raise RuntimeError(
-                "Configured gpu_backend='native' is unsupported for "
-                f"{format_model_execution_routing_key(routing_key)}."
+                f"Model family {model_family!r} does not support sparse numeric representations "
+                "with its GPU backend. Use a dense representation or run with compute_target=cpu."
+            )
+        return RuntimeExecutionContext(
+            requested_compute_target=requested_compute_target,
+            resolved_compute_target="cpu",
+            requested_gpu_backend=requested_gpu_backend,
+            resolved_gpu_backend=CPU_GPU_BACKEND,
+            capabilities=capabilities,
+            fallback_reason=f"GPU backend for {model_family!r} rejects sparse numeric input.",
+            rapids_hooks_installed=False,
+        )
+
+    if requested_gpu_backend == "native":
+        if matched_rule is None or NATIVE_GPU_BACKEND not in matched_rule.gpu_backends:
+            raise RuntimeError(
+                f"Configured gpu_backend='native' is unsupported for model_family={model_family!r}."
             )
         return RuntimeExecutionContext(
             requested_compute_target=requested_compute_target,
@@ -169,10 +118,9 @@ def resolve_model_candidate_runtime_execution(
         )
 
     if requested_gpu_backend == "patch":
-        if PATCH_GPU_BACKEND not in supported_gpu_paths:
+        if matched_rule is None or PATCH_GPU_BACKEND not in matched_rule.gpu_backends:
             raise RuntimeError(
-                "Configured gpu_backend='patch' is unsupported for "
-                f"{format_model_execution_routing_key(routing_key)}."
+                f"Configured gpu_backend='patch' is unsupported for model_family={model_family!r}."
             )
         return RuntimeExecutionContext(
             requested_compute_target=requested_compute_target,
@@ -184,12 +132,12 @@ def resolve_model_candidate_runtime_execution(
             rapids_hooks_installed=False,
         )
 
-    if supported_gpu_paths:
+    if matched_rule is not None:
         return RuntimeExecutionContext(
             requested_compute_target=requested_compute_target,
             resolved_compute_target="gpu",
             requested_gpu_backend=requested_gpu_backend,
-            resolved_gpu_backend=supported_gpu_paths[0],
+            resolved_gpu_backend=matched_rule.gpu_backends[0],
             capabilities=capabilities,
             fallback_reason=None,
             rapids_hooks_installed=False,
@@ -201,6 +149,6 @@ def resolve_model_candidate_runtime_execution(
         requested_gpu_backend=requested_gpu_backend,
         resolved_gpu_backend=CPU_GPU_BACKEND,
         capabilities=capabilities,
-        fallback_reason=describe_missing_gpu_implementation(routing_key),
+        fallback_reason=describe_missing_gpu_implementation(model_family),
         rapids_hooks_installed=False,
     )
