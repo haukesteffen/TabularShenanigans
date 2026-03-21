@@ -81,30 +81,44 @@ experiment:
     #     - 0.5
     #     - 0.5
 
-# Optional screening stage — evaluates the cross-product of representations x model_families
+# Optional screening stage — runs explicit (model_family, representation) pairs
 # with a cheap reduced-fold CV, then prints a promotion snippet for the top-k candidates.
 # screening:
-#   representations:
-#     - operators:
-#         - id: standardize_numeric
-#         - id: onehot_encode_low_cardinality_categoricals
-#           max_cardinality: 20
-#     - operators:
-#         - id: native_numeric
-#         - id: ordinal_encode_categoricals
-#     - operators:
-#         - id: native_numeric
-#         - id: frequency_encode_categoricals
-#   model_families:
-#     - lightgbm
-#     - xgboost
-#     - logistic_regression
+#   candidates:
+#     - candidate_type: model
+#       model_family: lightgbm
+#       representation:
+#         operators:
+#           - id: robust_scale_numeric
+#           - id: ordinal_encode_categoricals
+#         pruners: []
+#     - candidate_type: model
+#       model_family: xgboost
+#       representation:
+#         operators:
+#           - id: robust_scale_numeric
+#           - id: ordinal_encode_categoricals
+#         pruners: []
+#     - candidate_type: model
+#       model_family: logistic_regression
+#       representation:
+#         operators:
+#           - id: standardize_numeric
+#           - id: onehot_encode_low_cardinality_categoricals
+#         pruners: []
+#     - candidate_type: model
+#       model_family: catboost
+#       representation:
+#         operators:
+#           - id: native_numeric
+#           - id: native_categorical
+#         pruners: []
 #   cv:
 #     n_splits: 2
 #     shuffle: true
 #     random_state: 42
 #   promote_top_k: 3
-#   # Optional tuning budget for screening:
+#   # Optional shared tuning budget applied to all candidates:
 #   # optimization:
 #   #   method: optuna
 #   #   n_trials: 10

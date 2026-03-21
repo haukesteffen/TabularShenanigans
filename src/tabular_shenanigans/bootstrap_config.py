@@ -214,31 +214,32 @@ def load_bootstrap_runtime_config(path: str | Path = "config.yaml") -> Bootstrap
 
     screening_candidate_list: list[BootstrapCandidateRuntimeConfig] = []
     if screening is not None:
-        screening_representations = screening.get("representations")
-        screening_model_families = screening.get("model_families")
-        if isinstance(screening_representations, list) and isinstance(screening_model_families, list):
-            for representation in screening_representations:
-                for model_family in screening_model_families:
-                    normalized_representation = representation if isinstance(representation, dict) else None
-                    (
-                        representation_id,
-                        routing_numeric_preprocessor,
-                        routing_categorical_preprocessor,
-                        has_native_categorical,
-                        has_sparse_numeric,
-                    ) = _build_bootstrap_representation_summary(normalized_representation)
-                    screening_candidate_list.append(
-                        BootstrapCandidateRuntimeConfig(
-                            candidate_type="model",
-                            model_family=model_family if isinstance(model_family, str) else None,
-                            representation=normalized_representation,
-                            representation_id=representation_id,
-                            routing_numeric_preprocessor=routing_numeric_preprocessor,
-                            routing_categorical_preprocessor=routing_categorical_preprocessor,
-                            has_native_categorical=has_native_categorical,
-                            has_sparse_numeric=has_sparse_numeric,
-                        )
+        screening_candidates = screening.get("candidates")
+        if isinstance(screening_candidates, list):
+            for candidate in screening_candidates:
+                if not isinstance(candidate, dict):
+                    continue
+                model_family = candidate.get("model_family")
+                representation = candidate.get("representation") if isinstance(candidate.get("representation"), dict) else None
+                (
+                    representation_id,
+                    routing_numeric_preprocessor,
+                    routing_categorical_preprocessor,
+                    has_native_categorical,
+                    has_sparse_numeric,
+                ) = _build_bootstrap_representation_summary(representation)
+                screening_candidate_list.append(
+                    BootstrapCandidateRuntimeConfig(
+                        candidate_type="model",
+                        model_family=model_family if isinstance(model_family, str) else None,
+                        representation=representation,
+                        representation_id=representation_id,
+                        routing_numeric_preprocessor=routing_numeric_preprocessor,
+                        routing_categorical_preprocessor=routing_categorical_preprocessor,
+                        has_native_categorical=has_native_categorical,
+                        has_sparse_numeric=has_sparse_numeric,
                     )
+                )
 
     return BootstrapRuntimeConfig(
         compute_target=_validate_compute_target(None if runtime is None else runtime.get("compute_target")),
