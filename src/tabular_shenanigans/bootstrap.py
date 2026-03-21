@@ -110,6 +110,7 @@ def _apply_runtime_bootstrap(argv: list[str] | None) -> None:
     from tabular_shenanigans.execution_routing import resolve_model_candidate_runtime_execution
     from tabular_shenanigans.models import resolve_candidate_model_id, validate_model_output_compatibility
     from tabular_shenanigans.runtime_execution import (
+        NATIVE_GPU_BACKEND,
         PATCH_GPU_BACKEND,
         activate_runtime_acceleration,
         detect_runtime_capabilities,
@@ -170,6 +171,11 @@ def _apply_runtime_bootstrap(argv: list[str] | None) -> None:
     if resolved_backends == {PATCH_GPU_BACKEND}:
         runtime_context = activate_runtime_acceleration(selected_model_contexts[0])
         export_runtime_execution_context(runtime_context)
+        return
+
+    if NATIVE_GPU_BACKEND in resolved_backends:
+        gpu_context = next(ctx for ctx in selected_model_contexts if ctx.resolved_gpu_backend == NATIVE_GPU_BACKEND)
+        export_runtime_execution_context(gpu_context)
         return
 
 
