@@ -105,31 +105,28 @@ class RepresentationConfig(BaseModel):
 class ScreeningConfig(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
-    representations: list[RepresentationConfig] = Field(min_length=1)
-    model_families: list[str] = Field(min_length=1)
+    candidates: list["ModelCandidateConfig"] = Field(min_length=1)
     optimization: "CandidateOptimizationConfig | None" = None
     cv: CompetitionCvConfig = Field(
         default_factory=lambda: CompetitionCvConfig(n_splits=2, shuffle=True, random_state=42)
     )
     promote_top_k: int = Field(default=3, ge=1)
-    candidates: list["ModelCandidateConfig"] = Field(default_factory=list, exclude=True)
     active_candidate_index: int = Field(default=0, exclude=True, repr=False, ge=0)
 
     @model_validator(mode="before")
     @classmethod
-    def reject_user_provided_candidates(cls, values: object) -> object:
+    def reject_legacy_fields(cls, values: object) -> object:
         if not isinstance(values, dict):
             return values
-        if "candidates" in values:
+        if "representations" in values or "model_families" in values:
             raise ValueError(
-                "screening.candidates is not a user-facing field. "
-                "Use screening.representations and screening.model_families instead. "
-                "The candidates list is built automatically from the cross-product."
+                "screening.representations and screening.model_families are no longer supported. "
+                "Use screening.candidates with explicit (model_family, representation) pairs instead."
             )
         if "representation_ids" in values:
             raise ValueError(
                 "screening.representation_ids is no longer supported. "
-                "Use screening.representations."
+                "Use screening.candidates."
             )
         return values
 
@@ -361,52 +358,40 @@ class AppConfig(BaseModel):
         if self.screening is not None:
             screening = self.screening
 
-            resolved_representations = []
-            for representation in screening.representations:
-                representation_spec = representation.to_runtime_spec()
-                representation_contract = build_representation_contract(representation_spec)
-                resolved_representations.append((representation, representation_spec, representation_contract))
-
-            resolved_model_families: list[tuple[str, str]] = []
-            for raw_model_family in screening.model_families:
-                resolved_model_id = resolve_candidate_model_id(
-                    task_type=competition.task_type,
-                    model_family=raw_model_family,
-                )
-                resolved_model_families.append((raw_model_family, resolved_model_id))
-
-            expanded_candidates: list[ModelCandidateConfig] = []
-            for representation, representation_spec, representation_contract in resolved_representations:
-                for model_family, model_registry_key in resolved_model_families:
-                    try:
-                        validate_model_representation_compatibility(
-                            task_type=competition.task_type,
-                            model_id=model_registry_key,
-                            representation_contract=representation_contract,
-                        )
-                    except ValueError as exc:
-                        print(
-                            f"Screening: skipping incompatible pair "
-                            f"(model_family={model_family!r}, representation_id={representation_spec.representation_id!r}): {exc}"
-                        )
-                        continue
-                    expanded_candidates.append(
-                        ModelCandidateConfig(
-                            representation=representation.model_copy(deep=True),
-                            model_family=model_family,
-                            optimization=screening.optimization.model_copy(deep=True)
-                            if screening.optimization is not None
-                            else None,
-                        )
+            if screening.optimization is not None:
+                optimization = screening.optimization
+                if optimization.n_trials is None and optimization.timeout_seconds is None:
+                    raise ValueError(
+                        "At least one screening.optimization stopping condition is required. "
+                        "Set screening.optimization.n_trials or screening.optimization.timeout_seconds."
                     )
 
-            if not expanded_candidates:
-                raise ValueError(
-                    "screening: no valid (model_family, representation) pairs survived "
-                    "compatibility checks. All cross-product pairs were incompatible."
-                )
-
-            screening.candidates = expanded_candidates
+            for candidate_index, candidate in enumerate(screening.candidates, start=1):
+                try:
+                    representation_spec = candidate.representation.to_runtime_spec()
+                    representation_contract = build_representation_contract(representation_spec)
+                    model_registry_key = resolve_candidate_model_id(
+                        task_type=competition.task_type,
+                        model_family=candidate.model_family,
+                    )
+                    validate_model_representation_compatibility(
+                        task_type=competition.task_type,
+                        model_id=model_registry_key,
+                        representation_contract=representation_contract,
+                    )
+                    effective_optimization = candidate.optimization or screening.optimization
+                    if effective_optimization is not None:
+                        if not is_model_tunable(competition.task_type, model_registry_key):
+                            supported_tunable_model_families = get_tunable_model_ids(competition.task_type)
+                            raise ValueError(
+                                f"model_family '{candidate.model_family}' does not support "
+                                f"optimization for task_type '{competition.task_type}'. "
+                                f"Supported tunable model families: {supported_tunable_model_families}"
+                            )
+                        if candidate.optimization is None:
+                            candidate.optimization = screening.optimization.model_copy(deep=True)
+                except ValueError as exc:
+                    raise ValueError(f"screening.candidates[{candidate_index}] is invalid: {exc}") from exc
 
             if screening.active_candidate_index >= len(screening.candidates):
                 raise ValueError(
@@ -440,27 +425,6 @@ class AppConfig(BaseModel):
                     "Configured screening candidates must derive distinct candidate_id values. "
                     f"Duplicates: {duplicate_summary}"
                 )
-
-            if screening.optimization is not None:
-                optimization = screening.optimization
-                if optimization.n_trials is None and optimization.timeout_seconds is None:
-                    raise ValueError(
-                        "At least one screening.optimization stopping condition is required. "
-                        "Set screening.optimization.n_trials or screening.optimization.timeout_seconds."
-                    )
-                for model_family, model_registry_key in resolved_model_families:
-                    has_expanded_candidate = any(
-                        c.model_family == model_family for c in expanded_candidates
-                    )
-                    if not has_expanded_candidate:
-                        continue
-                    if not is_model_tunable(competition.task_type, model_registry_key):
-                        supported_tunable_model_families = get_tunable_model_ids(competition.task_type)
-                        raise ValueError(
-                            f"Configured screening model_family '{model_family}' does not support "
-                            f"optimization for task_type '{competition.task_type}'. Supported tunable "
-                            f"model families: {supported_tunable_model_families}"
-                        )
         return self
 
     @property

@@ -86,7 +86,7 @@ Optional top-level section: `screening`.
 
 `train` drains `experiment.candidates` in order unless narrowed with `--candidate-id` or `--index`. `submit --index <n>` uses a 1-based index into this list.
 
-`screening` evaluates the valid cross-product of `screening.representations` and `screening.model_families`, then prints a copy/paste-ready YAML snippet for the top `screening.promote_top_k` candidates to paste into `experiment.candidates`.
+`screening` evaluates the explicit list of `screening.candidates`, then prints a copy/paste-ready YAML snippet for the top `screening.promote_top_k` candidates to paste into `experiment.candidates`.
 
 #### Candidate Shapes
 
@@ -121,13 +121,12 @@ Hard-invalid: representations with `native_categorical` and any `model_family` o
 
 | Key | Required | Notes |
 | --- | --- | --- |
-| `representations` | yes | explicit representation specs; screening expands these against `model_families` |
-| `model_families` | yes | model families to screen against `representations` |
-| `optimization` | no | optional shared tuning budget applied to each valid screening candidate |
+| `candidates` | yes | explicit list of `(model_family, representation)` pairs to screen |
+| `optimization` | no | optional shared tuning budget applied to all candidates; per-candidate `optimization` overrides this |
 | `cv.n_splits` | no | defaults to `2` |
 | `cv.shuffle` | no | defaults to `true` |
 | `cv.random_state` | no | defaults to `42` |
-| `promote_top_k` | no | defaults to `3`; must be `<=` the number of valid cross-product pairs |
+| `promote_top_k` | no | defaults to `3`; must be `<=` the number of configured candidates |
 
 ## Commands
 
