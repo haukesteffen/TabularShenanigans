@@ -105,13 +105,10 @@ class RepresentationConfig(BaseModel):
 class ScreeningConfig(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
-    candidates: list["ModelCandidateConfig"] = Field(min_length=1)
-    optimization: "CandidateOptimizationConfig | None" = None
     cv: CompetitionCvConfig = Field(
         default_factory=lambda: CompetitionCvConfig(n_splits=2, shuffle=True, random_state=42)
     )
-    promote_top_k: int = Field(default=3, ge=1)
-    active_candidate_index: int = Field(default=0, exclude=True, repr=False, ge=0)
+    optimization: "CandidateOptimizationConfig | None" = None
 
     @model_validator(mode="before")
     @classmethod
@@ -121,18 +118,27 @@ class ScreeningConfig(BaseModel):
         if "representations" in values or "model_families" in values:
             raise ValueError(
                 "screening.representations and screening.model_families are no longer supported. "
-                "Use screening.candidates with explicit (model_family, representation) pairs instead."
+                "Screening candidates now live in experiment.candidates. "
+                "Use screening only for mode overrides (cv, optimization)."
             )
         if "representation_ids" in values:
             raise ValueError(
                 "screening.representation_ids is no longer supported. "
-                "Use screening.candidates."
+                "Screening candidates now live in experiment.candidates."
+            )
+        if "candidates" in values:
+            raise ValueError(
+                "screening.candidates is no longer supported. "
+                "All candidates now live in experiment.candidates. "
+                "Use screening only for mode overrides (cv, optimization). "
+                "Run with: uv run python main.py train --screening"
+            )
+        if "promote_top_k" in values:
+            raise ValueError(
+                "screening.promote_top_k is no longer supported. "
+                "The promotion snippet has been removed."
             )
         return values
-
-    @property
-    def candidate(self) -> "ModelCandidateConfig":
-        return self.candidates[self.active_candidate_index]
 
 
 class CandidateOptimizationConfig(BaseModel):
@@ -357,7 +363,6 @@ class AppConfig(BaseModel):
 
         if self.screening is not None:
             screening = self.screening
-
             if screening.optimization is not None:
                 optimization = screening.optimization
                 if optimization.n_trials is None and optimization.timeout_seconds is None:
@@ -365,65 +370,32 @@ class AppConfig(BaseModel):
                         "At least one screening.optimization stopping condition is required. "
                         "Set screening.optimization.n_trials or screening.optimization.timeout_seconds."
                     )
-
-            for candidate_index, candidate in enumerate(screening.candidates, start=1):
-                try:
-                    representation_spec = candidate.representation.to_runtime_spec()
-                    representation_contract = build_representation_contract(representation_spec)
+                for candidate_index, candidate in enumerate(self.experiment.candidates, start=1):
+                    if not isinstance(candidate, ModelCandidateConfig):
+                        continue
+                    if candidate.optimization is not None:
+                        continue
                     model_registry_key = resolve_candidate_model_id(
                         task_type=competition.task_type,
                         model_family=candidate.model_family,
                     )
-                    validate_model_representation_compatibility(
-                        task_type=competition.task_type,
-                        model_id=model_registry_key,
-                        representation_contract=representation_contract,
-                    )
-                    effective_optimization = candidate.optimization or screening.optimization
-                    if effective_optimization is not None:
-                        if not is_model_tunable(competition.task_type, model_registry_key):
-                            supported_tunable_model_families = get_tunable_model_ids(competition.task_type)
-                            raise ValueError(
-                                f"model_family '{candidate.model_family}' does not support "
-                                f"optimization for task_type '{competition.task_type}'. "
-                                f"Supported tunable model families: {supported_tunable_model_families}"
-                            )
-                        if candidate.optimization is None:
-                            candidate.optimization = screening.optimization.model_copy(deep=True)
-                except ValueError as exc:
-                    raise ValueError(f"screening.candidates[{candidate_index}] is invalid: {exc}") from exc
-
-            if screening.active_candidate_index >= len(screening.candidates):
+                    if not is_model_tunable(competition.task_type, model_registry_key):
+                        supported_tunable_model_families = get_tunable_model_ids(competition.task_type)
+                        raise ValueError(
+                            f"screening.optimization would apply to experiment.candidates[{candidate_index}] "
+                            f"(model_family='{candidate.model_family}'), but this model does not support "
+                            f"optimization for task_type '{competition.task_type}'. "
+                            f"Supported tunable model families: {supported_tunable_model_families}. "
+                            "Either remove screening.optimization, add per-candidate optimization "
+                            "to override it, or remove the untunable candidate."
+                        )
+            has_model_candidate = any(
+                isinstance(c, ModelCandidateConfig) for c in self.experiment.candidates
+            )
+            if not has_model_candidate:
                 raise ValueError(
-                    "screening.active_candidate_index must reference a valid screening candidate. "
-                    f"Got {screening.active_candidate_index} for {len(screening.candidates)} candidates."
-                )
-
-            if screening.promote_top_k > len(screening.candidates):
-                raise ValueError(
-                    "screening.promote_top_k cannot exceed the number of valid screening candidates. "
-                    f"Got promote_top_k={screening.promote_top_k} for "
-                    f"{len(screening.candidates)} valid candidates."
-                )
-
-            resolved_screening_candidate_ids: dict[str, list[int]] = {}
-            for candidate_index, candidate in enumerate(screening.candidates, start=1):
-                resolved_candidate_id = self.resolve_screening_candidate_id_for_index(candidate_index - 1)
-                resolved_screening_candidate_ids.setdefault(resolved_candidate_id, []).append(candidate_index)
-
-            duplicate_screening_candidate_ids = {
-                candidate_id: candidate_indices
-                for candidate_id, candidate_indices in resolved_screening_candidate_ids.items()
-                if len(candidate_indices) > 1
-            }
-            if duplicate_screening_candidate_ids:
-                duplicate_summary = "; ".join(
-                    f"{candidate_id} at screening candidates {candidate_indices}"
-                    for candidate_id, candidate_indices in sorted(duplicate_screening_candidate_ids.items())
-                )
-                raise ValueError(
-                    "Configured screening candidates must derive distinct candidate_id values. "
-                    f"Duplicates: {duplicate_summary}"
+                    "screening requires at least one model candidate in experiment.candidates. "
+                    "Blend candidates are not supported in screening mode."
                 )
         return self
 
@@ -440,12 +412,6 @@ class AppConfig(BaseModel):
         return len(self.experiment.candidates)
 
     @property
-    def screening_candidate_count(self) -> int:
-        if self.screening is None:
-            return 0
-        return len(self.screening.candidates)
-
-    @property
     def active_candidate_index(self) -> int:
         return self.experiment.active_candidate_index
 
@@ -458,36 +424,17 @@ class AppConfig(BaseModel):
             return self.experiment.candidate
         return self.experiment.candidates[candidate_index]
 
-    def get_screening_candidate(self, candidate_index: int | None = None) -> ModelCandidateConfig:
-        if self.screening is None:
-            raise ValueError("screening is not configured in config.yaml.")
-        if candidate_index is None:
-            return self.screening.candidate
-        return self.screening.candidates[candidate_index]
-
-    def with_candidate_index(self, candidate_index: int) -> "AppConfig":
+    def with_candidate_index(self, candidate_index: int, screening: bool = False) -> "AppConfig":
         if candidate_index < 0 or candidate_index >= self.candidate_count:
             raise ValueError(
                 f"Candidate index must be between 0 and {self.candidate_count - 1}. Got {candidate_index}."
             )
         copied_config = self.model_copy(deep=True)
         copied_config.experiment.active_candidate_index = candidate_index
-        return copied_config
-
-    def with_screening_candidate_index(self, candidate_index: int) -> "AppConfig":
-        if self.screening is None:
-            raise ValueError("screening is not configured in config.yaml.")
-        if candidate_index < 0 or candidate_index >= self.screening_candidate_count:
-            raise ValueError(
-                f"Screening candidate index must be between 0 and {self.screening_candidate_count - 1}. "
-                f"Got {candidate_index}."
-            )
-        copied_config = self.model_copy(deep=True)
-        copied_config.screening.active_candidate_index = candidate_index
-        copied_config.experiment.candidates = [copied_config.screening.candidate]
-        copied_config.experiment.active_candidate_index = 0
-        copied_config.competition.cv = copied_config.screening.cv.model_copy(deep=True)
-        copied_config.active_run_stage = "screening"
+        if screening:
+            copied_config.active_run_stage = "screening"
+            if self.screening is not None:
+                copied_config.competition.cv = self.screening.cv.model_copy(deep=True)
         return copied_config
 
     def resolve_candidate_indices(
@@ -521,50 +468,10 @@ class AppConfig(BaseModel):
 
         return list(range(self.candidate_count))
 
-    def resolve_screening_candidate_indices(
-        self,
-        candidate_id: str | None = None,
-        index: int | None = None,
-        require_explicit: bool = False,
-    ) -> list[int]:
-        if self.screening is None:
-            raise ValueError("screening is not configured in config.yaml.")
-        if candidate_id is not None and index is not None:
-            raise ValueError("Use either --candidate-id or --index, not both.")
-
-        if index is not None:
-            resolved_index = index - 1
-            if resolved_index < 0 or resolved_index >= self.screening_candidate_count:
-                raise ValueError(
-                    f"--index must be between 1 and {self.screening_candidate_count}. Got {index}."
-                )
-            return [resolved_index]
-
-        if candidate_id is not None:
-            configured_candidate_ids = self.configured_screening_candidate_ids
-            try:
-                return [configured_candidate_ids.index(candidate_id)]
-            except ValueError as exc:
-                raise ValueError(
-                    f"Configured screening candidate_id '{candidate_id}' was not found in config.yaml."
-                ) from exc
-
-        if require_explicit:
-            raise ValueError("Select a configured screening candidate with --candidate-id or --index.")
-
-        return list(range(self.screening_candidate_count))
-
     def resolve_model_registry_key_for_index(self, candidate_index: int | None = None) -> str:
         candidate = self.get_candidate(candidate_index)
         if not isinstance(candidate, ModelCandidateConfig):
             raise ValueError("resolved_model_registry_key is only available for model candidates.")
-        return resolve_candidate_model_id(
-            task_type=self.competition.task_type,
-            model_family=candidate.model_family,
-        )
-
-    def resolve_screening_model_registry_key_for_index(self, candidate_index: int | None = None) -> str:
-        candidate = self.get_screening_candidate(candidate_index)
         return resolve_candidate_model_id(
             task_type=self.competition.task_type,
             model_family=candidate.model_family,
@@ -579,12 +486,6 @@ class AppConfig(BaseModel):
     def resolve_representation_contract_for_index(self, candidate_index: int | None = None):
         return build_representation_contract(self.resolve_representation_spec_for_index(candidate_index))
 
-    def resolve_screening_representation_spec_for_index(self, candidate_index: int | None = None):
-        candidate = self.get_screening_candidate(candidate_index)
-        return candidate.representation.to_runtime_spec()
-
-    def resolve_screening_representation_contract_for_index(self, candidate_index: int | None = None):
-        return build_representation_contract(self.resolve_screening_representation_spec_for_index(candidate_index))
 
     def resolve_blend_weights_for_index(self, candidate_index: int | None = None) -> list[float]:
         candidate = self.get_candidate(candidate_index)
@@ -709,29 +610,6 @@ class AppConfig(BaseModel):
             fingerprint_payload=fingerprint_payload,
         )
 
-    def resolve_screening_candidate_id_for_index(self, candidate_index: int | None = None) -> str:
-        competition = self.competition
-        candidate = self.get_screening_candidate(candidate_index)
-        optimization_payload: dict[str, object] | None = None
-        if candidate.optimization is not None:
-            optimization_payload = candidate.optimization.model_dump(mode="python")
-        fingerprint_payload = {
-            "competition": _competition_identity_fingerprint_payload(competition),
-            "candidate": {
-                "representation_id": candidate.representation_id,
-                "representation": candidate.representation.to_payload(),
-                "model_family": candidate.model_family,
-                "model_registry_key": self.resolve_screening_model_registry_key_for_index(candidate_index),
-                "model_params": candidate.model_params,
-                "optimization": optimization_payload,
-            },
-        }
-        return build_model_candidate_id(
-            model_registry_key=self.resolve_screening_model_registry_key_for_index(candidate_index),
-            representation_id=candidate.representation_id,
-            fingerprint_payload=fingerprint_payload,
-        )
-
     @property
     def resolved_model_registry_key(self) -> str:
         return self.resolve_model_registry_key_for_index()
@@ -752,18 +630,6 @@ class AppConfig(BaseModel):
     def resolved_candidate_id(self) -> str:
         return self.resolve_candidate_id_for_index()
 
-    @property
-    def configured_screening_candidate_ids(self) -> list[str]:
-        return [
-            self.resolve_screening_candidate_id_for_index(candidate_index)
-            for candidate_index in range(self.screening_candidate_count)
-        ]
-
-    @property
-    def resolved_screening_candidate_id(self) -> str:
-        if self.screening is None:
-            raise ValueError("screening is not configured in config.yaml.")
-        return self.resolve_screening_candidate_id_for_index(self.screening.active_candidate_index)
 
 
 def load_config(path: str = "config.yaml") -> AppConfig:

@@ -7,7 +7,7 @@ For setup, commands, and config reference, see [USAGE.md](/USAGE.md).
 ## System Flow
 
 1. Enter the bootstrap entrypoint before importing runtime modules that depend on `pandas` or `sklearn`.
-2. Read `experiment.runtime.compute_target` and the optional advanced `experiment.runtime.gpu_backend` override from repository-root `config.yaml`, resolve hardware capability separately from tuple routing, inspect the selected train or screening candidates before importing the runtime stack, install RAPIDS hooks only when the selected batch resolves entirely to `gpu_patch`, and route GPU-capable booster families onto their GPU parameter paths. Screening config uses explicit `screening.candidates`; each candidate is validated for compatibility and fails hard if incompatible.
+2. Read `experiment.runtime.compute_target` and the optional advanced `experiment.runtime.gpu_backend` override from repository-root `config.yaml`, resolve hardware capability separately from tuple routing, inspect the selected train candidates before importing the runtime stack, install RAPIDS hooks only when the selected batch resolves entirely to `gpu_patch`, and route GPU-capable booster families onto their GPU parameter paths.
 3. Load and validate the repository-root `config.yaml`.
 4. Normalize and validate `competition.task_type`, `competition.primary_metric`, and the full `experiment.candidates` contract.
 5. Resolve the MLflow tracking URI from `experiment.tracking.tracking_uri`.
@@ -24,7 +24,7 @@ For setup, commands, and config reference, see [USAGE.md](/USAGE.md).
     - `context/competition.json`
     - `context/folds.csv`
     - `candidate/*`
-15. For screening, create one screening MLflow run attempt in `<competition_slug>__screening` and upload the staged bundle.
+15. For `train --screening`, create one screening MLflow run attempt in `<competition_slug>__screening` and upload the staged bundle.
 16. For canonical training, create one canonical candidate MLflow run attempt in `<competition_slug>__candidates` and upload the staged bundle.
 17. Treat only a `FINISHED` canonical candidate run with the full candidate artifact contract as the canonical run for that `candidate_id`.
 18. For real Kaggle submissions, download the explicitly selected canonical candidate from MLflow, validate `test_predictions.csv` against `sample_submission.csv`, submit `submission.csv`, and create a submission run in `<competition_slug>__submissions`.
@@ -38,8 +38,8 @@ For setup, commands, and config reference, see [USAGE.md](/USAGE.md).
 - Failed or incomplete candidate attempts are non-canonical and may remain in MLflow until cleaned up.
 - Starting a new canonical attempt while another canonical run for the same `candidate_id` is still active is a hard error.
 - `prepare` is not a persisted source of truth anymore.
-- `screening` writes non-canonical screening runs into the screening experiment.
-- Re-screening the same logical candidate is expected behavior and creates another screening run; screening runs are exploratory history, not canonical state.
+- `train --screening` writes non-canonical screening runs into the screening experiment.
+- Re-screening the same candidate is expected behavior and creates another screening run; screening runs are exploratory history, not canonical state.
 - `train` and `blend` must produce exactly one canonical candidate run keyed by `candidate_id` in the candidates experiment.
 - Candidate runs should upload `logs/runtime.log` on both success and failure once the run exists.
 - `submit` resolves candidates from MLflow, not from local artifact directories.
@@ -57,7 +57,7 @@ For setup, commands, and config reference, see [USAGE.md](/USAGE.md).
 - MLflow is the canonical experiment store.
 - Three MLflow experiments per `competition.slug`: screening, candidates, submissions.
 - One canonical top-level MLflow candidate run per `candidate_id` in the candidates experiment.
-- Screening runs live in the screening experiment and are not canonical.
+- `train --screening` runs live in the screening experiment and are not canonical.
 - Submission runs live in the submissions experiment and track leaderboard events independently of candidate runs.
 - Tracking schema v4 changes candidate-id derivation versus archival schema-v3 data; existing experiments should be treated as read-only history rather than mixed with new runs.
 - Failed or incomplete retry attempts may coexist as non-canonical top-level runs for the same canonical `candidate_id`.
@@ -76,7 +76,7 @@ Each candidate run is named with `candidate_id`.
 
 ### Screening Runs
 
-Screening runs use:
+`train --screening` creates screening runs with:
 - `run_kind=screening`
 - `tracking_schema_version=5`
 

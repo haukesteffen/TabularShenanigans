@@ -74,7 +74,6 @@ class BootstrapRuntimeConfig:
     gpu_backend: str = "auto"
     task_type: str | None = None
     experiment_candidates: tuple[BootstrapCandidateRuntimeConfig, ...] = ()
-    screening_candidates: tuple[BootstrapCandidateRuntimeConfig, ...] = ()
 
 
 def _validate_compute_target(value: object) -> str:
@@ -180,33 +179,9 @@ def load_bootstrap_runtime_config(path: str | Path = "config.yaml") -> Bootstrap
     if candidates is not None:
         experiment_candidate_list = _coerce_bootstrap_candidate_list(candidates, "experiment.candidates")
 
-    screening_candidate_list: list[BootstrapCandidateRuntimeConfig] = []
-    if screening is not None:
-        screening_candidates = screening.get("candidates")
-        if isinstance(screening_candidates, list):
-            for candidate in screening_candidates:
-                if not isinstance(candidate, dict):
-                    continue
-                model_family = candidate.get("model_family")
-                representation = candidate.get("representation") if isinstance(candidate.get("representation"), dict) else None
-                representation_id, has_native_categorical, has_sparse_numeric = (
-                    _build_bootstrap_representation_summary(representation)
-                )
-                screening_candidate_list.append(
-                    BootstrapCandidateRuntimeConfig(
-                        candidate_type="model",
-                        model_family=model_family if isinstance(model_family, str) else None,
-                        representation=representation,
-                        representation_id=representation_id,
-                        has_native_categorical=has_native_categorical,
-                        has_sparse_numeric=has_sparse_numeric,
-                    )
-                )
-
     return BootstrapRuntimeConfig(
         compute_target=_validate_compute_target(None if runtime is None else runtime.get("compute_target")),
         gpu_backend=_validate_gpu_backend(None if runtime is None else runtime.get("gpu_backend")),
         task_type=None if competition is None else competition.get("task_type"),
         experiment_candidates=tuple(experiment_candidate_list),
-        screening_candidates=tuple(screening_candidate_list),
     )

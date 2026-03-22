@@ -30,7 +30,7 @@ def _parse_bootstrap_cli_selection(argv: list[str] | None) -> BootstrapCliSelect
     if not argv:
         return BootstrapCliSelection(stage=None, candidate_index=None, candidate_id_requested=False)
 
-    known_stages = {"fetch", "prepare", "eda", "train", "screening", "submit", "refresh-submissions"}
+    known_stages = {"fetch", "prepare", "eda", "train", "submit", "refresh-submissions"}
     stage = argv[0] if argv[0] in known_stages else None
     option_argv = argv[1:] if stage is not None else argv
     index_value = _extract_option_value(option_argv, "--index")
@@ -44,7 +44,7 @@ def _parse_bootstrap_cli_selection(argv: list[str] | None) -> BootstrapCliSelect
 
 
 def _stage_uses_training_runtime(stage: str | None) -> bool:
-    return stage in {None, "train", "screening"}
+    return stage in {None, "train"}
 
 
 def _resolve_selected_candidate_indices(
@@ -63,43 +63,18 @@ def _resolve_selected_candidate_indices(
 
 
 def _raise_mixed_patch_runtime_error(selection: BootstrapCliSelection) -> None:
-    stage_name = "screening" if selection.stage == "screening" else "train"
     if selection.candidate_id_requested:
         raise RuntimeError(
             "This config mixes gpu_patch candidates with non-gpu_patch candidates. "
-            f"Bootstrap happens before --candidate-id can be resolved safely, so this {stage_name} invocation cannot "
+            "Bootstrap happens before --candidate-id can be resolved safely, so this train invocation cannot "
             "install RAPIDS hooks without risking the wrong process-wide runtime. "
-            f"Use `uv run python main.py {stage_name} --index <n>` or split the batch."
+            "Use `uv run python main.py train --index <n>` or split the batch."
         )
     raise RuntimeError(
         "Batch execution cannot mix gpu_patch candidates with non-gpu_patch candidates in one process because "
-        f"RAPIDS hook installation is process-global. Split the run with `uv run python main.py {stage_name} --index <n>` "
+        "RAPIDS hook installation is process-global. Split the run with `uv run python main.py train --index <n>` "
         "or separate invocations."
     )
-
-
-def _filter_compatible_screening_candidates(
-    screening_candidates: tuple,
-    task_type: str,
-    resolve_model_id_fn,
-    validate_compatibility_fn,
-) -> tuple:
-    filtered = []
-    for candidate in screening_candidates:
-        if candidate.model_family is None or candidate.representation is None:
-            continue
-        try:
-            model_id = resolve_model_id_fn(task_type=task_type, model_family=candidate.model_family)
-            validate_compatibility_fn(
-                task_type=task_type,
-                model_id=model_id,
-                has_native_categorical=candidate.has_native_categorical,
-                has_sparse_numeric=candidate.has_sparse_numeric,
-            )
-        except ValueError:
-            continue
-        filtered.append(candidate)
-    return tuple(filtered)
 
 
 def _apply_runtime_bootstrap(argv: list[str] | None) -> None:
@@ -108,7 +83,6 @@ def _apply_runtime_bootstrap(argv: list[str] | None) -> None:
 
     from tabular_shenanigans.bootstrap_config import load_bootstrap_runtime_config
     from tabular_shenanigans.execution_routing import resolve_model_candidate_runtime_execution
-    from tabular_shenanigans.models import resolve_candidate_model_id, validate_model_output_compatibility
     from tabular_shenanigans.runtime_execution import (
         NATIVE_GPU_BACKEND,
         PATCH_GPU_BACKEND,
@@ -125,15 +99,7 @@ def _apply_runtime_bootstrap(argv: list[str] | None) -> None:
     if runtime_config.task_type is None:
         return
 
-    if selection.stage == "screening":
-        configured_candidates = _filter_compatible_screening_candidates(
-            runtime_config.screening_candidates,
-            runtime_config.task_type,
-            resolve_candidate_model_id,
-            validate_model_output_compatibility,
-        )
-    else:
-        configured_candidates = runtime_config.experiment_candidates
+    configured_candidates = runtime_config.experiment_candidates
 
     selected_candidate_indices = _resolve_selected_candidate_indices(configured_candidates, selection)
     if not selected_candidate_indices:

@@ -603,14 +603,14 @@ def _candidate_run_params(config: AppConfig, manifest: dict[str, object]) -> dic
     if config.is_model_candidate:
         params["runtime__preprocessing_backend"] = config.preprocessing_execution_plan.preprocessing_backend
         params.update(_model_logging_fields(manifest))
-        optimization = candidate.optimization
-        if optimization is not None:
+        optimization = manifest.get("optimization_config")
+        if isinstance(optimization, Mapping):
             params.update(
                 {
-                    "opt__method": optimization.method,
-                    "opt__n_trials": optimization.n_trials,
-                    "opt__timeout_seconds": optimization.timeout_seconds,
-                    "opt__random_state": optimization.random_state,
+                    "opt__method": optimization.get("method"),
+                    "opt__n_trials": optimization.get("n_trials"),
+                    "opt__timeout_seconds": optimization.get("timeout_seconds"),
+                    "opt__random_state": optimization.get("random_state"),
                 }
             )
         return params

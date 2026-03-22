@@ -78,6 +78,7 @@ def _build_optimization_summary(
     study: optuna.Study,
     study_id: str,
     optimization_config_snapshot: dict[str, object],
+    optimization_config: dict[str, object],
     tuning_model_spec: TrainingModelSpec,
     estimator_name: str,
     representation_id: str,
@@ -85,7 +86,6 @@ def _build_optimization_summary(
     best_parameter_overrides: dict[str, object],
 ) -> dict[str, object]:
     competition = config.competition
-    candidate = config.experiment.candidate
     best_trial = study.best_trial
     return {
         "artifact_type": "candidate_optimization",
@@ -95,7 +95,8 @@ def _build_optimization_summary(
         "candidate_id": config.resolved_candidate_id,
         "task_type": competition.task_type,
         "primary_metric": competition.primary_metric,
-        "optimization_method": candidate.optimization.method,
+        "optimization_method": optimization_config["method"],
+        "optimization_config": optimization_config,
         "optimization_direction": study.direction.name.lower(),
         "config_snapshot": optimization_config_snapshot,
         "model_registry_key": tuning_model_spec.model_registry_key,
@@ -118,15 +119,17 @@ def run_optimization(
     dataset_context: CompetitionDatasetContext,
     candidate_run: CandidateRunRef,
     prepared_training_context: PreparedTrainingContext | None = None,
+    optimization_override: object | None = None,
 ) -> OptimizationResult:
     if not config.is_model_candidate:
         raise ValueError("Optimization only supports selected candidate_type=model.")
 
     competition = config.competition
     candidate = config.experiment.candidate
-    optimization = candidate.optimization
+    optimization = optimization_override if optimization_override is not None else candidate.optimization
     if optimization is None:
         raise ValueError("Optimization requires a candidate.optimization block in config.yaml.")
+    optimization_config = optimization.model_dump(mode="python")
 
     task_type = competition.task_type
     primary_metric = competition.primary_metric
@@ -234,6 +237,7 @@ def run_optimization(
         study=study,
         study_id=study_id,
         optimization_config_snapshot=optimization_config_snapshot,
+        optimization_config=optimization_config,
         tuning_model_spec=tuning_model_spec,
         estimator_name=model_definition.model_name,
         representation_id=training_context.representation_id,
