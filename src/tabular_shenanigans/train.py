@@ -107,6 +107,7 @@ def _build_candidate_manifest(
     config_fingerprint: str,
     training_context: PreparedTrainingContext,
     tuning_provenance: dict[str, object] | None,
+    optimization_config: dict[str, object] | None,
     mlflow_run_id: str,
 ) -> dict[str, object]:
     competition = config.competition
@@ -147,6 +148,7 @@ def _build_candidate_manifest(
         "test_rows": int(training_context.x_test_features.shape[0]),
         "test_cols": int(training_context.x_test_features.shape[1]),
         "tuning_provenance": tuning_provenance,
+        "optimization_config": optimization_config,
         "runtime_execution": runtime_execution_context.to_dict(),
     }
     manifest.update(
@@ -230,6 +232,7 @@ def run_training(
     tuning_provenance: dict[str, object] | None = None,
     optimization_artifacts: OptimizationArtifacts | None = None,
     prepared_training_context: PreparedTrainingContext | None = None,
+    optimization_config: dict[str, object] | None = None,
 ) -> CandidateRunRef:
     if not config.is_model_candidate:
         raise ValueError("run_training only supports selected candidate_type=model.")
@@ -289,6 +292,7 @@ def run_training(
         config_fingerprint=config_fingerprint,
         training_context=training_context,
         tuning_provenance=tuning_provenance,
+        optimization_config=optimization_config,
         mlflow_run_id=candidate_run.run_id,
     )
     runtime_profile = dict(evaluation_artifacts.runtime_profile or {})
@@ -325,6 +329,7 @@ def run_training(
 def run_training_workflow(
     config: AppConfig,
     dataset_context: CompetitionDatasetContext,
+    optimization_override: object | None = None,
 ) -> CandidateRunRef:
     with use_runtime_execution_context(config.runtime_execution_context):
         competition = config.competition
@@ -339,6 +344,8 @@ def run_training_workflow(
             candidate_id=config.resolved_candidate_id,
             candidate_type=candidate.candidate_type,
         )
+        effective_optimization = optimization_override if optimization_override is not None else candidate.optimization
+        optimization_config = None if effective_optimization is None else effective_optimization.model_dump(mode="python")
         run_status = "FAILED"
 
         with tempfile.TemporaryDirectory(prefix="tabular-shenanigans-candidate-") as temp_dir:
@@ -354,12 +361,13 @@ def run_training_workflow(
                         mlflow_run_id=candidate_run.run_id,
                     )
                     try:
-                        if candidate.optimization is None:
+                        if effective_optimization is None:
                             run_training(
                                 config=config,
                                 dataset_context=dataset_context,
                                 candidate_run=candidate_run,
                                 bundle_root=bundle_root,
+                                optimization_config=optimization_config,
                             )
                         else:
                             from tabular_shenanigans.tune import run_optimization
@@ -373,6 +381,7 @@ def run_training_workflow(
                                 dataset_context=dataset_context,
                                 candidate_run=candidate_run,
                                 prepared_training_context=prepared_training_context,
+                                optimization_override=effective_optimization,
                             )
                             run_training(
                                 config=config,
@@ -386,6 +395,7 @@ def run_training_workflow(
                                     trials_df=optimization_result.trials_df,
                                 ),
                                 prepared_training_context=prepared_training_context,
+                                optimization_config=optimization_config,
                             )
                             print(
                                 f"Optimization complete: best_trial={optimization_result.best_trial_number}, "

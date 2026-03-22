@@ -7,11 +7,6 @@ from tabular_shenanigans.competition import prepare_competition
 from tabular_shenanigans.config import AppConfig, load_config
 from tabular_shenanigans.data import fetch_competition_data, load_competition_dataset_context
 from tabular_shenanigans.eda import run_eda
-from tabular_shenanigans.screening import (
-    ScreeningBatchSummary,
-    print_screening_batch_summary,
-    run_screening_batch,
-)
 from tabular_shenanigans.submit import run_submission, run_submission_refresh
 from tabular_shenanigans.training_orchestration import (
     TrainingBatchSummary,
@@ -49,17 +44,10 @@ def build_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="Skip configured candidates that already exist in MLflow.",
     )
-
-    screening_parser = subparsers.add_parser("screening", help="Run screening candidates into MLflow.")
-    screening_selector_group = screening_parser.add_mutually_exclusive_group()
-    screening_selector_group.add_argument(
-        "--candidate-id",
-        help="Optional configured screening candidate_id from config.yaml. Omit to screen all configured candidates.",
-    )
-    screening_selector_group.add_argument(
-        "--index",
-        type=int,
-        help="Optional 1-based configured screening candidate index from config.yaml.",
+    train_parser.add_argument(
+        "--screening",
+        action="store_true",
+        help="Run in screening mode with reduced CV folds and optional optimization overrides.",
     )
 
     subparsers.add_parser(
@@ -135,17 +123,16 @@ def _print_resolved_setup(config: AppConfig) -> None:
             candidate_index=candidate_index + 1,
         )
     if config.screening is not None:
-        print(
-            "Resolved screening setup: "
-            f"configured_candidates={config.screening_candidate_count}, "
-            f"folds={config.screening.cv.n_splits}, "
-            f"promote_top_k={config.screening.promote_top_k}"
-        )
-        for candidate_index in range(config.screening_candidate_count):
-            _print_candidate_setup(
-                candidate_config=config.with_screening_candidate_index(candidate_index),
-                candidate_index=candidate_index + 1,
-            )
+        screening_line = f"Resolved screening overrides: folds={config.screening.cv.n_splits}"
+        if config.screening.optimization is not None:
+            opt = config.screening.optimization
+            opt_parts = []
+            if opt.n_trials is not None:
+                opt_parts.append(f"n_trials={opt.n_trials}")
+            if opt.timeout_seconds is not None:
+                opt_parts.append(f"timeout_seconds={opt.timeout_seconds}")
+            screening_line = f"{screening_line}, optimization=({', '.join(opt_parts)})"
+        print(screening_line)
 
 
 def _ensure_data_ready(config: AppConfig) -> Path:
@@ -195,6 +182,7 @@ def _run_train_stage(
     candidate_id: str | None = None,
     index: int | None = None,
     skip_existing: bool = False,
+    screening: bool = False,
 ) -> TrainingBatchSummary:
     if dataset_context is None:
         _ensure_data_ready(config)
@@ -205,36 +193,13 @@ def _run_train_stage(
         candidate_id=candidate_id,
         index=index,
         skip_existing=skip_existing,
+        screening=screening,
     )
-    print_training_batch_summary(batch_summary)
+    print_training_batch_summary(config=config, summary=batch_summary, screening=screening)
+    mode_label = "screening" if screening else "train"
     if batch_summary.failed_count > 0:
         raise RuntimeError(
-            f"{batch_summary.failed_count} candidate(s) failed during train. See the batch summary above."
-        )
-    return batch_summary
-
-
-def _run_screening_stage(
-    config: AppConfig,
-    dataset_context=None,
-    candidate_id: str | None = None,
-    index: int | None = None,
-) -> ScreeningBatchSummary:
-    if config.screening is None:
-        raise ValueError("screening is not configured in config.yaml.")
-    if dataset_context is None:
-        _ensure_data_ready(config)
-        dataset_context = _load_shared_dataset_context(config)
-    batch_summary = run_screening_batch(
-        config=config,
-        dataset_context=dataset_context,
-        candidate_id=candidate_id,
-        index=index,
-    )
-    print_screening_batch_summary(config=config, summary=batch_summary)
-    if batch_summary.failed_count > 0:
-        raise RuntimeError(
-            f"{batch_summary.failed_count} candidate(s) failed during screening. See the batch summary above."
+            f"{batch_summary.failed_count} candidate(s) failed during {mode_label}. See the batch summary above."
         )
     return batch_summary
 
@@ -351,14 +316,7 @@ def main(argv: list[str] | None = None) -> None:
             candidate_id=args.candidate_id,
             index=args.index,
             skip_existing=args.skip_existing,
-        )
-        return
-
-    if args.stage == "screening":
-        _run_screening_stage(
-            config=config,
-            candidate_id=args.candidate_id,
-            index=args.index,
+            screening=args.screening,
         )
         return
 
