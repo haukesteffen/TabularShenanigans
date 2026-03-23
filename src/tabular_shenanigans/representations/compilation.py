@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
+import numpy as np
 import pandas as pd
 from scipy import sparse
 
@@ -106,9 +107,20 @@ def materialize_feature_bundle(
             preprocessing_backend=GENERIC_PREPROCESSING_BACKEND,
         )
 
+    dense_values = dense_frame.to_numpy(dtype=float) if not dense_frame.empty else None
+    if sparse_matrix is not None:
+        sparse_as_dense = sparse_matrix.toarray()
+        if dense_values is not None:
+            values = np.hstack([dense_values, sparse_as_dense])
+        else:
+            values = sparse_as_dense
+    elif dense_values is not None:
+        values = dense_values
+    else:
+        values = np.empty((0, 0), dtype=float)
     return MaterializedRepresentation(
         matrix_output_kind="dense_array",
-        values=dense_frame.to_numpy(dtype=float),
+        values=values,
         preprocessing_backend=GENERIC_PREPROCESSING_BACKEND,
     )
 

@@ -15,6 +15,7 @@ class GpuRoutingRule:
     gpu_backends: tuple[str, ...]
     requires_native_categorical: bool = False
     rejects_sparse: bool = False
+    supports_dense_fallback: bool = False
 
 
 @dataclass(frozen=True)

@@ -80,7 +80,7 @@ MODEL_REGISTRY: dict[str, dict[str, ModelDefinition]] = {
             supports_sparse_preprocessed_input=True,
             supports_gpu_native_dense_onehot_input=True,
             gpu_routing_rules=(
-                GpuRoutingRule(gpu_backends=(NATIVE_GPU_BACKEND,), rejects_sparse=True),
+                GpuRoutingRule(gpu_backends=(NATIVE_GPU_BACKEND,), rejects_sparse=True, supports_dense_fallback=True),
             ),
         ),
         "extra_trees": ModelDefinition(
@@ -115,7 +115,7 @@ MODEL_REGISTRY: dict[str, dict[str, ModelDefinition]] = {
             supports_sparse_preprocessed_input=True,
             supports_gpu_native_dense_onehot_input=True,
             gpu_routing_rules=(
-                GpuRoutingRule(gpu_backends=(NATIVE_GPU_BACKEND,), rejects_sparse=True),
+                GpuRoutingRule(gpu_backends=(NATIVE_GPU_BACKEND,), rejects_sparse=True, supports_dense_fallback=True),
             ),
         ),
         "svm": ModelDefinition(
@@ -183,7 +183,7 @@ MODEL_REGISTRY: dict[str, dict[str, ModelDefinition]] = {
             supports_sparse_preprocessed_input=True,
             supports_gpu_native_dense_onehot_input=True,
             gpu_routing_rules=(
-                GpuRoutingRule(gpu_backends=(NATIVE_GPU_BACKEND,), rejects_sparse=True),
+                GpuRoutingRule(gpu_backends=(NATIVE_GPU_BACKEND,), rejects_sparse=True, supports_dense_fallback=True),
             ),
         ),
         "extra_trees": ModelDefinition(
@@ -218,7 +218,7 @@ MODEL_REGISTRY: dict[str, dict[str, ModelDefinition]] = {
             supports_sparse_preprocessed_input=True,
             supports_gpu_native_dense_onehot_input=True,
             gpu_routing_rules=(
-                GpuRoutingRule(gpu_backends=(NATIVE_GPU_BACKEND,), rejects_sparse=True),
+                GpuRoutingRule(gpu_backends=(NATIVE_GPU_BACKEND,), rejects_sparse=True, supports_dense_fallback=True),
             ),
         ),
         "svm": ModelDefinition(

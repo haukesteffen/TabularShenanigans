@@ -552,6 +552,7 @@ class AppConfig(BaseModel):
             capabilities=resolved_runtime_execution_context.capabilities,
             fallback_reason=resolved_runtime_execution_context.fallback_reason,
             rapids_hooks_installed=rapids_hooks_installed,
+            sparse_to_dense_coercion=resolved_runtime_execution_context.sparse_to_dense_coercion,
         )
 
     def preprocessing_execution_plan_for_index(self, candidate_index: int | None = None):
