@@ -87,6 +87,17 @@ def resolve_model_candidate_runtime_execution(
         )
 
     if matched_rule is not None and matched_rule.rejects_sparse and has_sparse_numeric:
+        if matched_rule.supports_dense_fallback:
+            return RuntimeExecutionContext(
+                requested_compute_target=requested_compute_target,
+                resolved_compute_target="gpu",
+                requested_gpu_backend=requested_gpu_backend,
+                resolved_gpu_backend=matched_rule.gpu_backends[0],
+                capabilities=capabilities,
+                fallback_reason=None,
+                rapids_hooks_installed=False,
+                sparse_to_dense_coercion=True,
+            )
         if requested_compute_target == "gpu" or requested_gpu_backend != "auto":
             raise RuntimeError(
                 f"Model family {model_family!r} does not support sparse numeric representations "

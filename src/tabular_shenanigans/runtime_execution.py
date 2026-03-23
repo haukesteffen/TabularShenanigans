@@ -18,6 +18,7 @@ PLATFORM_SYSTEM_ENV = "TABULAR_SHENANIGANS_RUNTIME_PLATFORM_SYSTEM"
 VISIBLE_NVIDIA_DEVICES_ENV = "TABULAR_SHENANIGANS_VISIBLE_NVIDIA_DEVICES"
 ACCELERATION_BACKEND_ENV = "TABULAR_SHENANIGANS_ACCELERATION_BACKEND"
 RAPIDS_HOOKS_INSTALLED_ENV = "TABULAR_SHENANIGANS_RAPIDS_HOOKS_INSTALLED"
+SPARSE_TO_DENSE_COERCION_ENV = "TABULAR_SHENANIGANS_SPARSE_TO_DENSE_COERCION"
 CUDA_VISIBLE_DEVICES_ENV = "CUDA_VISIBLE_DEVICES"
 CPU_GPU_BACKEND = "cpu"
 PATCH_GPU_BACKEND = "gpu_patch"
@@ -55,6 +56,7 @@ class RuntimeExecutionContext:
     capabilities: RuntimeCapabilitySnapshot
     fallback_reason: str | None
     rapids_hooks_installed: bool
+    sparse_to_dense_coercion: bool = False
 
     @property
     def gpu_available(self) -> bool:
@@ -74,6 +76,7 @@ class RuntimeExecutionContext:
             "fallback_reason": self.fallback_reason,
             "acceleration_backend": self.acceleration_backend,
             "rapids_hooks_installed": self.rapids_hooks_installed,
+            "sparse_to_dense_coercion": self.sparse_to_dense_coercion,
             "capabilities": self.capabilities.to_dict(),
         }
 
@@ -299,6 +302,7 @@ def export_runtime_execution_context(context: RuntimeExecutionContext) -> None:
     os.environ[VISIBLE_NVIDIA_DEVICES_ENV] = ",".join(context.capabilities.visible_nvidia_devices)
     os.environ[ACCELERATION_BACKEND_ENV] = context.acceleration_backend
     os.environ[RAPIDS_HOOKS_INSTALLED_ENV] = "true" if context.rapids_hooks_installed else "false"
+    os.environ[SPARSE_TO_DENSE_COERCION_ENV] = "true" if context.sparse_to_dense_coercion else "false"
     if context.fallback_reason is None:
         os.environ.pop(FALLBACK_REASON_ENV, None)
     else:
@@ -330,6 +334,7 @@ def _parse_exported_runtime_execution_context() -> RuntimeExecutionContext | Non
         device_path for device_path in visible_nvidia_devices_raw.split(",") if device_path
     )
     fallback_reason = os.getenv(FALLBACK_REASON_ENV)
+    sparse_to_dense_coercion_raw = os.getenv(SPARSE_TO_DENSE_COERCION_ENV, "false")
     capabilities = RuntimeCapabilitySnapshot(
         platform_system=platform_system,
         gpu_available=gpu_available == "true",
@@ -345,6 +350,7 @@ def _parse_exported_runtime_execution_context() -> RuntimeExecutionContext | Non
         capabilities=capabilities,
         fallback_reason=fallback_reason,
         rapids_hooks_installed=rapids_hooks_installed == "true",
+        sparse_to_dense_coercion=sparse_to_dense_coercion_raw == "true",
     )
 
 
@@ -406,6 +412,8 @@ def format_runtime_execution_context(context: RuntimeExecutionContext) -> str:
     visible_devices = ",".join(context.capabilities.visible_nvidia_devices)
     if visible_devices:
         summary = f"{summary}, visible_nvidia_devices={visible_devices}"
+    if context.sparse_to_dense_coercion:
+        summary = f"{summary}, sparse_to_dense_coercion=True"
     if context.fallback_reason is not None:
         summary = f"{summary}, fallback_reason={context.fallback_reason}"
     return summary

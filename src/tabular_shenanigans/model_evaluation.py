@@ -1,5 +1,5 @@
 import time
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 
 import numpy as np
 import pandas as pd
@@ -155,6 +155,9 @@ def build_prepared_training_context(
     )
     representation_spec = candidate.representation.to_runtime_spec()
     representation_contract = build_representation_contract(representation_spec)
+    runtime_execution_context = config.runtime_execution_context
+    if runtime_execution_context.sparse_to_dense_coercion and representation_contract.matrix_output_kind == "sparse_csr":
+        representation_contract = replace(representation_contract, matrix_output_kind="dense_array")
     representation_id = representation_spec.representation_id
     feature_schema = resolve_feature_schema(
         x_train_raw=x_train_raw,
@@ -162,7 +165,6 @@ def build_prepared_training_context(
         force_numeric=features.force_numeric,
         low_cardinality_int_threshold=features.low_cardinality_int_threshold,
     )
-    runtime_execution_context = config.runtime_execution_context
     compiled_representation = compile_representation(
         representation_spec=representation_spec,
         feature_schema=feature_schema,

@@ -597,6 +597,7 @@ def _candidate_run_params(config: AppConfig, manifest: dict[str, object]) -> dic
         "runtime__gpu_available": runtime_execution_context.gpu_available,
         "runtime__acceleration_backend": runtime_execution_context.acceleration_backend,
         "runtime__rapids_hooks_installed": runtime_execution_context.rapids_hooks_installed,
+        "runtime__sparse_to_dense_coercion": runtime_execution_context.sparse_to_dense_coercion,
     }
     if runtime_execution_context.fallback_reason is not None:
         params["runtime__fallback_reason"] = runtime_execution_context.fallback_reason
