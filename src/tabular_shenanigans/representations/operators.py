@@ -10,6 +10,7 @@ from sklearn.impute import SimpleImputer
 from sklearn.pipeline import Pipeline
 from sklearn.preprocessing import KBinsDiscretizer, OneHotEncoder, OrdinalEncoder, RobustScaler, StandardScaler
 
+from tabular_shenanigans._array_utils import _normalize_categorical_series
 from tabular_shenanigans.representations.feature_schema import ResolvedFeatureSchema
 from tabular_shenanigans.representations.types import (
     FeatureBlock,
@@ -21,10 +22,6 @@ from tabular_shenanigans.representations.types import (
     FittedFeaturePruner,
     OutputKind,
 )
-
-
-def _normalize_categorical_series(series: pd.Series, missing_value: str) -> pd.Series:
-    return series.astype(object).where(series.notna(), missing_value).astype(str)
 
 
 def _validate_no_unknown_params(
