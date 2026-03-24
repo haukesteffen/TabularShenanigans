@@ -3,6 +3,7 @@ from pathlib import Path
 
 import yaml
 from tabular_shenanigans.naming import _short_hash
+from tabular_shenanigans.operator_properties import SPARSE_PRODUCING_OPERATOR_IDS
 
 
 @dataclass(frozen=True)
@@ -53,17 +54,7 @@ def _build_bootstrap_representation_summary(
 
     operator_ids = {operator["id"] for operator in normalized_operators}
     has_native_categorical = "native_categorical" in operator_ids
-    has_sparse_numeric = bool(
-        operator_ids.intersection(
-            {
-                "quantile_bin_numeric",
-                "onehot_encode_low_cardinality_categoricals",
-                "cross_low_cardinality_categoricals",
-                "cross_categorical_with_binned_numeric",
-                "rare_category_bucket",
-            }
-        )
-    )
+    has_sparse_numeric = bool(operator_ids.intersection(SPARSE_PRODUCING_OPERATOR_IDS))
 
     return representation_id, has_native_categorical, has_sparse_numeric
 
