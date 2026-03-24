@@ -530,18 +530,93 @@ def _select_low_cardinality_categoricals(
     return tuple(selected_columns)
 
 
+def _validate_operator_params(component_id: str, params: dict[str, object]) -> None:
+    if component_id in {
+        "native_numeric",
+        "standardize_numeric",
+        "robust_scale_numeric",
+        "signed_log_expand_numeric",
+        "quantile_bin_numeric",
+        "ordinal_encode_categoricals",
+        "row_missing_count",
+        "multiply_numeric_pairs",
+        "ratio_numeric_pairs",
+        "difference_numeric_pairs",
+        "sum_numeric_pairs",
+    }:
+        _validate_no_unknown_params("operator", component_id, params, set())
+        return
+    if component_id in {"native_categorical", "frequency_encode_categoricals"}:
+        _validate_no_unknown_params("operator", component_id, params, {"missing_value"})
+        return
+    if component_id == "rare_category_bucket":
+        _validate_no_unknown_params("operator", component_id, params, {"min_frequency", "missing_value"})
+        min_frequency = float(params.get("min_frequency", 0.01))
+        if min_frequency <= 0.0 or min_frequency >= 1.0:
+            raise ValueError("operator 'rare_category_bucket' requires min_frequency in (0.0, 1.0).")
+        return
+    if component_id == "target_encode_categoricals":
+        _validate_no_unknown_params("operator", component_id, params, {"smoothing", "missing_value"})
+        smoothing = float(params.get("smoothing", 1.0))
+        if smoothing < 0.0:
+            raise ValueError("operator 'target_encode_categoricals' requires smoothing >= 0.")
+        return
+    if component_id == "onehot_encode_low_cardinality_categoricals":
+        _validate_no_unknown_params("operator", component_id, params, {"max_cardinality"})
+        max_cardinality = int(params.get("max_cardinality", 16))
+        if max_cardinality < 1:
+            raise ValueError(
+                "operator 'onehot_encode_low_cardinality_categoricals' requires max_cardinality >= 1."
+            )
+        return
+    if component_id in {"cross_low_cardinality_categoricals", "frequency_encode_categorical_crosses"}:
+        _validate_no_unknown_params("operator", component_id, params, {"max_cardinality", "missing_value"})
+        max_cardinality = int(params.get("max_cardinality", 10))
+        if max_cardinality < 1:
+            raise ValueError(f"operator '{component_id}' requires max_cardinality >= 1.")
+        return
+    if component_id == "cross_categorical_with_binned_numeric":
+        _validate_no_unknown_params(
+            "operator", component_id, params, {"n_bins", "max_cardinality", "missing_value"}
+        )
+        n_bins = int(params.get("n_bins", 5))
+        if n_bins < 2:
+            raise ValueError("operator 'cross_categorical_with_binned_numeric' requires n_bins >= 2.")
+        max_cardinality = int(params.get("max_cardinality", 10))
+        if max_cardinality < 1:
+            raise ValueError("operator 'cross_categorical_with_binned_numeric' requires max_cardinality >= 1.")
+        return
+    if component_id == "groupwise_deviation_features":
+        _validate_no_unknown_params("operator", component_id, params, {"max_cardinality", "missing_value"})
+        max_cardinality = int(params.get("max_cardinality", 20))
+        if max_cardinality < 1:
+            raise ValueError("operator 'groupwise_deviation_features' requires max_cardinality >= 1.")
+        return
+    raise ValueError(f"Unsupported operator id '{component_id}'.")
+
+
+def _validate_pruner_params(component_id: str, params: dict[str, object]) -> None:
+    if component_id == "high_correlation_prune":
+        _validate_no_unknown_params("pruner", component_id, params, {"threshold"})
+        threshold = float(params.get("threshold", 0.98))
+        if threshold <= 0.0 or threshold > 1.0:
+            raise ValueError("pruner 'high_correlation_prune' requires threshold in (0.0, 1.0].")
+        return
+    raise ValueError(f"Unsupported pruner id '{component_id}'.")
+
+
 def build_feature_generator(
     component_id: str,
     params: dict[str, object],
     feature_schema: ResolvedFeatureSchema,
     X_sample: pd.DataFrame,
 ) -> FeatureGenerator:
+    _validate_operator_params(component_id, params)
+
     if component_id == "native_numeric":
-        _validate_no_unknown_params("operator", component_id, params, set())
         return NativeNumericGenerator(columns=tuple(feature_schema.numeric_columns))
 
     if component_id == "native_categorical":
-        _validate_no_unknown_params("operator", component_id, params, {"missing_value"})
         missing_value = str(params.get("missing_value", "__missing__"))
         return NativeCategoricalGenerator(
             columns=tuple(feature_schema.categorical_columns),
@@ -549,23 +624,18 @@ def build_feature_generator(
         )
 
     if component_id == "standardize_numeric":
-        _validate_no_unknown_params("operator", component_id, params, set())
         return StandardizeNumericGenerator(columns=tuple(feature_schema.numeric_columns))
 
     if component_id == "robust_scale_numeric":
-        _validate_no_unknown_params("operator", component_id, params, set())
         return RobustScaleNumericGenerator(columns=tuple(feature_schema.numeric_columns))
 
     if component_id == "signed_log_expand_numeric":
-        _validate_no_unknown_params("operator", component_id, params, set())
         return SignedLogExpandNumericGenerator(columns=tuple(feature_schema.numeric_columns))
 
     if component_id == "quantile_bin_numeric":
-        _validate_no_unknown_params("operator", component_id, params, set())
         return QuantileBinNumericGenerator(columns=tuple(feature_schema.numeric_columns))
 
     if component_id == "frequency_encode_categoricals":
-        _validate_no_unknown_params("operator", component_id, params, {"missing_value"})
         missing_value = str(params.get("missing_value", "__missing__"))
         return FrequencyEncodeCategoricalsGenerator(
             columns=tuple(feature_schema.categorical_columns),
@@ -573,14 +643,10 @@ def build_feature_generator(
         )
 
     if component_id == "ordinal_encode_categoricals":
-        _validate_no_unknown_params("operator", component_id, params, set())
         return OrdinalEncodeCategoricalsGenerator(columns=tuple(feature_schema.categorical_columns))
 
     if component_id == "onehot_encode_low_cardinality_categoricals":
-        _validate_no_unknown_params("operator", component_id, params, {"max_cardinality"})
         max_cardinality = int(params.get("max_cardinality", 16))
-        if max_cardinality < 1:
-            raise ValueError("operator 'onehot_encode_low_cardinality_categoricals' requires max_cardinality >= 1.")
         eligible_columns = _select_low_cardinality_categoricals(
             X=X_sample,
             columns=feature_schema.categorical_columns,
@@ -589,10 +655,7 @@ def build_feature_generator(
         return OneHotLowCardinalityCategoricalsGenerator(columns=eligible_columns)
 
     if component_id == "target_encode_categoricals":
-        _validate_no_unknown_params("operator", component_id, params, {"smoothing", "missing_value"})
         smoothing = float(params.get("smoothing", 1.0))
-        if smoothing < 0.0:
-            raise ValueError("operator 'target_encode_categoricals' requires smoothing >= 0.")
         missing_value = str(params.get("missing_value", "__missing__"))
         return TargetEncodeCategoricalsGenerator(
             columns=tuple(feature_schema.categorical_columns),
@@ -601,10 +664,7 @@ def build_feature_generator(
         )
 
     if component_id == "rare_category_bucket":
-        _validate_no_unknown_params("operator", component_id, params, {"min_frequency", "missing_value"})
         min_frequency = float(params.get("min_frequency", 0.01))
-        if min_frequency <= 0.0 or min_frequency >= 1.0:
-            raise ValueError("operator 'rare_category_bucket' requires min_frequency in (0.0, 1.0).")
         missing_value = str(params.get("missing_value", "__missing__"))
         return RareCategoryBucketGenerator(
             columns=tuple(feature_schema.categorical_columns),
@@ -613,7 +673,6 @@ def build_feature_generator(
         )
 
     if component_id == "row_missing_count":
-        _validate_no_unknown_params("operator", component_id, params, set())
         return RowMissingCountGenerator()
 
     # Lazy import to avoid circular dependency (interaction_operators imports from this module).
@@ -629,26 +688,19 @@ def build_feature_generator(
     )
 
     if component_id == "multiply_numeric_pairs":
-        _validate_no_unknown_params("operator", component_id, params, set())
         return MultiplyNumericPairsGenerator(columns=tuple(feature_schema.numeric_columns))
 
     if component_id == "ratio_numeric_pairs":
-        _validate_no_unknown_params("operator", component_id, params, set())
         return RatioNumericPairsGenerator(columns=tuple(feature_schema.numeric_columns))
 
     if component_id == "difference_numeric_pairs":
-        _validate_no_unknown_params("operator", component_id, params, set())
         return DifferenceNumericPairsGenerator(columns=tuple(feature_schema.numeric_columns))
 
     if component_id == "sum_numeric_pairs":
-        _validate_no_unknown_params("operator", component_id, params, set())
         return SumNumericPairsGenerator(columns=tuple(feature_schema.numeric_columns))
 
     if component_id == "cross_low_cardinality_categoricals":
-        _validate_no_unknown_params("operator", component_id, params, {"max_cardinality", "missing_value"})
         max_cardinality = int(params.get("max_cardinality", 10))
-        if max_cardinality < 1:
-            raise ValueError("operator 'cross_low_cardinality_categoricals' requires max_cardinality >= 1.")
         missing_value = str(params.get("missing_value", "__missing__"))
         return CrossLowCardinalityCategoricalsGenerator(
             columns=tuple(feature_schema.categorical_columns),
@@ -657,13 +709,8 @@ def build_feature_generator(
         )
 
     if component_id == "cross_categorical_with_binned_numeric":
-        _validate_no_unknown_params("operator", component_id, params, {"n_bins", "max_cardinality", "missing_value"})
         n_bins = int(params.get("n_bins", 5))
-        if n_bins < 2:
-            raise ValueError("operator 'cross_categorical_with_binned_numeric' requires n_bins >= 2.")
         max_cardinality = int(params.get("max_cardinality", 10))
-        if max_cardinality < 1:
-            raise ValueError("operator 'cross_categorical_with_binned_numeric' requires max_cardinality >= 1.")
         missing_value = str(params.get("missing_value", "__missing__"))
         return CrossCategoricalWithBinnedNumericGenerator(
             categorical_columns=tuple(feature_schema.categorical_columns),
@@ -674,10 +721,7 @@ def build_feature_generator(
         )
 
     if component_id == "groupwise_deviation_features":
-        _validate_no_unknown_params("operator", component_id, params, {"max_cardinality", "missing_value"})
         max_cardinality = int(params.get("max_cardinality", 20))
-        if max_cardinality < 1:
-            raise ValueError("operator 'groupwise_deviation_features' requires max_cardinality >= 1.")
         missing_value = str(params.get("missing_value", "__missing__"))
         return GroupwiseDeviationFeaturesGenerator(
             categorical_columns=tuple(feature_schema.categorical_columns),
@@ -687,10 +731,7 @@ def build_feature_generator(
         )
 
     if component_id == "frequency_encode_categorical_crosses":
-        _validate_no_unknown_params("operator", component_id, params, {"max_cardinality", "missing_value"})
         max_cardinality = int(params.get("max_cardinality", 10))
-        if max_cardinality < 1:
-            raise ValueError("operator 'frequency_encode_categorical_crosses' requires max_cardinality >= 1.")
         missing_value = str(params.get("missing_value", "__missing__"))
         return FrequencyEncodeCategoricalCrossesGenerator(
             columns=tuple(feature_schema.categorical_columns),
@@ -702,11 +743,10 @@ def build_feature_generator(
 
 
 def build_feature_pruner(component_id: str, params: dict[str, object]) -> FeaturePruner:
+    _validate_pruner_params(component_id, params)
+
     if component_id == "high_correlation_prune":
-        _validate_no_unknown_params("pruner", component_id, params, {"threshold"})
         threshold = float(params.get("threshold", 0.98))
-        if threshold <= 0.0 or threshold > 1.0:
-            raise ValueError("pruner 'high_correlation_prune' requires threshold in (0.0, 1.0].")
         return HighCorrelationPruner(threshold=threshold)
 
     raise ValueError(f"Unsupported pruner id '{component_id}'.")
@@ -714,75 +754,11 @@ def build_feature_pruner(component_id: str, params: dict[str, object]) -> Featur
 
 def validate_component_params(component_id: str, params: dict[str, object], component_kind: str) -> None:
     if component_kind == "operator":
-        if component_id in {
-            "native_numeric",
-            "standardize_numeric",
-            "robust_scale_numeric",
-            "signed_log_expand_numeric",
-            "quantile_bin_numeric",
-            "ordinal_encode_categoricals",
-            "row_missing_count",
-            "multiply_numeric_pairs",
-            "ratio_numeric_pairs",
-            "difference_numeric_pairs",
-            "sum_numeric_pairs",
-        }:
-            _validate_no_unknown_params(component_kind, component_id, params, set())
-            return
-        if component_id in {"native_categorical", "frequency_encode_categoricals"}:
-            _validate_no_unknown_params(component_kind, component_id, params, {"missing_value"})
-            return
-        if component_id == "rare_category_bucket":
-            _validate_no_unknown_params(component_kind, component_id, params, {"min_frequency", "missing_value"})
-            min_frequency = float(params.get("min_frequency", 0.01))
-            if min_frequency <= 0.0 or min_frequency >= 1.0:
-                raise ValueError("operator 'rare_category_bucket' requires min_frequency in (0.0, 1.0).")
-            return
-        if component_id == "target_encode_categoricals":
-            _validate_no_unknown_params(component_kind, component_id, params, {"smoothing", "missing_value"})
-            smoothing = float(params.get("smoothing", 1.0))
-            if smoothing < 0.0:
-                raise ValueError("operator 'target_encode_categoricals' requires smoothing >= 0.")
-            return
-        if component_id == "onehot_encode_low_cardinality_categoricals":
-            _validate_no_unknown_params(component_kind, component_id, params, {"max_cardinality"})
-            max_cardinality = int(params.get("max_cardinality", 16))
-            if max_cardinality < 1:
-                raise ValueError(
-                    "operator 'onehot_encode_low_cardinality_categoricals' requires max_cardinality >= 1."
-                )
-            return
-        if component_id in {"cross_low_cardinality_categoricals", "frequency_encode_categorical_crosses"}:
-            _validate_no_unknown_params(component_kind, component_id, params, {"max_cardinality", "missing_value"})
-            max_cardinality = int(params.get("max_cardinality", 10))
-            if max_cardinality < 1:
-                raise ValueError(f"operator '{component_id}' requires max_cardinality >= 1.")
-            return
-        if component_id == "cross_categorical_with_binned_numeric":
-            _validate_no_unknown_params(
-                component_kind, component_id, params, {"n_bins", "max_cardinality", "missing_value"}
-            )
-            n_bins = int(params.get("n_bins", 5))
-            if n_bins < 2:
-                raise ValueError("operator 'cross_categorical_with_binned_numeric' requires n_bins >= 2.")
-            max_cardinality = int(params.get("max_cardinality", 10))
-            if max_cardinality < 1:
-                raise ValueError("operator 'cross_categorical_with_binned_numeric' requires max_cardinality >= 1.")
-            return
-        if component_id == "groupwise_deviation_features":
-            _validate_no_unknown_params(component_kind, component_id, params, {"max_cardinality", "missing_value"})
-            max_cardinality = int(params.get("max_cardinality", 20))
-            if max_cardinality < 1:
-                raise ValueError("operator 'groupwise_deviation_features' requires max_cardinality >= 1.")
-            return
-    if component_kind == "pruner":
-        if component_id == "high_correlation_prune":
-            _validate_no_unknown_params(component_kind, component_id, params, {"threshold"})
-            threshold = float(params.get("threshold", 0.98))
-            if threshold <= 0.0 or threshold > 1.0:
-                raise ValueError("pruner 'high_correlation_prune' requires threshold in (0.0, 1.0].")
-            return
-    raise ValueError(f"Unsupported {component_kind} id '{component_id}'.")
+        _validate_operator_params(component_id, params)
+    elif component_kind == "pruner":
+        _validate_pruner_params(component_id, params)
+    else:
+        raise ValueError(f"Unsupported component kind '{component_kind}'.")
 
 
 SUPPORTED_OPERATOR_IDS = frozenset(
