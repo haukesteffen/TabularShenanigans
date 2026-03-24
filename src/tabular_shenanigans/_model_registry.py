@@ -321,28 +321,6 @@ def get_tunable_model_ids(task_type: str) -> list[str]:
     )
 
 
-def validate_model_preprocessing_compatibility(
-    task_type: str,
-    model_id: str,
-    categorical_preprocessor_id: str,
-) -> None:
-    model_definition = get_model_definition(task_type, model_id)
-    if categorical_preprocessor_id != "native":
-        return
-    if model_definition.supports_native_categorical_preprocessing:
-        return
-    native_model_families = sorted(
-        candidate_model_id
-        for candidate_model_id, candidate_definition in get_task_model_registry(task_type).items()
-        if candidate_definition.supports_native_categorical_preprocessing
-    )
-    raise ValueError(
-        f"Model family '{model_definition.model_id}' does not support "
-        "categorical_preprocessor='native'. "
-        f"Supported native categorical model families: {native_model_families}."
-    )
-
-
 def validate_model_representation_compatibility(
     task_type: str,
     model_id: str,
@@ -379,27 +357,6 @@ def validate_model_output_compatibility(
         raise ValueError(
             f"Model family '{model_definition.model_id}' does not support sparse numeric representations."
         )
-
-
-def resolve_model_matrix_output_kind(
-    task_type: str,
-    model_id: str,
-    categorical_preprocessor_id: str,
-    runtime_execution_context: RuntimeExecutionContext | None = None,
-) -> str:
-    model_definition = get_model_definition(task_type, model_id)
-    if categorical_preprocessor_id == "native":
-        return "native_frame"
-    if (
-        categorical_preprocessor_id == "onehot"
-        and runtime_execution_context is not None
-        and runtime_execution_context.resolved_gpu_backend in (NATIVE_GPU_BACKEND, PATCH_GPU_BACKEND)
-        and model_definition.supports_gpu_native_dense_onehot_input
-    ):
-        return "dense_array"
-    if categorical_preprocessor_id == "onehot" and model_definition.supports_sparse_preprocessed_input:
-        return "sparse_csr"
-    return "dense_array"
 
 
 def resolve_model_id(task_type: str, model_id: str) -> str:
