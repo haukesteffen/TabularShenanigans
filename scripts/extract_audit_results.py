@@ -6,7 +6,7 @@ Usage:
 
 Reads config.yaml for the tracking URI and competition slug, then queries
 MLflow for all audit candidate runs (fr0, optimization disabled) and prints
-a comparison table grouped by model_family + preprocessors across backends.
+a comparison table grouped by model_family + representation across backends.
 """
 import os
 import sys
