@@ -11,9 +11,9 @@ from sklearn.impute import SimpleImputer
 from sklearn.pipeline import Pipeline
 from sklearn.preprocessing import KBinsDiscretizer, OneHotEncoder
 
+from tabular_shenanigans._array_utils import _normalize_categorical_series
 from tabular_shenanigans.representations.operators import (
     _FittedDenseFrameGenerator,
-    _normalize_categorical_series,
     _select_low_cardinality_categoricals,
 )
 from tabular_shenanigans.representations.types import (

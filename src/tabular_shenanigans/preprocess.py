@@ -1,6 +1,7 @@
 import numpy as np
 import pandas as pd
 
+from tabular_shenanigans._array_utils import _ensure_dense_array, _normalize_categorical_series
 from tabular_shenanigans.representations.feature_schema import (
     ResolvedFeatureSchema,
     resolve_feature_schema,
@@ -12,16 +13,6 @@ def _validate_column_names(config_name: str, columns: list[str], available_colum
     missing_columns = [column for column in columns if column not in available_columns]
     if missing_columns:
         raise ValueError(f"{config_name} has unknown columns: {missing_columns}")
-
-
-def _normalize_categorical_series(series: pd.Series, missing_value: str) -> pd.Series:
-    return series.astype(object).where(series.notna(), missing_value).astype(str)
-
-
-def _ensure_dense_array(values: object) -> np.ndarray:
-    if hasattr(values, "toarray"):
-        return values.toarray()
-    return np.asarray(values)
 
 
 def _resolve_transformed_numeric_columns(
