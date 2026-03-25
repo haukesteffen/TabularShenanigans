@@ -49,6 +49,16 @@ class OptimizationArtifacts:
     trials_df: pd.DataFrame
 
 
+@dataclass(frozen=True)
+class TrainingWorkflowResult:
+    run_id: str
+    experiment_id: str
+    candidate_id: str
+    run_kind: str
+    metric_mean: float | None = None
+    metric_std: float | None = None
+
+
 def _resolve_training_model_spec(
     config: AppConfig,
     model_spec: TrainingModelSpec | None = None,
@@ -233,7 +243,7 @@ def run_training(
     optimization_artifacts: OptimizationArtifacts | None = None,
     prepared_training_context: PreparedTrainingContext | None = None,
     optimization_config: dict[str, object] | None = None,
-) -> CandidateRunRef:
+) -> TrainingWorkflowResult:
     if not config.is_model_candidate:
         raise ValueError("run_training only supports selected candidate_type=model.")
 
@@ -323,20 +333,34 @@ def run_training(
         fit_wall_seconds=fit_wall_seconds,
         optimization_summary=optimization_summary,
     )
-    return candidate_run
+    cv = model_result.cv_summary
+    return TrainingWorkflowResult(
+        run_id=candidate_run.run_id,
+        experiment_id=candidate_run.experiment_id,
+        candidate_id=candidate_run.candidate_id,
+        run_kind=candidate_run.run_kind,
+        metric_mean=cv.metric_mean,
+        metric_std=cv.metric_std,
+    )
 
 
 def run_training_workflow(
     config: AppConfig,
     dataset_context: CompetitionDatasetContext,
     optimization_override: object | None = None,
-) -> CandidateRunRef:
+) -> TrainingWorkflowResult:
     with use_runtime_execution_context(config.runtime_execution_context):
         competition = config.competition
         if config.is_blend_candidate:
             from tabular_shenanigans.blend import run_blend_training
 
-            return run_blend_training(config=config, dataset_context=dataset_context)
+            blend_run = run_blend_training(config=config, dataset_context=dataset_context)
+            return TrainingWorkflowResult(
+                run_id=blend_run.run_id,
+                experiment_id=blend_run.experiment_id,
+                candidate_id=blend_run.candidate_id,
+                run_kind=blend_run.run_kind,
+            )
 
         candidate = config.experiment.candidate
         candidate_run = create_candidate_run(
@@ -362,7 +386,7 @@ def run_training_workflow(
                     )
                     try:
                         if effective_optimization is None:
-                            run_training(
+                            training_result = run_training(
                                 config=config,
                                 dataset_context=dataset_context,
                                 candidate_run=candidate_run,
@@ -383,7 +407,7 @@ def run_training_workflow(
                                 prepared_training_context=prepared_training_context,
                                 optimization_override=effective_optimization,
                             )
-                            run_training(
+                            training_result = run_training(
                                 config=config,
                                 dataset_context=dataset_context,
                                 candidate_run=candidate_run,
@@ -412,7 +436,7 @@ def run_training_workflow(
                 )
                 log_uploaded = True
                 run_status = "FINISHED"
-                return candidate_run
+                return training_result
             except Exception:
                 if log_path.exists() and not log_uploaded:
                     upload_run_log(

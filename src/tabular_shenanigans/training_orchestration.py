@@ -1,13 +1,11 @@
-import tempfile
 import time
 import traceback
 from dataclasses import dataclass
-from pathlib import Path
 from typing import Literal
 
 from tabular_shenanigans.config import AppConfig, BlendCandidateConfig, ModelCandidateConfig
 from tabular_shenanigans.data import CompetitionDatasetContext
-from tabular_shenanigans.mlflow_store import candidate_run_exists, download_candidate_manifest
+from tabular_shenanigans.mlflow_store import candidate_run_exists
 from tabular_shenanigans.train import run_training_workflow
 
 
@@ -47,13 +45,6 @@ class TrainingBatchSummary:
     @property
     def failed_count(self) -> int:
         return sum(result.status == "failed" for result in self.results)
-
-
-def _metric_from_manifest(manifest: dict[str, object]) -> tuple[float, float]:
-    cv_summary = manifest.get("cv_summary")
-    if not isinstance(cv_summary, dict):
-        raise ValueError("Candidate manifest cv_summary must be a mapping.")
-    return float(cv_summary["metric_mean"]), float(cv_summary["metric_std"])
 
 
 def run_training_batch(
@@ -168,22 +159,8 @@ def run_training_batch(
 
         wall_seconds = time.perf_counter() - started
 
-        metric_mean = None
-        metric_std = None
-        if screening:
-            try:
-                with tempfile.TemporaryDirectory(prefix="tabular-shenanigans-screening-manifest-") as temp_dir:
-                    manifest = download_candidate_manifest(
-                        config=candidate_config,
-                        run_id=candidate_run.run_id,
-                        destination_dir=Path(temp_dir),
-                    )
-                metric_mean, metric_std = _metric_from_manifest(manifest)
-            except Exception as exc:
-                print(
-                    f"Warning: failed to extract screening metrics for "
-                    f"candidate_index={candidate_index + 1}: {exc}"
-                )
+        metric_mean = candidate_run.metric_mean
+        metric_std = candidate_run.metric_std
 
         status = "screened" if screening else "trained"
         completion_line = (
