@@ -4,10 +4,16 @@ from typing import Callable
 
 import numpy as np
 import pandas as pd
+from sklearn.base import clone
 
 ModelBuilder = Callable[[int, dict[str, object] | None], tuple[object, dict[str, object]]]
 FitKwargsBuilder = Callable[[object, list[str], list[str]], dict[str, object]]
 TuningSpaceBuilder = Callable[[object], dict[str, object]]
+ModelInputCoercer = Callable[[object], object]
+
+
+def identity_model_input(values: object) -> object:
+    return values
 
 
 @dataclass(frozen=True)
@@ -25,6 +31,7 @@ class ModelDefinition:
     builder: ModelBuilder
     fit_kwargs_builder: FitKwargsBuilder | None = None
     tuning_space_builder: TuningSpaceBuilder | None = None
+    coerce_input: ModelInputCoercer = identity_model_input
     supports_native_categorical_preprocessing: bool = False
     supports_sparse_preprocessed_input: bool = False
     supports_gpu_native_dense_onehot_input: bool = False
@@ -37,6 +44,9 @@ class BinaryLabelEncodingClassifier:
         self.estimator = estimator
         self.classes_: np.ndarray | None = None
         self._class_to_encoded_value: dict[object, int] = {}
+
+    def __sklearn_clone__(self) -> "BinaryLabelEncodingClassifier":
+        return type(self)(clone(self.estimator))
 
     def fit(self, x_train: object, y_train: pd.Series, **fit_kwargs: object) -> "BinaryLabelEncodingClassifier":
         observed_classes = pd.unique(y_train)
@@ -67,6 +77,9 @@ class BinaryLabelEncodingClassifier:
 class SingleTargetRegressionAdapter:
     def __init__(self, estimator: object) -> None:
         self.estimator = estimator
+
+    def __sklearn_clone__(self) -> "SingleTargetRegressionAdapter":
+        return type(self)(clone(self.estimator))
 
     def fit(self, x_train: object, y_train: pd.Series, **fit_kwargs: object) -> "SingleTargetRegressionAdapter":
         self.estimator.fit(x_train, y_train, **fit_kwargs)
