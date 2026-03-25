@@ -2,8 +2,12 @@ from dataclasses import dataclass
 from pathlib import Path
 
 import yaml
-from tabular_shenanigans.naming import _short_hash
-from tabular_shenanigans.operator_properties import SPARSE_PRODUCING_OPERATOR_IDS
+from tabular_shenanigans.representations import (
+    build_representation_id_from_payload,
+    normalize_representation_payload,
+    representation_has_native_categorical,
+    representation_has_sparse_numeric,
+)
 
 
 @dataclass(frozen=True)
@@ -14,47 +18,16 @@ class BootstrapCandidateRuntimeConfig:
     representation_id: str | None = None
     has_native_categorical: bool = False
     has_sparse_numeric: bool = False
-
-
-def _normalize_representation_component_payload(component: object, field_name: str) -> dict[str, object]:
-    if not isinstance(component, dict):
-        raise ValueError(f"{field_name} entries must be mappings.")
-    component_id = component.get("id")
-    if not isinstance(component_id, str) or not component_id:
-        raise ValueError(f"{field_name} entries must include a non-empty string 'id'.")
-    return {
-        "id": component_id,
-        "params": {str(key): value for key, value in component.items() if key != "id"},
-    }
-
-
 def _build_bootstrap_representation_summary(
     representation: dict[str, object] | None,
 ) -> tuple[str | None, bool, bool]:
     if representation is None:
         return None, False, False
 
-    operators = representation.get("operators")
-    pruners = representation.get("pruners", [])
-    if not isinstance(operators, list) or not operators:
-        raise ValueError("representation.operators must be a non-empty list.")
-    if not isinstance(pruners, list):
-        raise ValueError("representation.pruners must be a list when provided.")
-
-    normalized_operators = [
-        _normalize_representation_component_payload(component, "representation.operators")
-        for component in operators
-    ]
-    normalized_pruners = [
-        _normalize_representation_component_payload(component, "representation.pruners")
-        for component in pruners
-    ]
-    fingerprint_payload = {"operators": normalized_operators, "pruners": normalized_pruners}
-    representation_id = f"repr-{_short_hash(fingerprint_payload)}"
-
-    operator_ids = {operator["id"] for operator in normalized_operators}
-    has_native_categorical = "native_categorical" in operator_ids
-    has_sparse_numeric = bool(operator_ids.intersection(SPARSE_PRODUCING_OPERATOR_IDS))
+    operators, _ = normalize_representation_payload(representation)
+    representation_id = build_representation_id_from_payload(representation)
+    has_native_categorical = representation_has_native_categorical(operators)
+    has_sparse_numeric = representation_has_sparse_numeric(operators)
 
     return representation_id, has_native_categorical, has_sparse_numeric
 

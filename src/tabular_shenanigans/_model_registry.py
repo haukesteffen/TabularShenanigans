@@ -39,7 +39,6 @@ from tabular_shenanigans._model_builders import (
 )
 from tabular_shenanigans._model_types import GpuRoutingRule, ModelDefinition
 from tabular_shenanigans.lightgbm_cuda_backend import coerce_lightgbm_matrix_input
-from tabular_shenanigans.representations.types import RepresentationContract
 from tabular_shenanigans.runtime_execution import (
     NATIVE_GPU_BACKEND,
     PATCH_GPU_BACKEND,
@@ -330,13 +329,14 @@ def get_tunable_model_ids(task_type: str) -> list[str]:
 def validate_model_representation_compatibility(
     task_type: str,
     model_id: str,
-    representation_contract: RepresentationContract,
+    has_native_categorical: bool,
+    has_sparse_numeric: bool,
 ) -> None:
     validate_model_output_compatibility(
         task_type=task_type,
         model_id=model_id,
-        has_native_categorical=representation_contract.has_native_categorical,
-        has_sparse_numeric=representation_contract.has_sparse_numeric,
+        has_native_categorical=has_native_categorical,
+        has_sparse_numeric=has_sparse_numeric,
     )
 
 
@@ -429,4 +429,3 @@ def build_model_fit_kwargs(
     if model_definition.fit_kwargs_builder is None or not uses_native_categorical_preprocessing:
         return {}
     return model_definition.fit_kwargs_builder(x_train_processed, numeric_columns, categorical_columns)
-

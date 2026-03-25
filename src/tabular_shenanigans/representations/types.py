@@ -17,12 +17,15 @@ class RepresentationComponentSpec:
     params: dict[str, object]
 
 
-@dataclass(frozen=True)
-class RepresentationSpec:
-    representation_id: str
-    operators: tuple[RepresentationComponentSpec, ...]
-    pruners: tuple[RepresentationComponentSpec, ...]
-    fingerprint_payload: dict[str, object]
+class RepresentationComponentConfigLike(Protocol):
+    id: str
+
+    def params(self) -> dict[str, object]: ...
+
+
+class RepresentationConfigLike(Protocol):
+    operators: object
+    pruners: object
 
 
 @dataclass(frozen=True)
@@ -38,20 +41,6 @@ class MaterializedRepresentation:
     matrix_output_kind: MatrixOutputKind
     values: object
     preprocessing_backend: str
-
-
-@dataclass(frozen=True)
-class RepresentationContract:
-    representation_id: str
-    output_kinds: frozenset[OutputKind]
-    has_dense_numeric: bool
-    has_sparse_numeric: bool
-    has_native_tabular: bool
-    has_native_categorical: bool
-    has_native_numeric: bool
-    has_frequency_categorical: bool
-    has_cuml_compatible_numerics: bool
-    matrix_output_kind: MatrixOutputKind
 
 
 class FittedFeatureGenerator(Protocol):

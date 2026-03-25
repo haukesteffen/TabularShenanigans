@@ -15,8 +15,14 @@ from tabular_shenanigans.candidate_artifacts import (
 )
 from tabular_shenanigans.config import AppConfig
 from tabular_shenanigans.representations import (
-    build_representation_contract,
-    build_representation_spec_from_payload,
+    build_representation_fingerprint_payload,
+    normalize_representation_payload,
+    representation_has_dense_numeric,
+    representation_has_frequency_categorical,
+    representation_has_native_categorical,
+    representation_has_native_numeric,
+    representation_has_sparse_numeric,
+    resolve_representation_matrix_output_kind,
 )
 from tabular_shenanigans.submission_history import CandidateSubmissionHistory, SubmissionEvent
 
@@ -42,47 +48,6 @@ ACTIVE_MLFLOW_RUN_STATUSES = {"RUNNING", "SCHEDULED"}
 ExperimentRole = Literal["screening", "candidates", "submissions"]
 
 
-def _normalize_representation_component_payload(
-    component: object,
-    field_name: str,
-) -> dict[str, object]:
-    if not isinstance(component, Mapping):
-        raise ValueError(f"{field_name} entries must be mappings.")
-    component_id = component.get("id")
-    if not isinstance(component_id, str) or not component_id:
-        raise ValueError(f"{field_name} entries must include a non-empty string 'id'.")
-    return {
-        "id": component_id,
-        "params": {
-            str(key): value
-            for key, value in component.items()
-            if key != "id"
-        },
-    }
-
-
-def _extract_representation_components(
-    representation: object,
-) -> tuple[list[dict[str, object]], list[dict[str, object]]]:
-    if not isinstance(representation, Mapping):
-        raise ValueError("representation must be a mapping.")
-    operators = representation.get("operators")
-    pruners = representation.get("pruners", [])
-    if not isinstance(operators, list) or not operators:
-        raise ValueError("representation.operators must be a non-empty list.")
-    if not isinstance(pruners, list):
-        raise ValueError("representation.pruners must be a list when provided.")
-    normalized_operators = [
-        _normalize_representation_component_payload(component, "representation.operators")
-        for component in operators
-    ]
-    normalized_pruners = [
-        _normalize_representation_component_payload(component, "representation.pruners")
-        for component in pruners
-    ]
-    return normalized_operators, normalized_pruners
-
-
 def _component_signature(component: Mapping[str, object]) -> str:
     component_id = component["id"]
     params = component["params"]
@@ -98,36 +63,39 @@ def _component_signature(component: Mapping[str, object]) -> str:
 
 
 def _representation_logging_fields(representation: object) -> dict[str, object]:
-    operators, pruners = _extract_representation_components(representation)
-    operator_ids = [str(component["id"]) for component in operators]
-    pruner_ids = [str(component["id"]) for component in pruners]
-    operator_signature = " -> ".join(_component_signature(component) for component in operators)
-    pruner_signature = " -> ".join(_component_signature(component) for component in pruners) or "none"
+    operators, pruners = normalize_representation_payload(representation)
+    normalized_payload = build_representation_fingerprint_payload(operators, pruners)
+    normalized_operators = normalized_payload["operators"]
+    normalized_pruners = normalized_payload["pruners"]
+    if not isinstance(normalized_operators, list) or not isinstance(normalized_pruners, list):
+        raise ValueError("Normalized representation payload must contain list operators/pruners.")
+
+    operator_ids = [component["id"] for component in normalized_operators]
+    pruner_ids = [component["id"] for component in normalized_pruners]
+    operator_signature = " -> ".join(_component_signature(component) for component in normalized_operators)
+    pruner_signature = " -> ".join(_component_signature(component) for component in normalized_pruners) or "none"
     return {
-        "representation__operator_count": len(operators),
+        "representation__operator_count": len(normalized_operators),
         "representation__operator_ids": " -> ".join(operator_ids),
         "representation__operator_ids_json": operator_ids,
-        "representation__operators_json": operators,
-        "representation__pruner_count": len(pruners),
+        "representation__operators_json": normalized_operators,
+        "representation__pruner_count": len(normalized_pruners),
         "representation__pruner_ids": " -> ".join(pruner_ids) if pruner_ids else "none",
         "representation__pruner_ids_json": pruner_ids,
-        "representation__pruners_json": pruners,
+        "representation__pruners_json": normalized_pruners,
         "representation__summary": f"ops: {operator_signature} | pruners: {pruner_signature}",
     }
 
 
-def _representation_contract_logging_fields(representation: object) -> dict[str, object]:
-    if not isinstance(representation, Mapping):
-        raise ValueError("representation must be a mapping.")
-    representation_spec = build_representation_spec_from_payload(dict(representation))
-    representation_contract = build_representation_contract(representation_spec)
+def _representation_runtime_logging_fields(representation: object) -> dict[str, object]:
+    operators, _ = normalize_representation_payload(representation)
     return {
-        "representation__matrix_output_kind": representation_contract.matrix_output_kind,
-        "representation__has_native_categorical": representation_contract.has_native_categorical,
-        "representation__has_sparse_numeric": representation_contract.has_sparse_numeric,
-        "representation__has_dense_numeric": representation_contract.has_dense_numeric,
-        "representation__has_native_numeric": representation_contract.has_native_numeric,
-        "representation__has_frequency_categorical": representation_contract.has_frequency_categorical,
+        "representation__matrix_output_kind": resolve_representation_matrix_output_kind(operators),
+        "representation__has_native_categorical": representation_has_native_categorical(operators),
+        "representation__has_sparse_numeric": representation_has_sparse_numeric(operators),
+        "representation__has_dense_numeric": representation_has_dense_numeric(operators),
+        "representation__has_native_numeric": representation_has_native_numeric(operators),
+        "representation__has_frequency_categorical": representation_has_frequency_categorical(operators),
     }
 
 
@@ -159,7 +127,7 @@ def _model_logging_fields(manifest: Mapping[str, object]) -> dict[str, object]:
     representation = manifest.get("representation")
     if representation is not None:
         params.update(_representation_logging_fields(representation))
-        params.update(_representation_contract_logging_fields(representation))
+        params.update(_representation_runtime_logging_fields(representation))
 
     parameter_overrides = _resolved_model_parameter_overrides(manifest)
     params["hp__source"] = _hyperparameter_source(manifest)
@@ -711,7 +679,7 @@ def create_trial_run(
     representation_payload = config.experiment.candidate.representation.to_payload()
     representation_logging = {
         **_representation_logging_fields(representation_payload),
-        **_representation_contract_logging_fields(representation_payload),
+        **_representation_runtime_logging_fields(representation_payload),
     }
     _log_params(
         client,
