@@ -78,6 +78,43 @@ def resolve_booster_runtime_defaults(model_id: str) -> dict[str, object]:
     return {}
 
 
+def _module_startswith(values: object, prefix: str) -> bool:
+    return type(values).__module__.startswith(prefix)
+
+
+def coerce_xgboost_matrix_input(values: object) -> object:
+    runtime_execution_context = get_runtime_execution_context()
+    if runtime_execution_context.resolved_gpu_backend != NATIVE_GPU_BACKEND:
+        return values
+
+    try:
+        import cudf
+    except ImportError as exc:
+        raise RuntimeError(
+            "XGBoost GPU-native inputs require the optional GPU dependencies. "
+            "Install them with `uv sync --extra boosters --extra gpu`."
+        ) from exc
+
+    try:
+        import cupy as cp
+    except ImportError as exc:
+        raise RuntimeError(
+            "XGBoost GPU-native inputs require the optional GPU dependencies. "
+            "Install them with `uv sync --extra boosters --extra gpu`."
+        ) from exc
+
+    if _module_startswith(values, "cudf") or _module_startswith(values, "cupy"):
+        return values
+
+    if isinstance(values, pd.DataFrame):
+        return cudf.from_pandas(values)
+
+    if hasattr(values, "to_pandas"):
+        return cudf.from_pandas(values.to_pandas())
+
+    return cp.asarray(values)
+
+
 def import_cuml_linear_model(
     model_class_name: str,
     *,

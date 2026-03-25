@@ -35,8 +35,10 @@ from tabular_shenanigans._model_builders import (
     build_xgboost_classifier,
     build_xgboost_regressor,
     build_xgboost_tuning_space,
+    coerce_xgboost_matrix_input,
 )
 from tabular_shenanigans._model_types import GpuRoutingRule, ModelDefinition
+from tabular_shenanigans.lightgbm_cuda_backend import coerce_lightgbm_matrix_input
 from tabular_shenanigans.representations.types import RepresentationContract
 from tabular_shenanigans.runtime_execution import (
     NATIVE_GPU_BACKEND,
@@ -134,6 +136,7 @@ MODEL_REGISTRY: dict[str, dict[str, ModelDefinition]] = {
             model_name="LGBMRegressor",
             builder=build_lightgbm_regressor,
             tuning_space_builder=build_lightgbm_tuning_space,
+            coerce_input=coerce_lightgbm_matrix_input,
             supports_sparse_preprocessed_input=True,
             gpu_routing_rules=(
                 GpuRoutingRule(gpu_backends=(NATIVE_GPU_BACKEND,)),
@@ -156,6 +159,7 @@ MODEL_REGISTRY: dict[str, dict[str, ModelDefinition]] = {
             model_name="XGBRegressor",
             builder=build_xgboost_regressor,
             tuning_space_builder=build_xgboost_tuning_space,
+            coerce_input=coerce_xgboost_matrix_input,
             supports_sparse_preprocessed_input=True,
             supports_gpu_native_dense_onehot_input=True,
             gpu_routing_rules=(
@@ -247,6 +251,7 @@ MODEL_REGISTRY: dict[str, dict[str, ModelDefinition]] = {
             model_name="LGBMClassifier",
             builder=build_lightgbm_classifier,
             tuning_space_builder=build_lightgbm_tuning_space,
+            coerce_input=coerce_lightgbm_matrix_input,
             supports_sparse_preprocessed_input=True,
             gpu_routing_rules=(
                 GpuRoutingRule(gpu_backends=(NATIVE_GPU_BACKEND,)),
@@ -269,6 +274,7 @@ MODEL_REGISTRY: dict[str, dict[str, ModelDefinition]] = {
             model_name="XGBClassifier",
             builder=build_xgboost_classifier,
             tuning_space_builder=build_xgboost_tuning_space,
+            coerce_input=coerce_xgboost_matrix_input,
             supports_sparse_preprocessed_input=True,
             supports_gpu_native_dense_onehot_input=True,
             gpu_routing_rules=(
@@ -423,5 +429,4 @@ def build_model_fit_kwargs(
     if model_definition.fit_kwargs_builder is None or not uses_native_categorical_preprocessing:
         return {}
     return model_definition.fit_kwargs_builder(x_train_processed, numeric_columns, categorical_columns)
-
 

@@ -4,6 +4,7 @@ from functools import lru_cache
 import numpy as np
 import pandas as pd
 from scipy import sparse
+from sklearn.base import clone
 
 LIGHTGBM_CUDA_BUILD_DISABLED_FRAGMENT = "CUDA Tree Learner was not enabled in this build."
 
@@ -130,6 +131,12 @@ class RepositoryLightGbmEstimator:
     def __init__(self, estimator: object, *, requires_cuda_build: bool) -> None:
         self.estimator = estimator
         self.requires_cuda_build = requires_cuda_build
+
+    def __sklearn_clone__(self) -> "RepositoryLightGbmEstimator":
+        return type(self)(
+            clone(self.estimator),
+            requires_cuda_build=self.requires_cuda_build,
+        )
 
     def fit(self, x_train: object, y_train: object, **fit_kwargs: object) -> "RepositoryLightGbmEstimator":
         if self.requires_cuda_build:
