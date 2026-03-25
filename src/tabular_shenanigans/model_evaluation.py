@@ -1,5 +1,5 @@
 import time
-from dataclasses import dataclass, replace
+from dataclasses import dataclass
 
 import numpy as np
 import pandas as pd
@@ -20,9 +20,10 @@ from tabular_shenanigans.preprocess import prepare_feature_frames
 from tabular_shenanigans.representations import (
     CompiledRepresentation,
     ResolvedFeatureSchema,
-    build_representation_contract,
     compile_representation,
+    normalize_representation_config,
     resolve_feature_schema,
+    resolve_representation_matrix_output_kind,
 )
 from tabular_shenanigans.runtime_execution import NATIVE_GPU_BACKEND
 
@@ -199,12 +200,14 @@ def build_prepared_training_context(
         negative_label=negative_label,
         observed_label_pair=observed_label_pair,
     )
-    representation_spec = candidate.representation.to_runtime_spec()
-    representation_contract = build_representation_contract(representation_spec)
     runtime_execution_context = config.runtime_execution_context
-    if runtime_execution_context.sparse_to_dense_coercion and representation_contract.matrix_output_kind == "sparse_csr":
-        representation_contract = replace(representation_contract, matrix_output_kind="dense_array")
-    representation_id = representation_spec.representation_id
+    representation_operators, _ = normalize_representation_config(candidate.representation)
+    matrix_output_kind_override = None
+    if (
+        runtime_execution_context.sparse_to_dense_coercion
+        and resolve_representation_matrix_output_kind(representation_operators) == "sparse_csr"
+    ):
+        matrix_output_kind_override = "dense_array"
     feature_schema = resolve_feature_schema(
         x_train_raw=x_train_raw,
         force_categorical=features.force_categorical,
@@ -212,10 +215,10 @@ def build_prepared_training_context(
         low_cardinality_int_threshold=features.low_cardinality_int_threshold,
     )
     compiled_representation = compile_representation(
-        representation_spec=representation_spec,
+        representation=candidate.representation,
         feature_schema=feature_schema,
         x_train_sample=x_train_raw,
-        representation_contract=representation_contract,
+        matrix_output_kind_override=matrix_output_kind_override,
     )
     preserves_gpu_preprocessed_inputs = (
         config.resolved_model_registry_key == "xgboost"
@@ -236,7 +239,7 @@ def build_prepared_training_context(
         target_summary=target_summary,
         feature_schema=feature_schema,
         compiled_representation=compiled_representation,
-        representation_id=representation_id,
+        representation_id=compiled_representation.representation_id,
         matrix_output_kind=compiled_representation.matrix_output_kind,
         preserves_gpu_preprocessed_inputs=preserves_gpu_preprocessed_inputs,
         preprocessing_backend=compiled_representation.preprocessing_backend,

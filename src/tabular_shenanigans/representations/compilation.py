@@ -6,6 +6,20 @@ import numpy as np
 import pandas as pd
 from scipy import sparse
 
+from tabular_shenanigans.representations.definition import (
+    build_representation_id,
+    normalize_representation_config,
+    representation_has_cuml_compatible_numerics,
+    representation_has_dense_numeric,
+    representation_has_frequency_categorical,
+    representation_has_native_categorical,
+    representation_has_native_numeric,
+    representation_has_native_tabular,
+    representation_has_sparse_numeric,
+    resolve_representation_matrix_output_kind,
+    resolve_representation_output_kinds,
+    validate_representation_definition,
+)
 from tabular_shenanigans.representations.feature_schema import ResolvedFeatureSchema
 from tabular_shenanigans.representations.operators import build_feature_generator, build_feature_pruner
 from tabular_shenanigans.representations.types import (
@@ -13,8 +27,10 @@ from tabular_shenanigans.representations.types import (
     FeatureGenerator,
     FeaturePruner,
     MaterializedRepresentation,
-    RepresentationContract,
-    RepresentationSpec,
+    MatrixOutputKind,
+    OutputKind,
+    RepresentationComponentSpec,
+    RepresentationConfigLike,
 )
 
 
@@ -23,59 +39,114 @@ GENERIC_PREPROCESSING_BACKEND = "feature_bundle"
 
 @dataclass(frozen=True)
 class FittedRepresentation:
-    representation_id: str
+    compiled_representation: "CompiledRepresentation"
     fitted_generators: tuple[object, ...]
     fitted_pruners: tuple[object, ...]
-    contract: RepresentationContract
+
+    @property
+    def representation_id(self) -> str:
+        return self.compiled_representation.representation_id
+
+    @property
+    def matrix_output_kind(self) -> MatrixOutputKind:
+        return self.compiled_representation.matrix_output_kind
+
+    @property
+    def preprocessing_backend(self) -> str:
+        return self.compiled_representation.preprocessing_backend
 
     def transform(self, X: pd.DataFrame) -> object:
         bundle = FeatureBundle(blocks=tuple(generator.transform(X) for generator in self.fitted_generators))
         for pruner in self.fitted_pruners:
             bundle = pruner.transform(bundle)
-        return materialize_feature_bundle(bundle, self.contract).values
+        return materialize_feature_bundle(
+            bundle,
+            matrix_output_kind=self.matrix_output_kind,
+            preprocessing_backend=self.preprocessing_backend,
+        ).values
 
 
 @dataclass(frozen=True)
 class CompiledRepresentation:
-    representation_spec: RepresentationSpec
+    representation_id: str
+    operators: tuple[RepresentationComponentSpec, ...]
+    pruner_components: tuple[RepresentationComponentSpec, ...]
     feature_schema: ResolvedFeatureSchema
-    generators: tuple[FeatureGenerator, ...]
-    pruners: tuple[FeaturePruner, ...]
-    contract: RepresentationContract
-    matrix_output_kind: str
-    preprocessing_backend: str
+    feature_generators: tuple[FeatureGenerator, ...]
+    feature_pruners: tuple[FeaturePruner, ...]
+    matrix_output_kind_override: MatrixOutputKind | None = None
+    preprocessing_backend: str = GENERIC_PREPROCESSING_BACKEND
+
+    @property
+    def output_kinds(self) -> frozenset[OutputKind]:
+        return resolve_representation_output_kinds(self.operators)
+
+    @property
+    def has_dense_numeric(self) -> bool:
+        return representation_has_dense_numeric(self.operators)
+
+    @property
+    def has_sparse_numeric(self) -> bool:
+        return representation_has_sparse_numeric(self.operators)
+
+    @property
+    def has_native_tabular(self) -> bool:
+        return representation_has_native_tabular(self.operators)
+
+    @property
+    def has_native_categorical(self) -> bool:
+        return representation_has_native_categorical(self.operators)
+
+    @property
+    def has_native_numeric(self) -> bool:
+        return representation_has_native_numeric(self.operators)
+
+    @property
+    def has_frequency_categorical(self) -> bool:
+        return representation_has_frequency_categorical(self.operators)
+
+    @property
+    def has_cuml_compatible_numerics(self) -> bool:
+        return representation_has_cuml_compatible_numerics(self.operators)
+
+    @property
+    def matrix_output_kind(self) -> MatrixOutputKind:
+        if self.matrix_output_kind_override is not None:
+            return self.matrix_output_kind_override
+        return resolve_representation_matrix_output_kind(self.operators)
 
     def fit(self, X_train: pd.DataFrame, y_train: pd.Series) -> FittedRepresentation:
         fitted_generators = []
-        for generator in self.generators:
+        for generator in self.feature_generators:
             y_arg = y_train if generator.fit_mode == "supervised" else None
             fitted_generators.append(generator.fit(X_train, y_arg))
 
         bundle = FeatureBundle(blocks=tuple(generator.transform(X_train) for generator in fitted_generators))
         fitted_pruners = []
-        for pruner in self.pruners:
+        for pruner in self.feature_pruners:
             y_arg = y_train if pruner.fit_mode == "supervised" else None
             fitted_pruner = pruner.fit(bundle, y_arg)
             bundle = fitted_pruner.transform(bundle)
             fitted_pruners.append(fitted_pruner)
 
         return FittedRepresentation(
-            representation_id=self.representation_spec.representation_id,
+            compiled_representation=self,
             fitted_generators=tuple(fitted_generators),
             fitted_pruners=tuple(fitted_pruners),
-            contract=self.contract,
         )
 
 
 def materialize_feature_bundle(
     bundle: FeatureBundle,
-    contract: RepresentationContract,
+    *,
+    matrix_output_kind: MatrixOutputKind,
+    preprocessing_backend: str = GENERIC_PREPROCESSING_BACKEND,
 ) -> MaterializedRepresentation:
     dense_frame = bundle.dense_frame()
     native_frame = bundle.native_frame()
     sparse_matrix = bundle.sparse_matrix()
 
-    if contract.matrix_output_kind == "native_frame":
+    if matrix_output_kind == "native_frame":
         frames = [frame for frame in (native_frame, dense_frame) if not frame.empty]
         if not frames:
             values = pd.DataFrame()
@@ -86,10 +157,10 @@ def materialize_feature_bundle(
         return MaterializedRepresentation(
             matrix_output_kind="native_frame",
             values=values,
-            preprocessing_backend=GENERIC_PREPROCESSING_BACKEND,
+            preprocessing_backend=preprocessing_backend,
         )
 
-    if contract.matrix_output_kind == "sparse_csr":
+    if matrix_output_kind == "sparse_csr":
         matrices = []
         if not dense_frame.empty:
             matrices.append(sparse.csr_matrix(dense_frame.to_numpy(dtype=float)))
@@ -104,7 +175,7 @@ def materialize_feature_bundle(
         return MaterializedRepresentation(
             matrix_output_kind="sparse_csr",
             values=values,
-            preprocessing_backend=GENERIC_PREPROCESSING_BACKEND,
+            preprocessing_backend=preprocessing_backend,
         )
 
     dense_values = dense_frame.to_numpy(dtype=float) if not dense_frame.empty else None
@@ -121,38 +192,42 @@ def materialize_feature_bundle(
     return MaterializedRepresentation(
         matrix_output_kind="dense_array",
         values=values,
-        preprocessing_backend=GENERIC_PREPROCESSING_BACKEND,
+        preprocessing_backend=preprocessing_backend,
     )
 
 
 def compile_representation(
-    representation_spec: RepresentationSpec,
+    representation: RepresentationConfigLike,
     feature_schema: ResolvedFeatureSchema,
     x_train_sample: pd.DataFrame,
-    representation_contract: RepresentationContract,
+    matrix_output_kind_override: MatrixOutputKind | None = None,
 ) -> CompiledRepresentation:
-    generators = tuple(
+    operators, pruners = normalize_representation_config(representation)
+    validate_representation_definition(operators, pruners)
+
+    feature_generators = tuple(
         build_feature_generator(
             component_id=component.component_id,
             params=component.params,
             feature_schema=feature_schema,
             X_sample=x_train_sample,
         )
-        for component in representation_spec.operators
+        for component in operators
     )
-    pruners = tuple(
+    feature_pruners = tuple(
         build_feature_pruner(
             component_id=component.component_id,
             params=component.params,
         )
-        for component in representation_spec.pruners
+        for component in pruners
     )
+
     return CompiledRepresentation(
-        representation_spec=representation_spec,
+        representation_id=build_representation_id(operators, pruners),
+        operators=operators,
+        pruner_components=pruners,
         feature_schema=feature_schema,
-        generators=generators,
-        pruners=pruners,
-        contract=representation_contract,
-        matrix_output_kind=representation_contract.matrix_output_kind,
-        preprocessing_backend=GENERIC_PREPROCESSING_BACKEND,
+        feature_generators=feature_generators,
+        feature_pruners=feature_pruners,
+        matrix_output_kind_override=matrix_output_kind_override,
     )

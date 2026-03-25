@@ -19,9 +19,14 @@ from tabular_shenanigans.naming import (
     normalize_blend_weights,
 )
 from tabular_shenanigans.representations import (
-    build_representation_contract,
-    build_representation_spec_from_payload,
-    validate_representation_spec,
+    build_representation_id_from_config,
+    normalize_representation_config,
+    representation_has_cuml_compatible_numerics,
+    representation_has_frequency_categorical,
+    representation_has_native_categorical,
+    representation_has_sparse_numeric,
+    resolve_representation_matrix_output_kind,
+    validate_representation_config,
 )
 from tabular_shenanigans.preprocess_execution import resolve_preprocessing_execution_plan
 
@@ -96,10 +101,11 @@ class RepresentationConfig(BaseModel):
             "pruners": [pruner.to_payload() for pruner in self.pruners],
         }
 
-    def to_runtime_spec(self):
-        representation_spec = build_representation_spec_from_payload(self.to_payload())
-        validate_representation_spec(representation_spec)
-        return representation_spec
+    def build_representation_id(self) -> str:
+        return build_representation_id_from_config(self)
+
+    def validate_definition(self) -> None:
+        validate_representation_config(self)
 
 
 class ScreeningConfig(BaseModel):
@@ -191,7 +197,8 @@ class ModelCandidateConfig(BaseCandidateConfig):
                 "candidate.model_params and candidate.optimization are mutually exclusive. "
                 "Use model_params for fixed training or optimization for tuning, not both."
             )
-        self.representation_id = self.representation.to_runtime_spec().representation_id
+        self.representation.validate_definition()
+        self.representation_id = self.representation.build_representation_id()
         return self
 
 
@@ -312,13 +319,15 @@ class AppConfig(BaseModel):
         for candidate_index, candidate in enumerate(self.experiment.candidates, start=1):
             try:
                 if isinstance(candidate, ModelCandidateConfig):
-                    representation_spec = candidate.representation.to_runtime_spec()
-                    representation_contract = build_representation_contract(representation_spec)
+                    representation_operators, _ = normalize_representation_config(candidate.representation)
                     resolved_model_registry_key = self.resolve_model_registry_key_for_index(candidate_index - 1)
                     validate_model_representation_compatibility(
                         task_type=competition.task_type,
                         model_id=resolved_model_registry_key,
-                        representation_contract=representation_contract,
+                        has_native_categorical=representation_has_native_categorical(
+                            representation_operators
+                        ),
+                        has_sparse_numeric=representation_has_sparse_numeric(representation_operators),
                     )
                     validate_model_parameter_overrides(
                         task_type=competition.task_type,
@@ -477,15 +486,11 @@ class AppConfig(BaseModel):
             model_family=candidate.model_family,
         )
 
-    def resolve_representation_spec_for_index(self, candidate_index: int | None = None):
+    def resolve_representation_components_for_index(self, candidate_index: int | None = None):
         candidate = self.get_candidate(candidate_index)
         if not isinstance(candidate, ModelCandidateConfig):
-            raise ValueError("representation spec is only available for model candidates.")
-        return candidate.representation.to_runtime_spec()
-
-    def resolve_representation_contract_for_index(self, candidate_index: int | None = None):
-        return build_representation_contract(self.resolve_representation_spec_for_index(candidate_index))
-
+            raise ValueError("representation components are only available for model candidates.")
+        return normalize_representation_config(candidate.representation)
 
     def resolve_blend_weights_for_index(self, candidate_index: int | None = None) -> list[float]:
         candidate = self.get_candidate(candidate_index)
@@ -534,15 +539,15 @@ class AppConfig(BaseModel):
         if not isinstance(candidate, ModelCandidateConfig):
             return runtime_execution_context
 
-        representation_contract = self.resolve_representation_contract_for_index(candidate_index)
+        representation_operators, _ = self.resolve_representation_components_for_index(candidate_index)
         resolved_runtime_execution_context = resolve_model_candidate_runtime_execution(
             requested_compute_target=self.experiment.runtime.compute_target,
             requested_gpu_backend=self.experiment.runtime.gpu_backend,
             capabilities=runtime_execution_context.capabilities,
             task_type=self.competition.task_type,
             model_family=candidate.model_family,
-            has_native_categorical=representation_contract.has_native_categorical,
-            has_sparse_numeric=representation_contract.has_sparse_numeric,
+            has_native_categorical=representation_has_native_categorical(representation_operators),
+            has_sparse_numeric=representation_has_sparse_numeric(representation_operators),
         )
         return resolved_runtime_execution_context.__class__(
             requested_compute_target=resolved_runtime_execution_context.requested_compute_target,
@@ -560,11 +565,16 @@ class AppConfig(BaseModel):
         if not isinstance(candidate, ModelCandidateConfig):
             raise ValueError("preprocessing_execution_plan is only available for model candidates.")
 
-        representation_contract = self.resolve_representation_contract_for_index(candidate_index)
+        representation_operators, _ = self.resolve_representation_components_for_index(candidate_index)
         runtime_execution_context = self.runtime_execution_context_for_index(candidate_index)
         return resolve_preprocessing_execution_plan(
             runtime_execution_context=runtime_execution_context,
-            representation_contract=representation_contract,
+            matrix_output_kind=resolve_representation_matrix_output_kind(representation_operators),
+            has_native_categorical=representation_has_native_categorical(representation_operators),
+            has_frequency_categorical=representation_has_frequency_categorical(representation_operators),
+            has_cuml_compatible_numerics=representation_has_cuml_compatible_numerics(
+                representation_operators
+            ),
         )
 
     def resolve_candidate_id_for_index(self, candidate_index: int | None = None) -> str:
